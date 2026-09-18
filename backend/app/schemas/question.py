@@ -1,0 +1,41 @@
+from datetime import datetime
+from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, ConfigDict
+
+class QuestionBase(BaseModel):
+    question_text: str
+    answer: str
+    options: Optional[List[str]] = None
+    explanation: Optional[str] = None
+    topic: str
+    subtopic: Optional[str] = None
+    difficulty: str = "Medium"
+    grade_min: int = 3
+    grade_max: int = 12
+    question_type: str = "MULTIPLE_CHOICE"
+    source_year: Optional[int] = None
+
+class QuestionCreate(QuestionBase):
+    document_id: str
+    slide_id: Optional[str] = None
+    answer_slide_id: Optional[str] = None
+
+class QuestionResponse(QuestionBase):
+    id: str
+    document_id: str
+    slide_id: Optional[str] = None
+    answer_slide_id: Optional[str] = None
+    created_at: datetime
+    document_title: Optional[str] = None
+    slide_number: Optional[int] = None
+    model_config = ConfigDict(from_attributes=True)
+
+class QuestionSearchParams(BaseModel):
+    query: Optional[str] = None
+    topic: Optional[str] = None
+    grade_min: Optional[int] = None
+    grade_max: Optional[int] = None
+    difficulty: Optional[str] = None
+    year: Optional[int] = None
+    limit: int = 20
+    offset: int = 0
