@@ -7,8 +7,12 @@ from backend.app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Check if using PostgreSQL
-is_postgres = settings.DATABASE_URL.startswith("postgresql")
+# Check if using PostgreSQL and normalize URL scheme
+raw_db_url = settings.DATABASE_URL
+if raw_db_url.startswith("postgres://"):
+    raw_db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
+
+is_postgres = raw_db_url.startswith("postgresql")
 
 # Custom JSON-backed Vector type for SQLite and fallback
 class VectorType(TypeDecorator):
@@ -38,7 +42,7 @@ if is_postgres:
     try:
         from pgvector.sqlalchemy import Vector
         PG_VECTOR_AVAILABLE = True
-    except ImportError:
+    except (ImportError, Exception):
         logger.warning("pgvector package not loaded, using custom VectorType fallback")
 
 def get_vector_column_type(dim: int = 768):
@@ -50,9 +54,24 @@ def get_vector_column_type(dim: int = 768):
             return VectorType()
     return VectorType()
 
-# Database engine
-connect_args = {"check_same_thread": False} if not is_postgres else {}
-engine = create_engine(settings.DATABASE_URL, connect_args=connect_args, echo=False)
+# Database engine with automatic fallback
+engine = None
+if is_postgres:
+    try:
+        engine = create_engine(raw_db_url, echo=False)
+        with engine.connect() as conn:
+            pass
+    except Exception as exc:
+        logger.warning(f"PostgreSQL connection failed ({exc}), falling back to SQLite")
+        is_postgres = False
+        engine = None
+
+if engine is None:
+    import os
+    from backend.app.config import default_db_url
+    connect_args = {"check_same_thread": False}
+    engine = create_engine(default_db_url, connect_args=connect_args, echo=False)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
