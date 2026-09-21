@@ -99,18 +99,8 @@ export default function QuickGenerateCard() {
   const [hardCount, setHardCount] = useState<number>(2);
 
   const [questionTypes, setQuestionTypes] = useState<string[]>(['SLIDE_QA']);
-  const [generationMode, setGenerationMode] = useState('NEW');
-  const [style, setStyle] = useState('QSHALA_HISTORICAL');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const topicPresets = [
-    'Australian History',
-    'World Wonders',
-    'Space & Astronomy',
-    'Science',
-    'Aboriginal Culture',
-  ];
 
   const currentAudience = AUDIENCE_OPTIONS.find((a) => a.id === audienceType) || AUDIENCE_OPTIONS[0];
   const totalAllocated = easyCount + mediumCount + hardCount;
@@ -212,8 +202,8 @@ export default function QuickGenerateCard() {
         },
         question_count: questionCount,
         question_types: questionTypes,
-        generation_mode: generationMode,
-        style,
+        generation_mode: 'HISTORICAL',
+        style: 'QSHALA_HISTORICAL',
         raw_prompt: promptSummary,
       });
 
@@ -252,37 +242,19 @@ export default function QuickGenerateCard() {
               type="text"
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
-              placeholder="e.g. Australian History, World Geography, Science"
+              placeholder="e.g. World Geography, Australian History, Science & Nature"
               className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-[14px] font-normal text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
             />
           </div>
-
-          {/* Suggested Chips */}
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {topicPresets.map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                onClick={() => setTopic(preset)}
-                className={`rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors cursor-pointer ${
-                  topic === preset
-                    ? 'bg-blue-50 text-blue-700 border border-blue-200 font-semibold'
-                    : 'bg-slate-50 text-slate-500 hover:text-slate-800 border border-slate-100'
-                }`}
-              >
-                {preset}
-              </button>
-            ))}
-          </div>
         </div>
 
-        {/* Row 2: Hierarchical Audience & Education Level */}
+        {/* Row 2: Target Audience */}
         <div className="rounded-lg border border-slate-200/90 bg-slate-50/40 p-4 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
             {/* Audience Dropdown */}
             <div>
               <label className="block text-[13px] font-semibold text-slate-700 mb-1.5">
-                Target Audience / Education Level
+                Target Audience
               </label>
               <div className="relative">
                 <select
@@ -292,7 +264,7 @@ export default function QuickGenerateCard() {
                 >
                   {AUDIENCE_OPTIONS.map((opt) => (
                     <option key={opt.id} value={opt.id}>
-                      {opt.label} — {opt.sublabel}
+                      {opt.label} ({opt.sublabel})
                     </option>
                   ))}
                 </select>
@@ -541,50 +513,12 @@ export default function QuickGenerateCard() {
           </div>
         </div>
 
-        {/* Row 5: Generation Mode & Style */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 pt-1">
-          <div>
-            <label className="block text-[13px] font-semibold text-slate-700 mb-1.5">
-              Generation Mode
-            </label>
-            <div className="relative">
-              <select
-                value={generationMode}
-                onChange={(e) => setGenerationMode(e.target.value)}
-                className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-[13.5px] font-normal text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 pr-8 cursor-pointer"
-              >
-                <option value="NEW">New (Fresh synthesis from knowledge base)</option>
-                <option value="REMIX">Remix (Pivot perspective of historical items)</option>
-                <option value="HISTORICAL">Historical (Curate directly from archives)</option>
-                <option value="SIMILAR">Similar (Sibling questions mirroring structure)</option>
-              </select>
-              <ChevronDown className="absolute right-2.5 top-3 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-[13px] font-semibold text-slate-700 mb-1.5">Style</label>
-            <div className="relative">
-              <select
-                value={style}
-                onChange={(e) => setStyle(e.target.value)}
-                className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-[13.5px] font-normal text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 pr-8 cursor-pointer"
-              >
-                <option value="QSHALA_HISTORICAL">QShala Historical Style</option>
-                <option value="COMPETITION_TOURNAMENT">Tournament Finals (Challenging)</option>
-                <option value="PRIMARY_EXPLORERS">Junior Explorers (Engaging & Direct)</option>
-              </select>
-              <ChevronDown className="absolute right-2.5 top-3 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-            </div>
-          </div>
-        </div>
-
         {/* Footer: Info Note & Primary Action */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-4 border-t border-slate-100">
           <div className="flex items-start gap-2 max-w-md text-[13px] text-slate-500 font-normal leading-relaxed">
             <Info className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
             <span>
-              We'll search the QShala knowledge base to find relevant material and generate fresh, age-calibrated questions.
+              Questions and slide pairs are retrieved and assembled directly from your curated QShala knowledge base.
             </span>
           </div>
 

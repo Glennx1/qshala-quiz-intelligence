@@ -6,11 +6,13 @@ import {
   FileText,
   Sparkles,
   ArrowRight,
-  MoreVertical,
+  UploadCloud,
+  Layers,
   Lightbulb,
+  CheckCircle2,
+  BookOpen,
 } from 'lucide-react';
 import StatsOverview from '../components/StatsOverview';
-import QuickGenerateCard from '../components/QuickGenerateCard';
 import { api } from '../lib/api';
 import { DashboardStats } from '../lib/types';
 
@@ -34,121 +36,277 @@ export default function DashboardPage() {
   }, []);
 
   return (
-    <div className="p-6 sm:p-8 lg:p-10 max-w-7xl mx-auto space-y-7">
-      {/* Welcome Heading */}
-      <div>
-        <h1 className="text-[28px] sm:text-[32px] font-bold tracking-tight text-slate-900 leading-tight">
-          Welcome back, QShala!
-        </h1>
-        <p className="mt-1.5 text-[15px] text-slate-500 font-normal leading-relaxed">
-          Create engaging quizzes using your trusted QShala knowledge base.
-        </p>
-      </div>
-
-      {/* 4 Statistics Cards */}
-      <StatsOverview stats={stats} loading={loading} />
-
-      {/* Main Grid: Create a Quiz (Left) + Right Side Panels */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column: Create a Quiz */}
-        <div className="lg:col-span-8">
-          <QuickGenerateCard />
+    <div className="p-6 sm:p-8 lg:p-10 max-w-7xl mx-auto space-y-8">
+      {/* Header with Executive Title and Quick Navigation Actions */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-slate-100">
+        <div>
+          <h1 className="text-[28px] sm:text-[32px] font-bold tracking-tight text-slate-900 leading-tight">
+            Dashboard Overview
+          </h1>
+          <p className="mt-1 text-[14px] text-slate-500 font-normal leading-relaxed">
+            Real-time intelligence from your verified QShala knowledge base and generated quizzes.
+          </p>
         </div>
 
-        {/* Right Column: Recent Activity & Callout */}
-        <div className="lg:col-span-4 space-y-5">
-          {/* Recent Knowledge Decks */}
-          <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-100/50">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
-              <h3 className="text-[16px] font-semibold tracking-tight text-slate-900">Recent Knowledge Decks</h3>
+        {/* Top Direct Actions */}
+        <div className="flex items-center gap-3 shrink-0">
+          <Link
+            href="/uploads"
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-[13.5px] font-medium text-slate-700 shadow-xs hover:bg-slate-50 hover:text-slate-900 transition-colors"
+          >
+            <UploadCloud className="h-4 w-4 text-slate-500" />
+            <span>Upload Materials</span>
+          </Link>
+
+          <Link
+            href="/generate"
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-[13.5px] font-semibold text-white shadow-sm shadow-blue-500/20 hover:bg-blue-700 active:scale-[0.99] transition-all"
+          >
+            <Sparkles className="h-4 w-4" />
+            <span>Generate Quiz</span>
+          </Link>
+        </div>
+      </div>
+
+      {/* 4 Primary Statistics Cards */}
+      <StatsOverview stats={stats} loading={loading} />
+
+      {/* Main Grid: Operational Overview */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-7 items-start">
+        {/* Left Column (8 cols): Recent Generated Quizzes & Knowledge Decks */}
+        <div className="lg:col-span-8 space-y-7">
+          {/* Recent Generated Quizzes */}
+          <div className="rounded-xl border border-slate-200/80 bg-white shadow-sm shadow-slate-100/50 overflow-hidden">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100">
+              <div>
+                <h3 className="text-[16px] font-bold tracking-tight text-slate-900">
+                  Recent Generated Quizzes
+                </h3>
+                <p className="text-[12.5px] text-slate-500 font-normal mt-0.5">
+                  Slide-pair quizzes calibrated for school and tournament audiences
+                </p>
+              </div>
               <Link
-                href="/uploads"
-                className="flex items-center gap-1 text-[12px] font-medium text-blue-600 hover:text-blue-700 transition-colors"
+                href="/quizzes"
+                className="flex items-center gap-1 text-[13px] font-semibold text-blue-600 hover:text-blue-700 transition-colors"
               >
-                <span>View all</span>
-                <ArrowRight className="h-3 w-3" />
+                <span>View all quizzes</span>
+                <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
 
-            <div className="divide-y divide-slate-50">
-              {stats?.recent_documents && stats.recent_documents.length > 0 ? (
-                stats.recent_documents.slice(0, 3).map((doc) => (
-                  <div key={doc.id} className="flex items-center justify-between py-2.5 group">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
-                        <FileText className="h-4 w-4" />
+            <div className="divide-y divide-slate-100">
+              {stats?.recent_quizzes && stats.recent_quizzes.length > 0 ? (
+                stats.recent_quizzes.slice(0, 5).map((quiz) => (
+                  <Link
+                    key={quiz.id}
+                    href={`/quizzes/${quiz.id}`}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-4 sm:px-5 hover:bg-slate-50/70 transition-colors group gap-3"
+                  >
+                    <div className="flex items-start sm:items-center gap-3.5 min-w-0">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                        <Sparkles className="h-4 w-4" />
                       </div>
                       <div className="min-w-0">
-                        <p className="truncate text-[13px] font-medium text-slate-900">
-                          {doc.title}
+                        <p className="text-[14px] font-semibold text-slate-900 group-hover:text-blue-600 transition-colors truncate">
+                          {quiz.title}
                         </p>
-                        <p className="text-[12px] text-slate-400 font-normal">
-                          {doc.slide_count} slides • {doc.question_count} questions
-                        </p>
+                        <div className="flex flex-wrap items-center gap-2 mt-1 text-[12px] text-slate-500">
+                          <span className="font-medium text-slate-600">{quiz.topic}</span>
+                          <span className="text-slate-300">•</span>
+                          <span>{quiz.question_count} Questions</span>
+                          <span className="text-slate-300">•</span>
+                          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600">
+                            {quiz.difficulty}
+                          </span>
+                          {quiz.grade_range && (
+                            <>
+                              <span className="text-slate-300">•</span>
+                              <span className="text-slate-500">{quiz.grade_range}</span>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0 pl-2">
-                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
-                        Completed
+                    <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
+                      <span className="text-[12px] text-slate-400 font-normal">
+                        {new Date(quiz.created_at).toLocaleDateString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                        })}
                       </span>
-                      <button className="text-slate-300 hover:text-slate-500 p-1">
-                        <MoreVertical className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1 text-[12px] font-semibold text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <span>View</span>
+                        <ArrowRight className="h-3 w-3" />
+                      </div>
                     </div>
-                  </div>
+                  </Link>
                 ))
               ) : (
-                <div className="py-4 text-center text-xs text-slate-400">
-                  No documents ingested yet.
+                <div className="p-8 text-center">
+                  <p className="text-[13px] text-slate-500 font-normal">No quizzes generated yet.</p>
+                  <Link
+                    href="/generate"
+                    className="mt-2 inline-flex items-center gap-1.5 text-[13px] font-semibold text-blue-600 hover:underline"
+                  >
+                    <span>Create your first quiz</span>
+                    <ArrowRight className="h-3 w-3" />
+                  </Link>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Recent Generated Quizzes */}
-          <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-100/50">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
-              <h3 className="text-[16px] font-semibold tracking-tight text-slate-900">Recent Generated Quizzes</h3>
+          {/* Recent Knowledge Decks */}
+          <div className="rounded-xl border border-slate-200/80 bg-white shadow-sm shadow-slate-100/50 overflow-hidden">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100">
+              <div>
+                <h3 className="text-[16px] font-bold tracking-tight text-slate-900">
+                  Recent Knowledge Decks
+                </h3>
+                <p className="text-[12.5px] text-slate-500 font-normal mt-0.5">
+                  Ingested PowerPoint presentations and question collections
+                </p>
+              </div>
               <Link
-                href="/quizzes"
-                className="flex items-center gap-1 text-[12px] font-medium text-blue-600 hover:text-blue-700 transition-colors"
+                href="/uploads"
+                className="flex items-center gap-1 text-[13px] font-semibold text-blue-600 hover:text-blue-700 transition-colors"
               >
-                <span>View all</span>
-                <ArrowRight className="h-3 w-3" />
+                <span>View all decks</span>
+                <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
 
-            <div className="divide-y divide-slate-50">
-              {stats?.recent_quizzes && stats.recent_quizzes.length > 0 ? (
-                stats.recent_quizzes.slice(0, 3).map((quiz) => (
-                  <Link
-                    key={quiz.id}
-                    href={`/quizzes/${quiz.id}`}
-                    className="flex items-center justify-between py-2.5 group hover:bg-slate-50/60 rounded-lg px-1 transition-colors"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-                        <Sparkles className="h-4 w-4" />
+            <div className="divide-y divide-slate-100">
+              {stats?.recent_documents && stats.recent_documents.length > 0 ? (
+                stats.recent_documents.slice(0, 4).map((doc) => (
+                  <div key={doc.id} className="flex items-center justify-between p-4 sm:px-5 hover:bg-slate-50/50 transition-colors">
+                    <div className="flex items-center gap-3.5 min-w-0">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+                        <FileText className="h-4 w-4" />
                       </div>
                       <div className="min-w-0">
-                        <p className="truncate text-[13px] font-medium text-slate-900 group-hover:text-blue-600 transition-colors">
-                          {quiz.title}
+                        <p className="truncate text-[13.5px] font-semibold text-slate-900">
+                          {doc.title}
                         </p>
-                        <p className="text-[12px] text-slate-400 font-normal">
-                          {quiz.question_count} questions • {quiz.difficulty}
+                        <p className="text-[12px] text-slate-500 font-normal mt-0.5">
+                          {doc.slide_count} slides • {doc.question_count} questions extracted
                         </p>
                       </div>
                     </div>
 
-                    <ArrowRight className="h-3.5 w-3.5 text-slate-300 group-hover:text-blue-600 group-hover:translate-x-0.5 transition-all shrink-0" />
-                  </Link>
+                    <div className="flex items-center gap-2.5 shrink-0">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700 border border-emerald-100">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Completed
+                      </span>
+                    </div>
+                  </div>
                 ))
               ) : (
-                <div className="py-4 text-center text-[13px] text-slate-400">
-                  No quizzes generated yet.
+                <div className="p-8 text-center text-[13px] text-slate-400">
+                  No documents ingested yet.
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column (4 cols): Knowledge Distribution & Workflow */}
+        <div className="lg:col-span-4 space-y-6">
+          {/* Topic Coverage & Knowledge Distribution */}
+          <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-100/50">
+            <div className="border-b border-slate-100 pb-3 mb-4 flex items-center justify-between">
+              <div>
+                <h3 className="text-[15px] font-bold tracking-tight text-slate-900">
+                  Topic Coverage
+                </h3>
+                <p className="text-[12px] text-slate-500 font-normal">
+                  Question distribution in vault
+                </p>
+              </div>
+              <Link
+                href="/knowledge-base"
+                className="text-[12px] font-medium text-blue-600 hover:text-blue-700"
+              >
+                Browse vault
+              </Link>
+            </div>
+
+            <div className="space-y-3.5">
+              {stats?.top_topics && stats.top_topics.length > 0 ? (
+                stats.top_topics.map((t) => {
+                  const maxCount = Math.max(...stats.top_topics.map((item) => item.count), 1);
+                  const pct = Math.round((t.count / maxCount) * 100);
+                  return (
+                    <div key={t.topic} className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[13px]">
+                        <span className="font-medium text-slate-800">{t.topic}</span>
+                        <span className="font-semibold text-slate-600">{t.count} Qs</span>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-blue-600 transition-all duration-500"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="py-3 text-center text-[12px] text-slate-400">
+                  Upload decks to see topic breakdown.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Platform Workflow Card */}
+          <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-100/50 space-y-3">
+            <h3 className="text-[14px] font-bold text-slate-900 tracking-tight">
+              Platform Workflow
+            </h3>
+            <div className="space-y-2.5 text-[12.5px] text-slate-600">
+              <div className="flex items-start gap-2.5">
+                <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600 font-bold text-[11px] mt-0.5">
+                  1
+                </div>
+                <div>
+                  <span className="font-semibold text-slate-800">Upload Presentation Decks</span>
+                  <p className="text-slate-500 font-normal">Add PPTX or PDF slides to expand the question vault.</p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2.5">
+                <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600 font-bold text-[11px] mt-0.5">
+                  2
+                </div>
+                <div>
+                  <span className="font-semibold text-slate-800">Automatic Extraction</span>
+                  <p className="text-slate-500 font-normal">Slides are paired into Question → Answer & Explanation.</p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2.5">
+                <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600 font-bold text-[11px] mt-0.5">
+                  3
+                </div>
+                <div>
+                  <span className="font-semibold text-slate-800">Generate Calibrated Quizzes</span>
+                  <p className="text-slate-500 font-normal">Select target audience and difficulty distribution.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-slate-100">
+              <Link
+                href="/generate"
+                className="flex items-center justify-center gap-1.5 w-full rounded-lg bg-slate-900 py-2 text-[13px] font-semibold text-white hover:bg-slate-800 transition-colors"
+              >
+                <span>Go to Quiz Generator</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
             </div>
           </div>
 
@@ -161,7 +319,7 @@ export default function DashboardPage() {
               <div>
                 <h4 className="text-[14px] font-semibold text-slate-900">Need to add new material?</h4>
                 <p className="mt-1 text-[13px] text-slate-600 leading-relaxed font-normal">
-                  Upload your PPT, PPTX or PDF files and they'll be added to your knowledge base
+                  Upload your PPT, PPTX or PDF files and they'll be parsed into slide-pair questions
                   automatically.
                 </p>
                 <Link
