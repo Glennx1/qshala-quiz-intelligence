@@ -56,9 +56,9 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(
-    title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
-    docs_url=f"{settings.API_V1_STR}/docs",
+    title=settings.PROJECT_NAME or "QShala Quiz Intelligence Platform",
+    openapi_url=f"{settings.API_V1_STR or '/api/v1'}/openapi.json",
+    docs_url=f"{settings.API_V1_STR or '/api/v1'}/docs",
     lifespan=lifespan
 )
 

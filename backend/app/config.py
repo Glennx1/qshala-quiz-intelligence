@@ -22,6 +22,11 @@ if "backend" not in sys.modules:
     backend_pkg.__path__ = [str(BASE_DIR)]
     sys.modules["backend"] = backend_pkg
 
+# Clean all empty string environment variables from Vercel / serverless runtime
+for _k, _v in list(os.environ.items()):
+    if _v == "":
+        os.environ.pop(_k, None)
+
 # Handle Vercel serverless environment (/tmp is the only writable directory)
 is_vercel = bool(os.environ.get("VERCEL"))
 if is_vercel:
@@ -150,24 +155,20 @@ class Settings(BaseSettings):
             return None
         return str(v)
 
+    @field_validator("PROJECT_NAME", mode="before")
+    @classmethod
+    def parse_project_name(cls, v):
+        if not v:
+            return "QShala Quiz Intelligence Platform"
+        return str(v)
+
     class Config:
         env_file = ".env"
         extra = "ignore"
 
-# Pre-clean any empty string environment variables from Vercel project settings
-for _k in [
-    "EMBEDDING_DIM",
-    "DUPLICATE_SIMILARITY_THRESHOLD",
-    "MIN_GROUNDING_SCORE",
-    "POSTGRES_PORT",
-    "DATABASE_URL",
-    "GEMINI_API_KEY",
-    "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "LLM_PROVIDER",
-    "EMBEDDING_PROVIDER"
-]:
-    if os.environ.get(_k) == "":
+# Ensure no empty strings slip into settings
+for _k, _v in list(os.environ.items()):
+    if _v == "":
         os.environ.pop(_k, None)
 
 settings = Settings()
