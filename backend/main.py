@@ -20,25 +20,7 @@ _parent_dir = _current_dir.parent
 if str(_parent_dir) not in sys.path:
     sys.path.insert(0, str(_parent_dir))
 
-try:
-    from backend.app.main import app
-except Exception as exc:
-    import traceback
-    err_tb = traceback.format_exc()
-    from fastapi import FastAPI
-    from fastapi.responses import JSONResponse
-
-    app = FastAPI(title="QShala Diagnostics")
-
-    @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
-    def diagnostic_fallback(path: str):
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "Backend initialization failed",
-                "details": str(exc),
-                "traceback": err_tb.splitlines()
-            }
-        )
+# Import the FastAPI application instance from app.main
+from backend.app.main import app
 
 __all__ = ["app"]
