@@ -80,6 +80,14 @@ export default function UploadPage() {
   }, [activeDocId]);
 
   const handleFileUpload = async (file: File) => {
+    // Vercel serverless function payload limit is 4.5 MB
+    const maxBytes = 4.5 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      const mbSize = (file.size / (1024 * 1024)).toFixed(1);
+      alert(`File "${file.name}" is ${mbSize} MB. The maximum supported upload size on Vercel Serverless Functions is 4.5 MB. Please upload a smaller file or compress it.`);
+      return;
+    }
+
     setUploading(true);
     try {
       const doc = await api.uploadDocument(file);

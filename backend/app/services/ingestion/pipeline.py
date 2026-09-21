@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 INGESTION_STATUS_REGISTRY: Dict[str, Dict[str, Any]] = {}
 
 class IngestionPipeline:
-    def __init__(self, db: Session):
-        self.db = db
+    def __init__(self, db: Optional[Session] = None):
+        self._external_db = db
         self.classifier = SlideClassifier()
         self.extractor = QuestionExtractor()
         self.embedding_provider = get_embedding_provider()
@@ -33,15 +33,22 @@ class IngestionPipeline:
             "error": None
         }
 
-        doc = self.db.query(Document).filter(Document.id == document_id).first()
-        if not doc:
-            INGESTION_STATUS_REGISTRY[document_id]["status"] = "FAILED"
-            INGESTION_STATUS_REGISTRY[document_id]["error"] = "Document not found"
-            return
+        own_session = False
+        db = self._external_db
+        if db is None:
+            from backend.app.database import SessionLocal
+            db = SessionLocal()
+            own_session = True
 
         try:
+            doc = db.query(Document).filter(Document.id == document_id).first()
+            if not doc:
+                INGESTION_STATUS_REGISTRY[document_id]["status"] = "FAILED"
+                INGESTION_STATUS_REGISTRY[document_id]["error"] = "Document not found"
+                return
+
             doc.processing_status = "PROCESSING"
-            self.db.commit()
+            db.commit()
 
             file_ext = os.path.splitext(doc.filename)[1].lower()
             
@@ -79,10 +86,10 @@ class IngestionPipeline:
                     has_images=s["has_images"],
                     metadata_json=s["metadata_json"]
                 )
-                self.db.add(slide_obj)
+                db.add(slide_obj)
                 slide_models.append(slide_obj)
 
-            self.db.flush()  # Assign slide IDs
+            db.flush()  # Assign slide IDs
             doc.slide_count = len(slide_models)
             
             INGESTION_STATUS_REGISTRY[document_id].update({
@@ -158,12 +165,12 @@ class IngestionPipeline:
                     source_year=q_data.get("source_year", doc.year),
                     embedding=emb
                 )
-                self.db.add(q_obj)
+                db.add(q_obj)
                 question_models.append(q_obj)
 
             doc.question_count = len(question_models)
             doc.processing_status = "COMPLETED"
-            self.db.commit()
+            db.commit()
 
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "progress_percentage": 100,
@@ -175,13 +182,22 @@ class IngestionPipeline:
 
         except Exception as e:
             logger.exception(f"Error processing document {document_id}: {e}")
-            self.db.rollback()
-            doc.processing_status = "FAILED"
-            doc.processing_error = str(e)
-            self.db.commit()
+            try:
+                db.rollback()
+                doc.processing_status = "FAILED"
+                doc.processing_error = str(e)
+                db.commit()
+            except Exception:
+                pass
 
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "status": "FAILED",
                 "error": str(e),
                 "current_step": f"Error: {str(e)}"
             })
+        finally:
+            if own_session:
+                try:
+                    db.close()
+                except Exception:
+                    pass

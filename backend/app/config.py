@@ -3,6 +3,7 @@ import sys
 import shutil
 from pathlib import Path
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from typing import Optional
 
 import types
@@ -107,9 +108,66 @@ class Settings(BaseSettings):
     # Validation thresholds
     DUPLICATE_SIMILARITY_THRESHOLD: float = 0.85
     MIN_GROUNDING_SCORE: float = 0.70
+    @field_validator("EMBEDDING_DIM", mode="before")
+    @classmethod
+    def parse_embedding_dim(cls, v):
+        if v == "" or v is None:
+            return 768
+        return int(v)
+
+    @field_validator("DUPLICATE_SIMILARITY_THRESHOLD", mode="before")
+    @classmethod
+    def parse_dup_thresh(cls, v):
+        if v == "" or v is None:
+            return 0.85
+        return float(v)
+
+    @field_validator("MIN_GROUNDING_SCORE", mode="before")
+    @classmethod
+    def parse_min_ground(cls, v):
+        if v == "" or v is None:
+            return 0.70
+        return float(v)
+
+    @field_validator("POSTGRES_PORT", mode="before")
+    @classmethod
+    def parse_postgres_port(cls, v):
+        if v == "" or v is None:
+            return 5432
+        return int(v)
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def parse_db_url(cls, v):
+        if v == "" or v is None:
+            return default_db_url
+        return str(v)
+
+    @field_validator("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", mode="before")
+    @classmethod
+    def parse_empty_keys(cls, v):
+        if v == "" or v is None:
+            return None
+        return str(v)
 
     class Config:
         env_file = ".env"
         extra = "ignore"
+
+# Pre-clean any empty string environment variables from Vercel project settings
+for _k in [
+    "EMBEDDING_DIM",
+    "DUPLICATE_SIMILARITY_THRESHOLD",
+    "MIN_GROUNDING_SCORE",
+    "POSTGRES_PORT",
+    "DATABASE_URL",
+    "GEMINI_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "LLM_PROVIDER",
+    "EMBEDDING_PROVIDER"
+]:
+    if os.environ.get(_k) == "":
+        os.environ.pop(_k, None)
 
 settings = Settings()
