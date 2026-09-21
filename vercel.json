@@ -7,12 +7,7 @@
     },
     "backend": {
       "root": "backend",
-      "entrypoint": "main:app",
-      "functions": {
-        "**": {
-          "includeFiles": "{qshala.db,sample_decks/**}"
-        }
-      }
+      "entrypoint": "main:app"
     }
   },
   "rewrites": [

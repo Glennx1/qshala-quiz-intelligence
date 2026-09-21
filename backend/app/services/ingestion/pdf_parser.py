@@ -1,7 +1,6 @@
 import logging
 from pathlib import Path
 from typing import List, Dict, Any
-import pdfplumber
 from backend.app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -16,6 +15,11 @@ class PDFParser:
 
     def parse(self) -> List[Dict[str, Any]]:
         slides_data = []
+        try:
+            import pdfplumber
+        except ImportError:
+            logger.error("pdfplumber is not installed or failed to load")
+            return slides_data
 
         with pdfplumber.open(self.file_path) as pdf:
             for page_idx, page in enumerate(pdf.pages, start=1):

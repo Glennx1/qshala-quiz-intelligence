@@ -31,12 +31,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # Initialize DB tables
-Base.metadata.create_all(bind=engine)
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as e:
+    logger.warning(f"DB table creation notice: {e}")
 
 from contextlib import asynccontextmanager
 from backend.app.database import SessionLocal
 from backend.app.models.document import Document
-from backend.app.utils.seed_knowledge_base import seed
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -46,6 +48,7 @@ async def lifespan(app: FastAPI):
         db.close()
         if doc_count == 0:
             logger.info("Knowledge base is empty. Running automatic seeding of sample decks...")
+            from backend.app.utils.seed_knowledge_base import seed
             await seed(force=False)
             logger.info("Auto-seeding completed.")
     except Exception as e:
