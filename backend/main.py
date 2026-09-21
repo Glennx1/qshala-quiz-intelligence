@@ -20,7 +20,17 @@ _parent_dir = _current_dir.parent
 if str(_parent_dir) not in sys.path:
     sys.path.insert(0, str(_parent_dir))
 
-# Import the FastAPI application instance from app.main
-from backend.app.main import app
+try:
+    from backend.app.main import app as real_app
+    app = real_app
+except Exception as e:
+    import traceback
+    tb = traceback.format_exc()
+    from fastapi import FastAPI
+    from fastapi.responses import JSONResponse
+    app = FastAPI(title="Diagnostic App")
+    @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
+    async def catch_all(path: str):
+        return JSONResponse({"error": str(e), "traceback": tb.splitlines()}, status_code=500)
 
 __all__ = ["app"]
