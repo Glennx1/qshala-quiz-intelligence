@@ -170,12 +170,12 @@ function KnowledgeBaseContent() {
             <table className="w-full text-left text-[13px] border-collapse">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/60 font-semibold text-[12px] uppercase tracking-wider text-slate-600">
-                  <th className="py-3 px-4 w-5/12">Question</th>
-                  <th className="py-3 px-4">Topic</th>
-                  <th className="py-3 px-4">Grade</th>
-                  <th className="py-3 px-4">Difficulty</th>
+                  <th className="py-3 px-4 w-5/12">Question & Concepts</th>
+                  <th className="py-3 px-4">Topics</th>
+                  <th className="py-3 px-4">Audience / Grade</th>
+                  <th className="py-3 px-4">Difficulty & Depth</th>
                   <th className="py-3 px-4">Source</th>
-                  <th className="py-3 px-4">Status</th>
+                  <th className="py-3 px-4">Vault Status</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
@@ -183,30 +183,113 @@ function KnowledgeBaseContent() {
                 {questions.map((q) => (
                   <tr key={q.id} className="hover:bg-slate-50/70 transition-colors group">
                     <td className="py-3.5 px-4">
-                      <div className="font-medium text-[13.5px] text-slate-900 leading-snug">
+                      <div className="font-semibold text-[13.5px] text-slate-900 leading-snug">
                         {q.question_text}
                       </div>
-                      <div className="mt-1 text-[12px] text-slate-500 font-normal">
+                      <div className="mt-1 text-[12px] text-slate-600 font-normal">
                         Answer: <span className="font-semibold text-slate-800">{q.answer}</span>
                       </div>
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-600">{q.topic}</td>
-                    <td className="py-3.5 px-4 text-slate-600 font-medium">
-                      {q.grade_min}–{q.grade_max}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span className="text-slate-600">{q.difficulty}</span>
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-500 font-mono text-[12px]">
-                      {q.document_title || 'Archive'} · Slide {q.slide_number || 1}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <div className="flex items-center gap-1.5 text-[12px] text-slate-600 font-medium">
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                        <span>Indexed</span>
+
+                      {/* Entities and Question Hooks */}
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        {q.question_hook && q.question_hook !== 'DIRECT_TRIVIA' && (
+                          <span className="rounded bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 text-[10.5px] font-semibold text-indigo-700">
+                            {q.question_hook.replace(/_/g, ' ')}
+                          </span>
+                        )}
+                        {q.tags && q.tags.slice(0, 4).map((tag) => (
+                          <span key={tag} className="rounded bg-slate-100 px-1.5 py-0.5 text-[10.5px] font-normal text-slate-600">
+                            #{tag}
+                          </span>
+                        ))}
+                        {q.occurrence_count && q.occurrence_count > 1 && (
+                          <span className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-700">
+                            Appears in {q.occurrence_count} decks
+                          </span>
+                        )}
                       </div>
                     </td>
-                    <td className="py-3.5 px-4 text-right">
+
+                    {/* Multi-Topic Badges */}
+                    <td className="py-3.5 px-4 align-top">
+                      <div className="flex flex-wrap gap-1 max-w-[170px]">
+                        {(q.topics && q.topics.length > 0 ? q.topics : [q.topic]).map((t) => {
+                          const isHistory = t.includes('History');
+                          const isScience = t.includes('Science') || t.includes('Nature');
+                          const isPolitics = t.includes('Politics') || t.includes('Governance');
+                          const isGeo = t.includes('Geography');
+                          const colorCls = isHistory
+                            ? 'bg-amber-50 text-amber-700 border-amber-200/80'
+                            : isScience
+                            ? 'bg-blue-50 text-blue-700 border-blue-200/80'
+                            : isPolitics
+                            ? 'bg-purple-50 text-purple-700 border-purple-200/80'
+                            : isGeo
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200/80'
+                            : 'bg-slate-100 text-slate-700 border-slate-200/80';
+                          return (
+                            <span key={t} className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${colorCls}`}>
+                              {t}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </td>
+
+                    {/* Grade Range */}
+                    <td className="py-3.5 px-4 text-slate-600 align-top">
+                      <div className="font-semibold text-[13px] text-slate-800">
+                        Grades {q.grade_min}–{q.grade_max}
+                      </div>
+                      <div className="text-[11px] text-slate-400 font-normal">
+                        Ages {q.grade_min + 5}–{q.grade_max + 6}
+                      </div>
+                    </td>
+
+                    {/* Difficulty & Cognitive Level */}
+                    <td className="py-3.5 px-4 align-top">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${
+                            q.difficulty === 'Easy'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : q.difficulty === 'Hard'
+                              ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                              : 'bg-blue-50 text-blue-700 border border-blue-200'
+                          }`}
+                        >
+                          {q.difficulty}
+                        </span>
+                        {q.difficulty_score !== undefined && (
+                          <span className="text-[11px] font-mono text-slate-400">
+                            {q.difficulty_score.toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-normal mt-1">
+                        {q.cognitive_level || 'Recall'}
+                      </div>
+                    </td>
+
+                    {/* Source */}
+                    <td className="py-3.5 px-4 text-slate-500 text-[12px] align-top">
+                      <div className="truncate max-w-[130px] font-medium text-slate-700">
+                        {q.document_title || 'Archive'}
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        Slide {q.slide_number || 1}
+                      </div>
+                    </td>
+
+                    {/* Status */}
+                    <td className="py-3.5 px-4 align-top">
+                      <div className="flex items-center gap-1.5 text-[12px] text-emerald-700 font-medium bg-emerald-50 px-2 py-0.5 rounded-full w-fit border border-emerald-100">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                        <span>Unique</span>
+                      </div>
+                    </td>
+
+                    <td className="py-3.5 px-4 text-right align-top">
                       <button
                         onClick={() => handleViewSlide(q)}
                         className="inline-flex items-center gap-1 text-[12px] font-semibold text-blue-600 hover:text-blue-700 cursor-pointer"

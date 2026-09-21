@@ -9,10 +9,19 @@ class QuestionBase(BaseModel):
     explanation: Optional[str] = None
     topic: str
     subtopic: Optional[str] = None
+    topics: List[str] = []
+    tags: List[str] = []
     difficulty: str = "Medium"
+    difficulty_score: float = 0.50
+    cognitive_level: str = "Recall / Remember"
     grade_min: int = 3
     grade_max: int = 12
-    question_type: str = "MULTIPLE_CHOICE"
+    audience_suitability: List[str] = []
+    question_hook: str = "DIRECT_TRIVIA"
+    curiosity_score: int = 7
+    temporal_nature: str = "EVERGREEN"
+    occurrence_count: int = 1
+    question_type: str = "SLIDE_QA"
     source_year: Optional[int] = None
 
 class QuestionCreate(QuestionBase):
@@ -22,6 +31,7 @@ class QuestionCreate(QuestionBase):
 
 class QuestionResponse(QuestionBase):
     id: str
+    content_hash: Optional[str] = None
     document_id: str
     slide_id: Optional[str] = None
     answer_slide_id: Optional[str] = None

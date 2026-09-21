@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, String, Integer, Float, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from backend.app.database import Base, get_vector_column_type
 from backend.app.config import settings
@@ -12,6 +12,7 @@ class Question(Base):
     __tablename__ = "questions"
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
+    content_hash = Column(String(64), index=True, nullable=True) # Canonical hash for O(1) deduplication
     document_id = Column(String(36), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
     slide_id = Column(String(36), ForeignKey("slides.id", ondelete="SET NULL"), nullable=True)
     answer_slide_id = Column(String(36), ForeignKey("slides.id", ondelete="SET NULL"), nullable=True)
@@ -23,10 +24,24 @@ class Question(Base):
     
     topic = Column(String(100), nullable=False, index=True)
     subtopic = Column(String(100), nullable=True, index=True)
+    topics = Column(JSON, default=list) # Multi-topic tags, e.g. ["History", "Science", "Politics"]
+    tags = Column(JSON, default=list)   # Named entities and secondary keywords
+    
     difficulty = Column(String(20), default="Medium")  # Easy, Medium, Hard
+    difficulty_score = Column(Float, default=0.50)     # Continuous PDI 0.00 - 1.00
+    cognitive_level = Column(String(50), default="Recall / Remember")
     grade_min = Column(Integer, default=3)
     grade_max = Column(Integer, default=12)
-    question_type = Column(String(50), default="MULTIPLE_CHOICE")  # MULTIPLE_CHOICE, TRIVIA_SHORT_ANSWER, TRUE_FALSE, VISUAL
+    audience_suitability = Column(JSON, default=list)  # ["primary", "middle_school", ...]
+    
+    question_hook = Column(String(50), default="DIRECT_TRIVIA")
+    curiosity_score = Column(Integer, default=7)
+    temporal_nature = Column(String(20), default="EVERGREEN")
+    
+    provenance_decks = Column(JSON, default=list)      # List of all document IDs where this appeared
+    occurrence_count = Column(Integer, default=1)
+    
+    question_type = Column(String(50), default="SLIDE_QA")
     source_year = Column(Integer, nullable=True)
     
     embedding = Column(get_vector_column_type(settings.EMBEDDING_DIM), nullable=True)
