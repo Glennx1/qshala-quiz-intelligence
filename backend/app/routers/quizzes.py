@@ -88,7 +88,7 @@ def delete_question(question_id: str, db: Session = Depends(get_db)):
 @router.get("/{quiz_id}/export")
 def export_quiz(
     quiz_id: str,
-    format: str = Query("json", regex="^(json|csv)$"),
+    format: str = Query("json", pattern="^(json|csv)$"),
     db: Session = Depends(get_db)
 ):
     quiz = db.query(Quiz).filter(Quiz.id == quiz_id).first()

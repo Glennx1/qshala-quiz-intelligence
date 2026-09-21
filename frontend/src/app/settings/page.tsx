@@ -1,8 +1,15 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { Settings as SettingsIcon, Database, Cpu, ShieldCheck, HardDrive } from 'lucide-react';
+import { getApiBase } from '@/lib/api';
 
 export default function SettingsPage() {
+  const [apiEndpoint, setApiEndpoint] = useState('/api/v1');
+
+  useEffect(() => {
+    setApiEndpoint(getApiBase());
+  }, []);
   return (
     <div className="p-6 sm:p-8 lg:p-10 max-w-4xl mx-auto space-y-7 pb-20">
       <div>
@@ -84,7 +91,7 @@ export default function SettingsPage() {
             <span className="text-slate-600 font-normal">Backend API Status</span>
             <span className="flex items-center gap-1.5 font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded text-[12px]">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              <span>Online (http://127.0.0.1:8000)</span>
+              <span>Online ({apiEndpoint})</span>
             </span>
           </div>
 

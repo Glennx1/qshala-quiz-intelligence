@@ -1,4 +1,13 @@
 import os
+import sys
+from pathlib import Path
+
+# Ensure project root (containing 'backend') is on sys.path in all runtimes
+_current_file = Path(__file__).resolve()
+_project_root = _current_file.parent.parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,6 +49,8 @@ app.include_router(questions.router, prefix=settings.API_V1_STR)
 app.include_router(quizzes.router, prefix=settings.API_V1_STR)
 
 @app.get("/")
+@app.get("/api")
+@app.get(f"{settings.API_V1_STR}")
 def root():
     return {
         "service": settings.PROJECT_NAME,
@@ -48,5 +59,8 @@ def root():
     }
 
 @app.get("/health")
+@app.get("/api/health")
+@app.get(f"{settings.API_V1_STR}/health")
 def health():
     return {"status": "healthy"}
+

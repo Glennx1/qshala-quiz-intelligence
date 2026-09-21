@@ -8,7 +8,18 @@ import {
   IngestionStatus,
 } from './types';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+export function getApiBase(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  if (typeof window !== 'undefined') {
+    return '/api/v1';
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}/api/v1`;
+  }
+  return 'http://localhost:8000/api/v1';
+}
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -26,28 +37,28 @@ async function handleResponse<T>(res: Response): Promise<T> {
 export const api = {
   // Stats
   getStats: async (): Promise<DashboardStats> => {
-    const res = await fetch(`${API_BASE}/stats`, { cache: 'no-store' });
+    const res = await fetch(`${getApiBase()}/stats`, { cache: 'no-store' });
     return handleResponse<DashboardStats>(res);
   },
 
   // Documents
   listDocuments: async (): Promise<DocumentItem[]> => {
-    const res = await fetch(`${API_BASE}/documents`, { cache: 'no-store' });
+    const res = await fetch(`${getApiBase()}/documents`, { cache: 'no-store' });
     return handleResponse<DocumentItem[]>(res);
   },
 
   getDocument: async (id: string): Promise<DocumentItem> => {
-    const res = await fetch(`${API_BASE}/documents/${id}`, { cache: 'no-store' });
+    const res = await fetch(`${getApiBase()}/documents/${id}`, { cache: 'no-store' });
     return handleResponse<DocumentItem>(res);
   },
 
   getDocumentSlides: async (id: string): Promise<Slide[]> => {
-    const res = await fetch(`${API_BASE}/documents/${id}/slides`, { cache: 'no-store' });
+    const res = await fetch(`${getApiBase()}/documents/${id}/slides`, { cache: 'no-store' });
     return handleResponse<Slide[]>(res);
   },
 
   getIngestionStatus: async (id: string): Promise<IngestionStatus> => {
-    const res = await fetch(`${API_BASE}/documents/${id}/status`, { cache: 'no-store' });
+    const res = await fetch(`${getApiBase()}/documents/${id}/status`, { cache: 'no-store' });
     return handleResponse<IngestionStatus>(res);
   },
 
@@ -57,7 +68,7 @@ export const api = {
     if (title) formData.append('title', title);
     if (year) formData.append('year', year.toString());
 
-    const res = await fetch(`${API_BASE}/documents/upload`, {
+    const res = await fetch(`${getApiBase()}/documents/upload`, {
       method: 'POST',
       body: formData,
     });
@@ -65,7 +76,7 @@ export const api = {
   },
 
   deleteDocument: async (id: string): Promise<{ message: string }> => {
-    const res = await fetch(`${API_BASE}/documents/${id}`, {
+    const res = await fetch(`${getApiBase()}/documents/${id}`, {
       method: 'DELETE',
     });
     return handleResponse<{ message: string }>(res);
@@ -90,7 +101,7 @@ export const api = {
     if (params.limit) searchParams.append('limit', params.limit.toString());
     if (params.offset) searchParams.append('offset', params.offset.toString());
 
-    const res = await fetch(`${API_BASE}/questions?${searchParams.toString()}`, { cache: 'no-store' });
+    const res = await fetch(`${getApiBase()}/questions?${searchParams.toString()}`, { cache: 'no-store' });
     return handleResponse<HistoricalQuestion[]>(res);
   },
 
@@ -111,7 +122,7 @@ export const api = {
     style?: string;
     raw_prompt?: string;
   }): Promise<Quiz> => {
-    const res = await fetch(`${API_BASE}/quizzes/generate`, {
+    const res = await fetch(`${getApiBase()}/quizzes/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -120,12 +131,12 @@ export const api = {
   },
 
   listQuizzes: async (): Promise<Quiz[]> => {
-    const res = await fetch(`${API_BASE}/quizzes`, { cache: 'no-store' });
+    const res = await fetch(`${getApiBase()}/quizzes`, { cache: 'no-store' });
     return handleResponse<Quiz[]>(res);
   },
 
   getQuiz: async (id: string): Promise<Quiz> => {
-    const res = await fetch(`${API_BASE}/quizzes/${id}`, { cache: 'no-store' });
+    const res = await fetch(`${getApiBase()}/quizzes/${id}`, { cache: 'no-store' });
     return handleResponse<Quiz>(res);
   },
 
@@ -133,7 +144,7 @@ export const api = {
     questionId: string,
     data: Partial<GeneratedQuestion>
   ): Promise<GeneratedQuestion> => {
-    const res = await fetch(`${API_BASE}/quizzes/questions/${questionId}`, {
+    const res = await fetch(`${getApiBase()}/quizzes/questions/${questionId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -146,7 +157,7 @@ export const api = {
     action: 'regenerate' | 'make_easier' | 'make_harder' | 'generate_similar',
     customInstruction?: string
   ): Promise<GeneratedQuestion> => {
-    const res = await fetch(`${API_BASE}/quizzes/questions/${questionId}/action`, {
+    const res = await fetch(`${getApiBase()}/quizzes/questions/${questionId}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, custom_instruction: customInstruction }),
@@ -155,13 +166,13 @@ export const api = {
   },
 
   deleteQuestion: async (questionId: string): Promise<{ message: string }> => {
-    const res = await fetch(`${API_BASE}/quizzes/questions/${questionId}`, {
+    const res = await fetch(`${getApiBase()}/quizzes/questions/${questionId}`, {
       method: 'DELETE',
     });
     return handleResponse<{ message: string }>(res);
   },
 
   exportQuizUrl: (quizId: string, format: 'json' | 'csv'): string => {
-    return `${API_BASE}/quizzes/${quizId}/export?format=${format}`;
+    return `${getApiBase()}/quizzes/${quizId}/export?format=${format}`;
   },
 };
