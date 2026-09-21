@@ -2,11 +2,22 @@ import os
 import sys
 from pathlib import Path
 
-# Ensure project root (containing 'backend') is on sys.path in all runtimes
+# Ensure backend directory and project root are on sys.path in all runtimes
+import types
 _current_file = Path(__file__).resolve()
-_project_root = _current_file.parent.parent.parent
+_backend_dir = _current_file.parent.parent
+_project_root = _backend_dir.parent
+
+if str(_backend_dir) not in sys.path:
+    sys.path.insert(0, str(_backend_dir))
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
+
+if "backend" not in sys.modules:
+    backend_pkg = types.ModuleType("backend")
+    backend_pkg.__path__ = [str(_backend_dir)]
+    backend_pkg.__file__ = str(_backend_dir / "__init__.py")
+    sys.modules["backend"] = backend_pkg
 
 import logging
 from fastapi import FastAPI
