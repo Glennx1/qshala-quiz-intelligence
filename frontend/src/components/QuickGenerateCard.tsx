@@ -98,7 +98,7 @@ export default function QuickGenerateCard() {
   const [mediumCount, setMediumCount] = useState<number>(5);
   const [hardCount, setHardCount] = useState<number>(2);
 
-  const [questionTypes, setQuestionTypes] = useState<string[]>(['MULTIPLE_CHOICE']);
+  const [questionTypes, setQuestionTypes] = useState<string[]>(['SLIDE_QA']);
   const [generationMode, setGenerationMode] = useState('NEW');
   const [style, setStyle] = useState('QSHALA_HISTORICAL');
   const [loading, setLoading] = useState(false);
@@ -515,39 +515,29 @@ export default function QuickGenerateCard() {
           </div>
         </div>
 
-        {/* Row 4: Question Types */}
+        {/* Row 4: Question & Slide Format */}
         <div>
-          <label className="block text-[13px] font-semibold text-slate-700 mb-2">Question Types</label>
-          <div className="flex flex-wrap items-center gap-5 text-[13.5px] text-slate-700 font-normal">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={questionTypes.includes('MULTIPLE_CHOICE')}
-                onChange={() => toggleQuestionType('MULTIPLE_CHOICE')}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-              />
-              <span>Multiple Choice</span>
-            </label>
-
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={questionTypes.includes('TRUE_FALSE')}
-                onChange={() => toggleQuestionType('TRUE_FALSE')}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-              />
-              <span>True/False</span>
-            </label>
-
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={questionTypes.includes('SHORT_ANSWER')}
-                onChange={() => toggleQuestionType('SHORT_ANSWER')}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-              />
-              <span>Short Answer</span>
-            </label>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-[13px] font-semibold text-slate-700">Quiz Question Format</label>
+            <span className="text-[12px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+              QShala Signature: Question & Next Slide Answer + Explanation
+            </span>
+          </div>
+          <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[13px]">
+            <div className="flex items-center gap-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-100 text-blue-700 font-bold text-[12px]">
+                Q&A
+              </div>
+              <div>
+                <span className="font-semibold text-slate-900 block">Slide Pair Presentation (Question → Answer Slide)</span>
+                <span className="text-[12px] text-slate-500 font-normal">
+                  Slide 1 displays the curiosity-driven question; Slide 2 reveals the answer and educational backstory (no MCQs).
+                </span>
+              </div>
+            </div>
+            <span className="shrink-0 text-[11px] font-bold uppercase tracking-wider text-slate-600 bg-white border border-slate-200 px-2.5 py-1 rounded-md">
+              Active Format
+            </span>
           </div>
         </div>
 

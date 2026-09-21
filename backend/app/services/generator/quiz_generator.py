@@ -174,8 +174,10 @@ class QuizGenerator:
                 f"quiz questions calibrated for {audience_label}"
                 + (f" (Grades {grade_min}–{grade_max})" if grade_min else "")
                 + ".\n"
-                "Follow QShala's signature style: clear engaging wording, age-appropriate vocabulary, clever "
-                "plausible distractors for multiple-choice questions, and rich educational explanations.\n"
+                "CORE QSHALA FORMAT PRINCIPLE: QShala quiz questions operate on the basis of a Question Slide followed by a Next Slide Answer with Explanation. "
+                "They are NOT multiple-choice questions (do NOT generate A, B, C, D distractor choices; set options to null).\n"
+                "Slide 1 (Question Slide): An engaging, curiosity-driven question or narrative clue.\n"
+                "Slide 2 (Answer Slide): The clear, unambiguous answer, followed by a rich educational explanation and backstory.\n"
                 "Ground all questions strictly in the provided evidence. Always reference the source tag (e.g. [SRC-1]).\n"
                 "You must return a valid JSON object matching the requested schema."
             )
@@ -185,6 +187,7 @@ class QuizGenerator:
 Requirements:
 - Topic: {req.topic}
 - Target Audience: {audience_label} ({grade_clause})
+- Format: QShala Question Slide + Next Slide Answer with Explanation (NO multiple choice options, options must be null)
 - Difficulty Preset: {req.difficulty}
 - Question Count: {req.question_count}
 - Exact Difficulty Distribution:
@@ -195,7 +198,7 @@ Requirements:
   Difficulty is RELATIVE to the audience.
   * For Primary (Grades 1-5): Easy is direct recognition; Medium is associative comparison; Hard is multi-step deduction for children.
   * For High School (Grades 9-12): Easy is foundational recall; Medium is contextual cause-and-effect; Hard requires synthesis of complex historical themes.
-  * For College / University and Adults: Questions should feature academic rigor, nuanced distractor options, and advanced conceptual connections.
+  * For College / University and Adults: Questions should feature academic rigor and advanced conceptual connections.
 - Question Types: {', '.join(req.question_types)}
 - Generation Mode: {req.generation_mode} ({mode_instructions})
 
@@ -211,14 +214,14 @@ Please return a JSON object with this exact structure:
   "questions": [
     {{
       "question_text": "...",
-      "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
-      "answer": "A) ...",
+      "options": null,
+      "answer": "...",
       "explanation": "...",
       "difficulty": "Easy",
       "grade_min": {grade_min if grade_min is not None else 'null'},
       "grade_max": {grade_max if grade_max is not None else 'null'},
       "topic": "{req.topic}",
-      "question_type": "MULTIPLE_CHOICE",
+      "question_type": "SLIDE_QA",
       "source_tag": "SRC-1",
       "provenance_quote": "...",
       "provenance_rationale": "..."
@@ -289,7 +292,7 @@ Please return a JSON object with this exact structure:
                 grade_min=grade_min,
                 grade_max=grade_max,
                 topic=q_data.get("topic", req.topic),
-                question_type=q_data.get("question_type", "MULTIPLE_CHOICE"),
+                question_type=q_data.get("question_type", "SLIDE_QA"),
                 validation_status=val_result["overall_status"],
                 validation_details=val_result["details"],
                 duplicate_score=val_result["duplicate_score"],

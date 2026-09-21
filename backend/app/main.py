@@ -23,10 +23,30 @@ logger = logging.getLogger(__name__)
 # Initialize DB tables
 Base.metadata.create_all(bind=engine)
 
+from contextlib import asynccontextmanager
+from backend.app.database import SessionLocal
+from backend.app.models.document import Document
+from backend.app.utils.seed_knowledge_base import seed
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        db = SessionLocal()
+        doc_count = db.query(Document).count()
+        db.close()
+        if doc_count == 0:
+            logger.info("Knowledge base is empty. Running automatic seeding of sample decks...")
+            await seed(force=False)
+            logger.info("Auto-seeding completed.")
+    except Exception as e:
+        logger.warning(f"Lifespan seed check exception: {e}")
+    yield
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
-    docs_url=f"{settings.API_V1_STR}/docs"
+    docs_url=f"{settings.API_V1_STR}/docs",
+    lifespan=lifespan
 )
 
 # CORS setup

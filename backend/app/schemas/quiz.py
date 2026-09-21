@@ -15,7 +15,7 @@ class QuizGenerateRequest(BaseModel):
         default_factory=lambda: {"easy": 3, "medium": 5, "hard": 2}
     )
     question_count: int = Field(default=10, ge=1, le=50)
-    question_types: List[str] = Field(default=["MULTIPLE_CHOICE"])
+    question_types: List[str] = Field(default=["SLIDE_QA"])
     generation_mode: str = Field(default="NEW", example="NEW")  # NEW, REMIX, HISTORICAL, SIMILAR
     style: str = Field(default="QSHALA_HISTORICAL")
     raw_prompt: Optional[str] = None

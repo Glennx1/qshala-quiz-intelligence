@@ -88,7 +88,7 @@ def delete_question(question_id: str, db: Session = Depends(get_db)):
 @router.get("/{quiz_id}/export")
 def export_quiz(
     quiz_id: str,
-    format: str = Query("json", pattern="^(json|csv)$"),
+    format: str = Query("json", pattern="^(json|csv|pptx)$"),
     db: Session = Depends(get_db)
 ):
     quiz = db.query(Quiz).filter(Quiz.id == quiz_id).first()
@@ -108,4 +108,11 @@ def export_quiz(
             content=csv_content,
             media_type="text/csv",
             headers={"Content-Disposition": f"attachment; filename=quiz_{quiz.id[:8]}.csv"}
+        )
+    elif format == "pptx":
+        pptx_bytes = QuizExporter.to_pptx(quiz)
+        return Response(
+            content=pptx_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            headers={"Content-Disposition": f"attachment; filename=qshala_quiz_{quiz.id[:8]}.pptx"}
         )

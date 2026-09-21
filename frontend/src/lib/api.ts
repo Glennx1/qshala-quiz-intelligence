@@ -172,7 +172,7 @@ export const api = {
     return handleResponse<{ message: string }>(res);
   },
 
-  exportQuizUrl: (quizId: string, format: 'json' | 'csv'): string => {
+  exportQuizUrl: (quizId: string, format: 'json' | 'csv' | 'pptx'): string => {
     return `${getApiBase()}/quizzes/${quizId}/export?format=${format}`;
   },
 };

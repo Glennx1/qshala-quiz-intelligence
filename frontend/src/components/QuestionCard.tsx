@@ -117,25 +117,34 @@ export default function QuestionCard({
       </div>
 
       {/* Question Content */}
-      <div className="space-y-4">
-        {isEditing ? (
-          <div>
+      {/* Question Content: QShala Slide Pair Presentation */}
+      <div className="space-y-3.5">
+        {/* Slide 1: Question Slide */}
+        <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+              Slide 1 · Question
+            </span>
+          </div>
+
+          {isEditing ? (
             <textarea
               value={qText}
               onChange={(e) => setQText(e.target.value)}
               rows={2}
               className="w-full rounded-lg border border-slate-200 bg-white p-3 text-[14px] text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
-          </div>
-        ) : (
-          <h3 className="text-[15px] sm:text-[16px] font-semibold text-slate-900 leading-relaxed">
-            {question.question_text}
-          </h3>
-        )}
+          ) : (
+            <h3 className="text-[15px] sm:text-[16px] font-semibold text-slate-900 leading-relaxed">
+              {question.question_text}
+            </h3>
+          )}
+        </div>
 
-        {/* Options List */}
+        {/* Options List (Legacy format support) */}
         {options.length > 0 && (
-          <div className="space-y-2">
+          <div className="space-y-2 pl-1">
             {options.map((opt, idx) => {
               const isCorrect =
                 opt.trim().toLowerCase() === question.answer.trim().toLowerCase() ||
@@ -144,7 +153,7 @@ export default function QuestionCard({
               return (
                 <div
                   key={idx}
-                  className={`flex items-center justify-between rounded-lg border px-3.5 py-2.5 text-[13.5px] transition-all ${
+                  className={`flex items-center justify-between rounded-lg border px-3.5 py-2 text-[13px] transition-all ${
                     isCorrect
                       ? 'border-emerald-200 bg-emerald-50/70 text-emerald-900 font-medium'
                       : 'border-slate-200/80 bg-white text-slate-700'
@@ -166,40 +175,63 @@ export default function QuestionCard({
                         type="text"
                         value={opt}
                         onChange={(e) => handleOptionChange(idx, e.target.value)}
-                        className="w-full bg-transparent text-[13.5px] text-slate-900 focus:outline-none"
+                        className="w-full bg-transparent text-[13px] text-slate-900 focus:outline-none"
                       />
                     ) : (
                       <span className="truncate">{opt}</span>
                     )}
                   </div>
-
-                  {isCorrect && (
-                    <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-100/60 px-2 py-0.5 rounded">
-                      Correct Answer
-                    </span>
-                  )}
                 </div>
               );
             })}
           </div>
         )}
 
-        {/* Explanation */}
-        {(question.explanation || isEditing) && (
-          <div className="rounded-lg bg-slate-50 border border-slate-100 p-3.5 text-[13px] text-slate-600 leading-relaxed">
-            <span className="font-semibold text-slate-700 block mb-1 text-[13px]">Explanation:</span>
+        {/* Slide 2: Answer & Explanation Slide */}
+        <div className="rounded-lg border border-emerald-100 bg-emerald-50/40 p-4 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              Slide 2 · Answer & Explanation
+            </span>
+          </div>
+
+          <div className="flex items-start gap-2">
+            <span className="text-[12px] font-bold uppercase tracking-wider text-emerald-800 shrink-0 mt-0.5">
+              Answer:
+            </span>
             {isEditing ? (
-              <textarea
-                value={explanation}
-                onChange={(e) => setExplanation(e.target.value)}
-                rows={2}
-                className="w-full rounded-md border border-slate-200 bg-white p-2 text-[13px] text-slate-800"
+              <input
+                type="text"
+                value={answer}
+                onChange={(e) => setAnswer(e.target.value)}
+                className="w-full rounded-md border border-emerald-200 bg-white px-2.5 py-1 text-[13.5px] font-semibold text-emerald-900 focus:outline-none"
               />
             ) : (
-              <p>{question.explanation}</p>
+              <span className="text-[14px] font-bold text-emerald-900 bg-emerald-100/70 px-2 py-0.5 rounded">
+                {question.answer}
+              </span>
             )}
           </div>
-        )}
+
+          {(question.explanation || isEditing) && (
+            <div className="pt-2 border-t border-emerald-100/80 text-[13px] text-slate-600 leading-relaxed space-y-1">
+              <span className="font-semibold text-slate-700 block text-[11.5px] uppercase tracking-wider">
+                Explanation & Context:
+              </span>
+              {isEditing ? (
+                <textarea
+                  value={explanation}
+                  onChange={(e) => setExplanation(e.target.value)}
+                  rows={2}
+                  className="w-full rounded-md border border-slate-200 bg-white p-2 text-[13px] text-slate-800"
+                />
+              ) : (
+                <p>{question.explanation}</p>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Expandable Source Information */}
         {primarySource && (

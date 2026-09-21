@@ -1,13 +1,19 @@
 import asyncio
 import os
+import sys
 import shutil
 from pathlib import Path
+
+_project_root = Path(__file__).resolve().parent.parent.parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
 from backend.app.database import SessionLocal, engine, Base
 from backend.app.models.document import Document
 from backend.app.services.ingestion.pipeline import IngestionPipeline
 from backend.app.config import settings
 
-async def seed():
+async def seed(force: bool = False):
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     pipeline = IngestionPipeline(db)
@@ -26,8 +32,13 @@ async def seed():
 
         existing = db.query(Document).filter(Document.filename == fname).first()
         if existing:
-            print(f"Document {fname} already seeded.")
-            continue
+            if force:
+                print(f"Re-seeding {fname}...")
+                db.delete(existing)
+                db.commit()
+            else:
+                print(f"Document {fname} already seeded.")
+                continue
 
         dest = settings.UPLOAD_DIR / fname
         shutil.copyfile(src, dest)
@@ -54,4 +65,4 @@ async def seed():
     print("Seeding complete.")
 
 if __name__ == "__main__":
-    asyncio.run(seed())
+    asyncio.run(seed(force=True))

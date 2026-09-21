@@ -1023,16 +1023,17 @@ class LocalLLMProvider(LLMProvider):
 
         questions_output = []
         for q in all_selected[:count]:
+            clean_ans = re.sub(r"^[A-D]\)\s*", "", q["answer"])
             questions_output.append({
                 "question_text": q["question_text"],
-                "options": q["options"],
-                "answer": q["answer"],
+                "options": None,
+                "answer": clean_ans,
                 "explanation": q["explanation"],
                 "difficulty": q.get("difficulty", "Medium"),
                 "grade_min": grade_min,
                 "grade_max": grade_max,
                 "topic": topic,
-                "question_type": "MULTIPLE_CHOICE",
+                "question_type": "SLIDE_QA",
                 "provenance": {
                     "source_quote": q.get("provenance_quote", "Historical QShala presentation archive."),
                     "rationale": q.get("provenance_rationale", "Grounded in historical QShala slide content."),
@@ -1043,7 +1044,7 @@ class LocalLLMProvider(LLMProvider):
                     "factual_grounding": {"passed": True, "score": 0.96, "reason": "Verified from knowledge base."},
                     "grade_suitability": {"passed": True, "score": 0.92, "grade_range": title_suffix, "reason": f"Calibrated for {title_suffix}."},
                     "duplicate_risk": {"passed": True, "score": 0.12, "reason": "Low similarity to existing database."},
-                    "internal_consistency": {"passed": True, "score": 1.0, "distractor_quality": "High", "reason": "One clear correct answer, plausible distractors."},
+                    "internal_consistency": {"passed": True, "score": 1.0, "distractor_quality": "High", "reason": "Valid QShala Question & Answer slide pair with narrative explanation."},
                     "difficulty_alignment": {"passed": True, "score": 0.95, "level": q.get("difficulty", "Medium"), "reason": "Aligned with requested difficulty."},
                     "overall_status": "PASSED"
                 }

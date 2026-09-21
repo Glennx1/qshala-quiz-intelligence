@@ -17,11 +17,22 @@ if is_vercel:
     default_db_url = "sqlite:////tmp/qshala.db"
     bundled_db = BASE_DIR / "qshala.db"
     tmp_db = Path("/tmp/qshala.db")
-    if bundled_db.exists() and not tmp_db.exists():
+    if bundled_db.exists() and (not tmp_db.exists() or tmp_db.stat().st_size == 0):
         try:
             shutil.copy2(bundled_db, tmp_db)
         except Exception:
             pass
+    bundled_decks = BASE_DIR / "sample_decks"
+    tmp_uploads = STORAGE_DIR / "uploads"
+    try:
+        tmp_uploads.mkdir(parents=True, exist_ok=True)
+        if bundled_decks.exists():
+            for f in bundled_decks.glob("*.pptx"):
+                dest_f = tmp_uploads / f.name
+                if not dest_f.exists():
+                    shutil.copy2(f, dest_f)
+    except Exception:
+        pass
 else:
     STORAGE_DIR = BASE_DIR / "storage"
     default_db_url = f"sqlite:///{(BASE_DIR / 'qshala.db').resolve().as_posix()}"

@@ -22,7 +22,7 @@ class Quiz(Base):
     difficulty = Column(String(50), default="Balanced")  # Summary or preset name
     difficulty_distribution = Column(JSON, default=dict)  # {"easy": 5, "medium": 10, "hard": 5}
     question_count = Column(Integer, default=10)
-    question_types = Column(JSON, default=lambda: ["MULTIPLE_CHOICE"])
+    question_types = Column(JSON, default=lambda: ["SLIDE_QA"])
     generation_mode = Column(String(50), default="NEW")  # NEW, REMIX, HISTORICAL, SIMILAR
     style = Column(String(50), default="QSHALA_HISTORICAL")
     raw_prompt = Column(Text, nullable=True)
@@ -48,7 +48,7 @@ class GeneratedQuestion(Base):
     grade_min = Column(Integer, default=3)
     grade_max = Column(Integer, default=5)
     topic = Column(String(100), nullable=True)
-    question_type = Column(String(50), default="MULTIPLE_CHOICE")
+    question_type = Column(String(50), default="SLIDE_QA")
     
     # Validation fields
     validation_status = Column(String(50), default="PASSED")  # PASSED, WARNING, FAILED

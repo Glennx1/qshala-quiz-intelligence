@@ -22,15 +22,9 @@ __pycache__/
 .coverage
 htmlcov/
 
-# Local databases & runtimes
-*.db
+# Local databases & runtimes (backend/qshala.db is committed as pre-indexed seed DB for Vercel)
 *.sqlite
 *.sqlite3
-backend/qshala.db
-backend/storage/uploads/*
-!backend/storage/uploads/.gitkeep
-backend/storage/slides/*
-!backend/storage/slides/.gitkeep
 backend/storage/exports/*
 !backend/storage/exports/.gitkeep
 backend/storage/chroma/

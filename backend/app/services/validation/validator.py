@@ -121,7 +121,7 @@ class QuestionValidator:
                 mcq_reason = "Duplicate options detected."
         else:
             mcq_passed = True
-            mcq_reason = "Valid trivia short answer question."
+            mcq_reason = "Valid QShala Question & Answer slide pair with narrative explanation."
 
         internal_consistency = {
             "passed": mcq_passed,

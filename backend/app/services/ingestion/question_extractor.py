@@ -13,7 +13,7 @@ class QuestionExtractor:
     )
 
     ANSWER_REGEX = re.compile(
-        r"(?:Ans|Answer|Correct Answer|Solution)\s*[:\-]?\s*(.+?)(?:\n|$)",
+        r"(?:Correct Answer|Solution|Answer|Ans)\s*[:\-]?\s*(.+?)(?:\n|$)",
         re.IGNORECASE
     )
 
@@ -59,7 +59,7 @@ class QuestionExtractor:
                     "difficulty": diff,
                     "grade_min": g_min,
                     "grade_max": g_max,
-                    "question_type": "MULTIPLE_CHOICE" if options else "TRIVIA_SHORT_ANSWER",
+                    "question_type": "MULTIPLE_CHOICE" if options else "SLIDE_QA",
                     "source_year": doc_year or 2024,
                     "slide_number": current.get("slide_number"),
                     "answer_slide_number": ans_slide.get("slide_number")
@@ -99,7 +99,7 @@ class QuestionExtractor:
                     "difficulty": diff,
                     "grade_min": g_min,
                     "grade_max": g_max,
-                    "question_type": "MULTIPLE_CHOICE" if options else "TRIVIA_SHORT_ANSWER",
+                    "question_type": "MULTIPLE_CHOICE" if options else "SLIDE_QA",
                     "source_year": doc_year or 2024,
                     "slide_number": current.get("slide_number"),
                     "answer_slide_number": None
@@ -120,6 +120,8 @@ class QuestionExtractor:
         options = []
 
         for line in lines:
+            if re.match(r"^QUESTION\s*\d*[:\.\-]?$", line, re.IGNORECASE):
+                continue
             # Check if this line is an option
             if re.match(r"^(\([A-D1-4]\)|[A-D1-4][\.\)])\s+", line, re.IGNORECASE):
                 options.append(line)
@@ -128,22 +130,23 @@ class QuestionExtractor:
                     q_lines.append(line)
 
         question_text = " ".join(q_lines) if q_lines else lines[0]
-        # Clean up leading numbers like "1. ", "Q1: "
-        question_text = re.sub(r"^(?:Q\d*[:\.\-]?|\d+[\.\)])\s*", "", question_text)
+        question_text = re.sub(r"^(?:QUESTION\s*\d*[:\.\-]?|Q\d*[:\.\-]?|\d+[\.\)])\s*", "", question_text, flags=re.IGNORECASE)
 
         return question_text.strip(), options if len(options) >= 2 else None
 
     def _parse_answer_and_explanation(self, text: str) -> (str, str):
-        match = self.ANSWER_REGEX.search(text)
+        cleaned_text = re.sub(r"^ANSWER\s*\d*[:\.\-]?\s*", "", text, flags=re.IGNORECASE).strip()
+        match = self.ANSWER_REGEX.search(cleaned_text)
         if match:
             ans = match.group(1).strip()
-            explanation = text.replace(match.group(0), "").strip()
+            explanation = cleaned_text.replace(match.group(0), "").strip()
+            explanation = re.sub(r"^(?:Explanation\s*(?:&\s*Context)?|Context)\s*[:\-]?\s*", "", explanation, flags=re.IGNORECASE).strip()
             return ans, explanation
 
-        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        lines = [l.strip() for l in cleaned_text.splitlines() if l.strip()]
         if lines:
             return lines[0], " ".join(lines[1:]) if len(lines) > 1 else ""
-        return "Answer indicated on slide", text
+        return "Answer indicated on slide", cleaned_text
 
     def _infer_topic(self, text: str) -> str:
         text_lower = text.lower()
