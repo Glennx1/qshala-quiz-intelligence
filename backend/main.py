@@ -13,7 +13,6 @@ if str(_current_dir) not in sys.path:
 if "backend" not in sys.modules:
     backend_pkg = types.ModuleType("backend")
     backend_pkg.__path__ = [str(_current_dir)]
-    backend_pkg.__file__ = str(_current_dir / "__init__.py")
     sys.modules["backend"] = backend_pkg
 
 # Also add the parent directory to sys.path if it exists

@@ -19,7 +19,6 @@ if str(PROJECT_ROOT) not in sys.path:
 if "backend" not in sys.modules:
     backend_pkg = types.ModuleType("backend")
     backend_pkg.__path__ = [str(BASE_DIR)]
-    backend_pkg.__file__ = str(BASE_DIR / "__init__.py")
     sys.modules["backend"] = backend_pkg
 
 # Handle Vercel serverless environment (/tmp is the only writable directory)

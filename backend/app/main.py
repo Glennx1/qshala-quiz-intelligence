@@ -16,7 +16,6 @@ if str(_project_root) not in sys.path:
 if "backend" not in sys.modules:
     backend_pkg = types.ModuleType("backend")
     backend_pkg.__path__ = [str(_backend_dir)]
-    backend_pkg.__file__ = str(_backend_dir / "__init__.py")
     sys.modules["backend"] = backend_pkg
 
 import logging
