@@ -5,71 +5,19 @@ import { useRouter } from 'next/navigation';
 import {
   ArrowRight,
   Loader2,
-  Info,
-  ChevronDown,
-  ChevronUp,
-  CheckCircle2,
   AlertCircle,
   Sparkles,
   Database,
-  Layers,
-  BookOpen,
   Tag,
   X,
   Search,
   Plus,
-  HelpCircle,
 } from 'lucide-react';
 import { api } from '../lib/api';
-import { TopicItem, TopicSummary, TagItem, TagPreviewResponse } from '../lib/types';
+import { TopicItem, TopicSummary, TagItem } from '../lib/types';
 
 type AudienceType = 'primary' | 'middle_school' | 'high_school' | 'college' | 'adult';
 type DifficultyPreset = 'Balanced' | 'Easy-heavy' | 'Hard-heavy' | 'Custom';
-type PersonalityType = 'CURIOSITY_STORYTELLER' | 'DETECTIVE_PUZZLER' | 'TOURNAMENT_PRO' | 'SOCRATIC_EXPLORER';
-
-interface PersonalityOption {
-  id: PersonalityType;
-  title: string;
-  role: string;
-  description: string;
-  badge: string;
-  icon: string;
-}
-
-const PERSONALITY_OPTIONS: PersonalityOption[] = [
-  {
-    id: 'CURIOSITY_STORYTELLER',
-    title: 'The Storyteller',
-    role: 'Curiosity Coach',
-    description: 'Engaging narrative clues, human interest trivia, and wonder-sparking backstory.',
-    badge: 'Narrative',
-    icon: '🌟',
-  },
-  {
-    id: 'DETECTIVE_PUZZLER',
-    title: 'The Detective',
-    role: 'Puzzle Master',
-    description: 'Progressive deduction clues, mystery framing, and lateral thinking challenges.',
-    badge: 'Deductive',
-    icon: '🔍',
-  },
-  {
-    id: 'TOURNAMENT_PRO',
-    title: 'Tournament Pro',
-    role: 'Classic Buzzer',
-    description: 'Crisp, high-energy, authoritative contest questions with unambiguous answers.',
-    badge: 'Competitive',
-    icon: '🏆',
-  },
-  {
-    id: 'SOCRATIC_EXPLORER',
-    title: 'Socratic Host',
-    role: 'Discussion Lead',
-    description: 'Inquiry-driven questions with classroom follow-up discussion prompts in speaker notes.',
-    badge: 'Discussion',
-    icon: '💡',
-  },
-];
 
 interface AudienceOption {
   id: AudienceType;
@@ -169,12 +117,6 @@ export default function QuickGenerateCard() {
   const [vaultTags, setVaultTags] = useState<TagItem[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
-  const [tagPreview, setTagPreview] = useState<TagPreviewResponse | null>(null);
-  const [tagPreviewLoading, setTagPreviewLoading] = useState(false);
-  const [showSampleQuestions, setShowSampleQuestions] = useState(false);
-
-  // Personality State
-  const [personality, setPersonality] = useState<PersonalityType>('CURIOSITY_STORYTELLER');
 
   // Difficulty Distribution
   const [difficultyPreset, setDifficultyPreset] = useState<DifficultyPreset>('Balanced');
@@ -215,18 +157,6 @@ export default function QuickGenerateCard() {
     }
   }, [topic]);
 
-  // Update live tag preview whenever topic or selected tags change
-  useEffect(() => {
-    if (topic.trim() || selectedTags.length > 0) {
-      setTagPreviewLoading(true);
-      api.getTagPreview(topic.trim() || undefined, selectedTags.length > 0 ? selectedTags : undefined)
-        .then((res) => setTagPreview(res))
-        .catch(() => setTagPreview(null))
-        .finally(() => setTagPreviewLoading(false));
-    } else {
-      setTagPreview(null);
-    }
-  }, [topic, selectedTags]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -361,14 +291,6 @@ export default function QuickGenerateCard() {
       const tagSuffix = selectedTags.length > 0 ? ` [Tags: ${selectedTags.join(', ')}]` : '';
       const promptSummary = `Create a ${questionCount}-question quiz on ${effectiveTopic}${tagSuffix} for ${currentAudience.label}${gradeSuffix} with distribution: ${easyCount} Easy, ${mediumCount} Medium, ${hardCount} Hard.`;
 
-      let mode = 'NEW';
-      const availableCount = tagPreview ? tagPreview.total_available : (topicSummary ? topicSummary.total_questions : 0);
-      if (availableCount >= questionCount) {
-        mode = 'HISTORICAL';
-      } else if (availableCount > 0) {
-        mode = 'HYBRID';
-      }
-
       const quiz = await api.generateQuiz({
         topic: effectiveTopic,
         subtopic: subtopic.trim() || undefined,
@@ -384,9 +306,8 @@ export default function QuickGenerateCard() {
         },
         question_count: questionCount,
         question_types: questionTypes,
-        generation_mode: mode,
+        generation_mode: 'HISTORICAL',
         tags: selectedTags.length > 0 ? selectedTags : undefined,
-        personality: personality,
         style: 'QSHALA_HISTORICAL',
         raw_prompt: promptSummary,
       });
@@ -403,12 +324,12 @@ export default function QuickGenerateCard() {
   return (
     <div className="rounded-xl border border-slate-200/80 bg-white p-6 sm:p-7 shadow-sm shadow-slate-100/50">
       <form onSubmit={handleGenerate} className="space-y-6">
-        {/* Section 1: Dual-Axis Topic & Concept Tag Compilation */}
+        {/* Section 1: Topic Selection */}
         <div className="space-y-4" ref={dropdownRef}>
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className="text-[13px] font-semibold text-slate-800">
-                1. Macro Topic
+                Quiz Topic
               </label>
               <span className="text-[12px] text-slate-400 font-normal">
                 Type to search available topics
@@ -537,7 +458,7 @@ export default function QuickGenerateCard() {
             {vaultTags.length > 0 && (
               <div className="space-y-1 pt-1">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                  Popular Concept Tags in Vault:
+                  Popular Concept Tags:
                 </span>
                 <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pt-0.5">
                   {vaultTags
@@ -572,113 +493,24 @@ export default function QuickGenerateCard() {
             )}
           </div>
 
-          {/* Live Dual-Axis Vault Compilation Preview */}
-          {tagPreviewLoading ? (
-            <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3 flex items-center justify-center gap-2 text-[12px] text-slate-500">
-              <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-              <span>Analyzing vault availability across topics and tags...</span>
-            </div>
-          ) : tagPreview ? (
-            <div className="rounded-lg border border-blue-100 bg-blue-50/40 p-3.5 space-y-2.5 text-[12.5px]">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 font-semibold text-slate-900">
-                  <Database className="h-4 w-4 text-blue-600" />
-                  <span>Vault Intelligence & Compilation Potential</span>
-                </div>
-                <span
-                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
-                    tagPreview.total_available >= questionCount
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : tagPreview.total_available > 0
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'bg-blue-100 text-blue-800'
-                  }`}
-                >
-                  {tagPreview.total_available >= questionCount ? (
-                    <>
-                      <CheckCircle2 className="h-3 w-3" />
-                      <span>{tagPreview.total_available} Questions Ready (100% Vault)</span>
-                    </>
-                  ) : tagPreview.total_available > 0 ? (
-                    <>
-                      <Sparkles className="h-3 w-3" />
-                      <span>{tagPreview.total_available} Vault + {Math.max(0, questionCount - tagPreview.total_available)} AI Hybrid</span>
-                    </>
-                  ) : (
-                    <>
-                      <Info className="h-3 w-3" />
-                      <span>Novel Topic / Tag (AI Grounded)</span>
-                    </>
-                  )}
+          {/* Questions Available in Database */}
+          {topicSummary && topicSummary.total_questions > 0 && (
+            <div className="rounded-lg bg-blue-50/60 border border-blue-100 p-3 text-[12px] space-y-1.5">
+              <div className="flex items-center justify-between font-semibold text-blue-900">
+                <span className="flex items-center gap-1.5">
+                  <Database className="h-3.5 w-3.5 text-blue-600" />
+                  {topicSummary.total_questions} Questions Available in Total
+                </span>
+                <span className="text-[11px] text-blue-600 font-medium">
+                  Grades {topicSummary.grade_min}–{topicSummary.grade_max}
                 </span>
               </div>
-
-              {/* Exact vs Cross-Topic Breakdown */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
-                <div className="rounded border border-slate-200/80 bg-white p-2">
-                  <div className="text-[10.5px] text-slate-400 font-semibold uppercase">Exact Topic</div>
-                  <div className="text-[15px] font-bold text-slate-800">{tagPreview.exact_matches_count}</div>
-                </div>
-                <div className="rounded border border-slate-200/80 bg-white p-2">
-                  <div className="text-[10.5px] text-slate-400 font-semibold uppercase">Cross-Deck Tags</div>
-                  <div className="text-[15px] font-bold text-blue-700">+{tagPreview.cross_topic_tag_matches_count}</div>
-                </div>
-                <div className="rounded border border-slate-200/80 bg-white p-2">
-                  <div className="text-[10.5px] text-slate-400 font-semibold uppercase">Total Matched</div>
-                  <div className="text-[15px] font-bold text-emerald-700">{tagPreview.total_available}</div>
-                </div>
-                <div className="rounded border border-slate-200/80 bg-white p-2">
-                  <div className="text-[10.5px] text-slate-400 font-semibold uppercase">Vault Difficulty</div>
-                  <div className="text-[11px] font-medium text-slate-600 mt-0.5">
-                    E:{tagPreview.difficulty_breakdown.Easy || 0} M:{tagPreview.difficulty_breakdown.Medium || 0} H:{tagPreview.difficulty_breakdown.Hard || 0}
-                  </div>
-                </div>
+              <div className="flex items-center gap-3 text-slate-600">
+                <span>Easy: <strong className="text-emerald-700">{topicSummary.difficulty_breakdown.Easy || 0}</strong></span>
+                <span>Medium: <strong className="text-amber-700">{topicSummary.difficulty_breakdown.Medium || 0}</strong></span>
+                <span>Hard: <strong className="text-purple-700">{topicSummary.difficulty_breakdown.Hard || 0}</strong></span>
               </div>
-
-              {/* Sample Questions Peek Toggle */}
-              {tagPreview.sample_questions && tagPreview.sample_questions.length > 0 && (
-                <div className="pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setShowSampleQuestions(!showSampleQuestions)}
-                    className="flex items-center gap-1 text-[11.5px] font-semibold text-blue-600 hover:text-blue-800 cursor-pointer"
-                  >
-                    <span>{showSampleQuestions ? 'Hide' : 'Peek'} Matched Vault Questions ({tagPreview.sample_questions.length})</span>
-                    {showSampleQuestions ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                  </button>
-
-                  {showSampleQuestions && (
-                    <div className="mt-2 space-y-1.5 max-h-48 overflow-y-auto rounded border border-slate-200 bg-white p-2.5">
-                      {tagPreview.sample_questions.map((sq, idx) => (
-                        <div key={sq.id || idx} className="border-b border-slate-100 pb-1.5 last:border-b-0 last:pb-0 text-[11.5px]">
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="font-medium text-slate-800 line-clamp-1">{sq.question_text}</span>
-                            <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.2 text-[10px] font-semibold text-slate-600">
-                              {sq.difficulty}
-                            </span>
-                          </div>
-                          <div className="text-slate-500 text-[11px] flex items-center gap-2 mt-0.5">
-                            <span>Ans: <strong className="text-slate-700">{sq.answer}</strong></span>
-                            {sq.tags && sq.tags.length > 0 && (
-                              <span className="text-blue-600">
-                                {sq.tags.map((t) => `#${t}`).join(' ')}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
-          ) : (
-            topic.trim() && (
-              <p className="text-[11.5px] text-amber-600 flex items-center gap-1">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                <span>Novel topic: AI generator will synthesize grounded questions if few existing matches are found.</span>
-              </p>
-            )
           )}
         </div>
 
@@ -748,58 +580,6 @@ export default function QuickGenerateCard() {
           </div>
         )}
 
-        {/* Section 3: Quizmaster Host Personality */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-[13px] font-semibold text-slate-800">
-              Quizmaster Host Personality
-            </label>
-            <span className="text-[12px] text-slate-400 font-normal">
-              Pedagogical tone & clue structure
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-            {PERSONALITY_OPTIONS.map((opt) => {
-              const isSelected = personality === opt.id;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setPersonality(opt.id)}
-                  className={`flex flex-col text-left p-3 rounded-lg border transition-all cursor-pointer relative ${
-                    isSelected
-                      ? 'border-blue-600 bg-blue-50/50 shadow-xs ring-1 ring-blue-500'
-                      : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50/50'
-                  }`}
-                >
-                  <div className="flex items-center justify-between w-full mb-1">
-                    <span className="text-lg">{opt.icon}</span>
-                    <span
-                      className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                        isSelected
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-slate-100 text-slate-600'
-                      }`}
-                    >
-                      {opt.badge}
-                    </span>
-                  </div>
-
-                  <div className="text-[13px] font-bold text-slate-900 leading-tight">
-                    {opt.title}
-                  </div>
-                  <div className="text-[11px] font-semibold text-blue-600 mt-0.5">
-                    {opt.role}
-                  </div>
-                  <p className="text-[11px] text-slate-500 font-normal mt-1.5 leading-snug line-clamp-3">
-                    {opt.description}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-        </div>
 
         {/* Section 5: Question Count & Format */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -950,20 +730,12 @@ export default function QuickGenerateCard() {
           {loading ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Compiling Quiz & Generating Slides...</span>
+              <span>Compiling Quiz from Database...</span>
             </>
           ) : (
             <>
               <Sparkles className="h-4 w-4" />
-              <span>
-                {tagPreview && tagPreview.total_available >= questionCount
-                  ? `Compile ${questionCount}-Question Quiz (100% Grounded)`
-                  : tagPreview && tagPreview.total_available > 0
-                  ? `Compile Hybrid Quiz (${tagPreview.total_available} Matched + ${Math.max(0, questionCount - tagPreview.total_available)} AI Grounded)`
-                  : topicSummary && topicSummary.total_questions > 0
-                  ? `Compile ${questionCount}-Question Quiz`
-                  : `Generate ${questionCount}-Question AI Quiz`}
-              </span>
+              <span>Compile {questionCount}-Question Quiz</span>
               <ArrowRight className="h-4 w-4" />
             </>
           )}

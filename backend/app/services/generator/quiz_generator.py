@@ -206,6 +206,12 @@ class QuizGenerator:
                         if len(selected_items) == req.question_count:
                             break
 
+            if not selected_items:
+                raise ValueError(
+                    f"No questions found in the database for topic '{req.topic}'. "
+                    f"Please select an indexed topic from the database or upload relevant decks."
+                )
+
             for i, item in enumerate(selected_items[:req.question_count], start=1):
                 hist_q = item["question"]
                 assigned_diff = hist_q.difficulty if hist_q.difficulty in ["Easy", "Medium", "Hard"] else (target_difficulties[i - 1] if i - 1 < len(target_difficulties) else "Medium")
