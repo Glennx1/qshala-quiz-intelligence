@@ -95,10 +95,6 @@ export default function SlideViewerModal({ isOpen, onClose, slide }: Props) {
             </div>
           )}
 
-          <div className="rounded-lg bg-emerald-50/60 border border-emerald-100 p-2.5 text-[12px] text-emerald-800 flex items-center justify-between">
-            <span className="text-slate-600">Provenance Verification</span>
-            <span className="font-semibold text-emerald-700">● 100% Verified in Corpus</span>
-          </div>
         </div>
 
         {/* Footer */}
