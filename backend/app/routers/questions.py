@@ -1,11 +1,11 @@
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func, desc, asc
+from sqlalchemy import or_, func, desc, asc, String
 from backend.app.database import get_db
 from backend.app.models.question import Question
 from backend.app.models.document import Document, Slide
-from backend.app.schemas.question import QuestionResponse
+from backend.app.schemas.question import QuestionResponse, QuestionUpdate
 from backend.app.services.retrieval.hybrid_retriever import HybridRetriever
 
 router = APIRouter(prefix="/questions", tags=["Knowledge Base Questions"])
@@ -117,6 +117,7 @@ async def search_questions(
     query: Optional[str] = Query(None),
     topic: Optional[str] = Query(None),
     subtopic: Optional[str] = Query(None),
+    tag: Optional[str] = Query(None),
     grade_min: Optional[int] = Query(None),
     grade_max: Optional[int] = Query(None),
     difficulty: Optional[str] = Query(None),
@@ -126,16 +127,29 @@ async def search_questions(
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db)
 ):
-    if query:
+    # Normalize inputs in case of direct Python function calls
+    query_str = query if isinstance(query, str) and query.strip() else None
+    topic_str = topic if isinstance(topic, str) and topic.strip() else None
+    subtopic_str = subtopic if isinstance(subtopic, str) and subtopic.strip() else None
+    tag_str = tag if isinstance(tag, str) and tag.strip() else None
+    diff_str = difficulty if isinstance(difficulty, str) and difficulty.strip() else None
+    grade_min_val = grade_min if isinstance(grade_min, int) else None
+    grade_max_val = grade_max if isinstance(grade_max, int) else None
+    sort_by_str = sort_by if isinstance(sort_by, str) else "created_at"
+    sort_order_str = sort_order if isinstance(sort_order, str) else "desc"
+    limit_int = limit if isinstance(limit, int) else 50
+    offset_int = offset if isinstance(offset, int) else 0
+
+    if query_str:
         # Perform semantic/hybrid search
         retriever = HybridRetriever(db)
         results = await retriever.search(
-            query=query,
-            topic=topic,
-            grade_min=grade_min,
-            grade_max=grade_max,
-            difficulty=difficulty,
-            limit=limit
+            query=query_str,
+            topic=topic_str,
+            grade_min=grade_min_val,
+            grade_max=grade_max_val,
+            difficulty=diff_str,
+            limit=limit_int
         )
         output = []
         for r in results:
@@ -147,30 +161,33 @@ async def search_questions(
         join(Document, Question.document_id == Document.id).\
         outerjoin(Slide, Question.slide_id == Slide.id)
 
-    if topic:
+    if topic_str:
         q_builder = q_builder.filter(
             or_(
-                Question.topic.ilike(f"%{topic}%"),
-                Question.subtopic.ilike(f"%{topic}%")
+                Question.topic.ilike(f"%{topic_str}%"),
+                Question.subtopic.ilike(f"%{topic_str}%")
             )
         )
-    if subtopic:
-        q_builder = q_builder.filter(Question.subtopic.ilike(f"%{subtopic}%"))
-    if difficulty:
-        q_builder = q_builder.filter(Question.difficulty.ilike(difficulty))
-    if grade_min is not None:
-        q_builder = q_builder.filter(Question.grade_min >= grade_min)
-    if grade_max is not None:
-        q_builder = q_builder.filter(Question.grade_max <= grade_max)
+    if subtopic_str:
+        q_builder = q_builder.filter(Question.subtopic.ilike(f"%{subtopic_str}%"))
+    if tag_str:
+        clean_tag = tag_str.strip().lstrip("#").strip()
+        q_builder = q_builder.filter(func.cast(Question.tags, String).ilike(f"%{clean_tag}%"))
+    if diff_str:
+        q_builder = q_builder.filter(Question.difficulty.ilike(diff_str))
+    if grade_min_val is not None:
+        q_builder = q_builder.filter(Question.grade_min >= grade_min_val)
+    if grade_max_val is not None:
+        q_builder = q_builder.filter(Question.grade_max <= grade_max_val)
 
     # Sorting
-    sort_col = getattr(Question, sort_by, Question.created_at)
-    if sort_order == "asc":
+    sort_col = getattr(Question, sort_by_str, Question.created_at)
+    if sort_order_str == "asc":
         q_builder = q_builder.order_by(asc(sort_col))
     else:
         q_builder = q_builder.order_by(desc(sort_col))
 
-    items = q_builder.offset(offset).limit(limit).all()
+    items = q_builder.offset(offset_int).limit(limit_int).all()
 
     output = []
     for q, doc, slide in items:
@@ -189,3 +206,124 @@ def get_question(question_id: str, db: Session = Depends(get_db)):
 
     q, doc, slide = item
     return to_question_response(q, doc, slide)
+
+@router.patch("/{question_id}", response_model=QuestionResponse)
+def update_question(
+    question_id: str,
+    payload: QuestionUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Update tags, topics, or content fields for a question in the Question Vault.
+    Provides full curation control to teachers and quizmasters.
+    """
+    item = db.query(Question, Document, Slide).\
+        join(Document, Question.document_id == Document.id).\
+        outerjoin(Slide, Question.slide_id == Slide.id).\
+        filter(Question.id == question_id).first()
+
+    if not item:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    q, doc, slide = item
+
+    if payload.tags is not None:
+        # Clean, trim, strip leading '#', and deduplicate case-insensitively while preserving order
+        cleaned_tags = []
+        seen = set()
+        for t in payload.tags:
+            if not isinstance(t, str):
+                continue
+            clean = t.strip()
+            if clean.startswith("#"):
+                clean = clean[1:].strip()
+            if clean and clean.lower() not in seen:
+                seen.add(clean.lower())
+                cleaned_tags.append(clean)
+        q.tags = cleaned_tags
+
+    if payload.topics is not None:
+        cleaned_topics = []
+        seen_topics = set()
+        for top in payload.topics:
+            if not isinstance(top, str):
+                continue
+            c = top.strip()
+            if c and c.lower() not in seen_topics:
+                seen_topics.add(c.lower())
+                cleaned_topics.append(c)
+        q.topics = cleaned_topics
+        if cleaned_topics and not payload.topic:
+            q.topic = cleaned_topics[0]
+
+    if payload.topic is not None:
+        q.topic = payload.topic.strip()
+    if payload.subtopic is not None:
+        q.subtopic = payload.subtopic.strip()
+    if payload.difficulty is not None:
+        q.difficulty = payload.difficulty.strip()
+    if payload.question_text is not None:
+        q.question_text = payload.question_text.strip()
+    if payload.answer is not None:
+        q.answer = payload.answer.strip()
+    if payload.explanation is not None:
+        q.explanation = payload.explanation.strip()
+
+    db.commit()
+    db.refresh(q)
+    return to_question_response(q, doc, slide)
+
+@router.post("/{question_id}/tags", response_model=QuestionResponse)
+def add_question_tag(
+    question_id: str,
+    tag: str = Query(..., description="Tag name to append"),
+    db: Session = Depends(get_db)
+):
+    """
+    Directly append a new tag to a question.
+    """
+    item = db.query(Question, Document, Slide).\
+        join(Document, Question.document_id == Document.id).\
+        outerjoin(Slide, Question.slide_id == Slide.id).\
+        filter(Question.id == question_id).first()
+
+    if not item:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    q, doc, slide = item
+    current_tags = list(q.tags or [])
+    clean_tag = tag.strip().lstrip("#").strip()
+    if clean_tag and not any(clean_tag.lower() == t.lower() for t in current_tags):
+        current_tags.append(clean_tag)
+        q.tags = current_tags
+        db.commit()
+        db.refresh(q)
+
+    return to_question_response(q, doc, slide)
+
+@router.delete("/{question_id}/tags/{tag_name}", response_model=QuestionResponse)
+def delete_question_tag(
+    question_id: str,
+    tag_name: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a specific tag from a question.
+    """
+    item = db.query(Question, Document, Slide).\
+        join(Document, Question.document_id == Document.id).\
+        outerjoin(Slide, Question.slide_id == Slide.id).\
+        filter(Question.id == question_id).first()
+
+    if not item:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    q, doc, slide = item
+    current_tags = list(q.tags or [])
+    clean_target = tag_name.strip().lstrip("#").strip().lower()
+    updated_tags = [t for t in current_tags if t.strip().lstrip("#").strip().lower() != clean_target]
+    q.tags = updated_tags
+    db.commit()
+    db.refresh(q)
+    return to_question_response(q, doc, slide)
+

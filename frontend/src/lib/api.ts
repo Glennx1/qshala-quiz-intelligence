@@ -99,6 +99,7 @@ export const api = {
     query?: string;
     topic?: string;
     subtopic?: string;
+    tag?: string;
     grade_min?: number;
     grade_max?: number;
     difficulty?: string;
@@ -111,6 +112,7 @@ export const api = {
     if (params.query) searchParams.append('query', params.query);
     if (params.topic) searchParams.append('topic', params.topic);
     if (params.subtopic) searchParams.append('subtopic', params.subtopic);
+    if (params.tag) searchParams.append('tag', params.tag);
     if (params.grade_min) searchParams.append('grade_min', params.grade_min.toString());
     if (params.grade_max) searchParams.append('grade_max', params.grade_max.toString());
     if (params.difficulty) searchParams.append('difficulty', params.difficulty);
@@ -122,6 +124,36 @@ export const api = {
     const res = await fetch(`${getApiBase()}/questions?${searchParams.toString()}`, { cache: 'no-store' });
     return handleResponse<HistoricalQuestion[]>(res);
   },
+
+  updateQuestionTags: async (
+    questionId: string,
+    tags: string[],
+    topics?: string[],
+    topic?: string,
+    subtopic?: string
+  ): Promise<HistoricalQuestion> => {
+    const res = await fetch(`${getApiBase()}/questions/${questionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tags, topics, topic, subtopic }),
+    });
+    return handleResponse<HistoricalQuestion>(res);
+  },
+
+  addQuestionTag: async (questionId: string, tag: string): Promise<HistoricalQuestion> => {
+    const res = await fetch(`${getApiBase()}/questions/${questionId}/tags?tag=${encodeURIComponent(tag)}`, {
+      method: 'POST',
+    });
+    return handleResponse<HistoricalQuestion>(res);
+  },
+
+  deleteQuestionTag: async (questionId: string, tagName: string): Promise<HistoricalQuestion> => {
+    const res = await fetch(`${getApiBase()}/questions/${questionId}/tags/${encodeURIComponent(tagName)}`, {
+      method: 'DELETE',
+    });
+    return handleResponse<HistoricalQuestion>(res);
+  },
+
 
   // Quizzes
   generateQuiz: async (payload: {

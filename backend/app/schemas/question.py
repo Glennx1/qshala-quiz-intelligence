@@ -42,12 +42,25 @@ class QuestionResponse(QuestionBase):
     slide_number: Optional[int] = None
     model_config = ConfigDict(from_attributes=True)
 
+class QuestionUpdate(BaseModel):
+    tags: Optional[List[str]] = None
+    topics: Optional[List[str]] = None
+    topic: Optional[str] = None
+    subtopic: Optional[str] = None
+    difficulty: Optional[str] = None
+    question_text: Optional[str] = None
+    answer: Optional[str] = None
+    explanation: Optional[str] = None
+
 class QuestionSearchParams(BaseModel):
     query: Optional[str] = None
     topic: Optional[str] = None
+    subtopic: Optional[str] = None
+    tag: Optional[str] = None
     grade_min: Optional[int] = None
     grade_max: Optional[int] = None
     difficulty: Optional[str] = None
     year: Optional[int] = None
     limit: int = 20
     offset: int = 0
+

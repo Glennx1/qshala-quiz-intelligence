@@ -9,10 +9,13 @@ import {
   Loader2,
   ArrowUpDown,
   Layers,
+  Tag,
+  Plus,
 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { HistoricalQuestion, TopicItem } from '../../lib/types';
 import SlideViewerModal from '../../components/SlideViewerModal';
+import TagManagerModal from '../../components/TagManagerModal';
 
 function KnowledgeBaseContent() {
   const searchParams = useSearchParams();
@@ -21,6 +24,7 @@ function KnowledgeBaseContent() {
   const [query, setQuery] = useState('');
   const [topic, setTopic] = useState(initialTopic);
   const [subtopic, setSubtopic] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
   const [difficulty, setDifficulty] = useState('');
   const [gradeMin, setGradeMin] = useState<number | ''>('');
   const [sortBy, setSortBy] = useState('created_at');
@@ -31,6 +35,7 @@ function KnowledgeBaseContent() {
   const [questions, setQuestions] = useState<HistoricalQuestion[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSlide, setSelectedSlide] = useState<any>(null);
+  const [selectedQuestionForTags, setSelectedQuestionForTags] = useState<HistoricalQuestion | null>(null);
 
   // Fetch topics list on mount
   useEffect(() => {
@@ -64,6 +69,7 @@ function KnowledgeBaseContent() {
         query: query.trim() || undefined,
         topic: topic || undefined,
         subtopic: subtopic || undefined,
+        tag: tagFilter.trim() || undefined,
         difficulty: difficulty || undefined,
         grade_min: gradeMin !== '' ? Number(gradeMin) : undefined,
         sort_by: sortBy,
@@ -80,11 +86,17 @@ function KnowledgeBaseContent() {
 
   useEffect(() => {
     fetchQuestions();
-  }, [topic, subtopic, difficulty, gradeMin, sortBy, sortOrder]);
+  }, [topic, subtopic, tagFilter, difficulty, gradeMin, sortBy, sortOrder]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     fetchQuestions();
+  };
+
+  const handleQuestionTagsSaved = (updated: HistoricalQuestion) => {
+    setQuestions((prev) =>
+      prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item))
+    );
   };
 
   const handleViewSlide = (q: HistoricalQuestion) => {
@@ -204,6 +216,28 @@ function KnowledgeBaseContent() {
             <option value="9">Grades 9+</option>
           </select>
 
+          {/* Tag Filter */}
+          <div className="relative">
+            <Tag className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Filter by tag..."
+              value={tagFilter}
+              onChange={(e) => setTagFilter(e.target.value.replace(/^#+/, ''))}
+              className="rounded-md border border-slate-200 bg-white pl-8 pr-6 py-1.5 text-[13px] font-normal text-slate-700 placeholder-slate-400 focus:border-indigo-500 focus:outline-none w-[140px]"
+            />
+            {tagFilter && (
+              <button
+                type="button"
+                onClick={() => setTagFilter('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-[12px] font-bold"
+                title="Clear tag filter"
+              >
+                &times;
+              </button>
+            )}
+          </div>
+
           {/* Sorting */}
           <div className="flex items-center gap-1.5 ml-auto">
             <ArrowUpDown className="h-3.5 w-3.5 text-slate-400" />
@@ -228,13 +262,14 @@ function KnowledgeBaseContent() {
             </button>
           </div>
 
-          {(query || topic || subtopic || difficulty || gradeMin) && (
+          {(query || topic || subtopic || tagFilter || difficulty || gradeMin) && (
             <button
               type="button"
               onClick={() => {
                 setQuery('');
                 setTopic('');
                 setSubtopic('');
+                setTagFilter('');
                 setDifficulty('');
                 setGradeMin('');
               }}
@@ -284,14 +319,30 @@ function KnowledgeBaseContent() {
                             {q.question_hook.replace(/_/g, ' ')}
                           </span>
                         )}
-                        {q.tags && q.tags.slice(0, 4).map((tag) => (
-                          <span
+                        {q.tags && q.tags.map((tag) => (
+                          <button
                             key={tag}
-                            className="rounded bg-slate-100 px-1.5 py-0.5 text-[10.5px] font-medium text-slate-600"
+                            type="button"
+                            onClick={() => setTagFilter(tagFilter.toLowerCase() === tag.toLowerCase() ? '' : tag)}
+                            className={`rounded px-1.5 py-0.5 text-[10.5px] font-medium transition-colors cursor-pointer ${
+                              tagFilter.toLowerCase() === tag.toLowerCase()
+                                ? 'bg-indigo-600 text-white font-semibold'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                            title={`Filter vault by #${tag}`}
                           >
                             #{tag}
-                          </span>
+                          </button>
                         ))}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedQuestionForTags(q)}
+                          className="inline-flex items-center gap-0.5 rounded border border-dashed border-slate-300 hover:border-indigo-400 bg-white hover:bg-indigo-50/50 px-1.5 py-0.5 text-[10.5px] font-medium text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer"
+                          title="Add or edit tags for this question"
+                        >
+                          <Plus className="h-2.5 w-2.5" />
+                          <span>Tag</span>
+                        </button>
                         {q.occurrence_count && q.occurrence_count > 1 && (
                           <span className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-700 flex items-center gap-1">
                             <Layers className="h-2.5 w-2.5" />
@@ -361,13 +412,23 @@ function KnowledgeBaseContent() {
                     </td>
 
                     <td className="py-3.5 px-4 text-right align-top">
-                      <button
-                        onClick={() => handleViewSlide(q)}
-                        className="inline-flex items-center gap-1 text-[12px] font-semibold text-blue-600 hover:text-blue-700 cursor-pointer"
-                      >
-                        <span>View slide</span>
-                        <ExternalLink className="h-3 w-3" />
-                      </button>
+                      <div className="flex items-center justify-end gap-3">
+                        <button
+                          onClick={() => setSelectedQuestionForTags(q)}
+                          className="inline-flex items-center gap-1 text-[12px] font-semibold text-indigo-600 hover:text-indigo-700 cursor-pointer"
+                          title="Manage tags and categories"
+                        >
+                          <Tag className="h-3 w-3" />
+                          <span>Tags</span>
+                        </button>
+                        <button
+                          onClick={() => handleViewSlide(q)}
+                          className="inline-flex items-center gap-1 text-[12px] font-semibold text-blue-600 hover:text-blue-700 cursor-pointer"
+                        >
+                          <span>View slide</span>
+                          <ExternalLink className="h-3 w-3" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -382,6 +443,16 @@ function KnowledgeBaseContent() {
           isOpen={!!selectedSlide}
           onClose={() => setSelectedSlide(null)}
           slide={selectedSlide}
+        />
+      )}
+
+      {selectedQuestionForTags && (
+        <TagManagerModal
+          isOpen={!!selectedQuestionForTags}
+          onClose={() => setSelectedQuestionForTags(null)}
+          question={selectedQuestionForTags}
+          onSaved={handleQuestionTagsSaved}
+          availableTopics={topicsList.map((t) => t.topic)}
         />
       )}
     </div>
