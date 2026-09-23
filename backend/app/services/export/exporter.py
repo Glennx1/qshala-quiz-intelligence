@@ -147,20 +147,26 @@ class QuizExporter:
         p2.font.size = Pt(16)
         p2.font.color.rgb = c_slate_400
 
-        p3 = tf_title.add_paragraph()
-        p3.space_before = Pt(24)
         p_val = getattr(quiz, "personality", None)
-        personality_label = {
-            "CURIOSITY_STORYTELLER": "The Storyteller / Curiosity Coach",
-            "DETECTIVE_PUZZLER": "The Detective / Puzzle Master",
-            "TOURNAMENT_PRO": "Tournament Pro (Classic Buzzer)",
-            "SOCRATIC_EXPLORER": "Socratic Discussion Host"
-        }.get(p_val or "CURIOSITY_STORYTELLER", "The Storyteller")
-        tags_info = f"  •  Focus: {', '.join(getattr(quiz, 'tags', [])[:3])}" if getattr(quiz, 'tags', []) else ""
-        p3.text = f"Host Style: {personality_label}{tags_info}"
-        p3.font.size = Pt(13)
-        p3.font.color.rgb = c_blue_500
-        p3.font.bold = True
+        tags_list = getattr(quiz, "tags", []) or []
+        if p_val or tags_list:
+            p3 = tf_title.add_paragraph()
+            p3.space_before = Pt(24)
+            labels = []
+            if p_val:
+                p_label = {
+                    "CURIOSITY_STORYTELLER": "The Storyteller / Curiosity Coach",
+                    "DETECTIVE_PUZZLER": "The Detective / Puzzle Master",
+                    "TOURNAMENT_PRO": "Tournament Pro (Classic Buzzer)",
+                    "SOCRATIC_EXPLORER": "Socratic Discussion Host"
+                }.get(p_val, p_val)
+                labels.append(f"Host Style: {p_label}")
+            if tags_list:
+                labels.append(f"Focus: {', '.join(tags_list[:3])}")
+            p3.text = "  •  ".join(labels)
+            p3.font.size = Pt(13)
+            p3.font.color.rgb = c_blue_500
+            p3.font.bold = True
 
         # ---------------------------------------------------------------------
         # Question & Answer Slide Pairs

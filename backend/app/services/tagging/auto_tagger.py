@@ -114,6 +114,8 @@ class AutoTagger:
         # 2. Entity & Key Concepts Extraction
         combined_context = f"{question_text} {answer_text} {(explanation or '')[:150]} {(visual_clues or '')[:150]} {(audio_transcript or '')[:150]}"
         entities = self._extract_entities(combined_context)
+        disallowed = {"storyteller", "story teller", "storytelling", "curiosity storyteller", "curiosity_storyteller", "story"}
+        clean_tags = [t for t in entities if t.lower() not in disallowed]
 
         # 3. Pedagogical Hook & Style
         hook = self._classify_hook(question_text, explanation)
@@ -133,7 +135,7 @@ class AutoTagger:
             "primary_topic": primary_topic,
             "topics": multi_topics,
             "subtopic": subtopic,
-            "tags": entities,
+            "tags": clean_tags,
             "question_hook": hook,
             "curiosity_score": curiosity_score,
             "temporal_nature": temporal_nature
@@ -191,12 +193,18 @@ class AutoTagger:
 
             res = await llm.generate_json(prompt)
             if res and "primary_topic" in res and "topics" in res:
+                raw_tags = res.get("tags", [])
+                disallowed = {"storyteller", "story teller", "storytelling", "curiosity storyteller", "curiosity_storyteller", "story"}
+                clean_tags = [t for t in raw_tags if t.lower() not in disallowed]
+                hook = res.get("question_hook", "DIRECT_TRIVIA")
+                if hook == "STORY_NARRATIVE":
+                    hook = "HISTORICAL_CONTEXT"
                 return {
                     "primary_topic": res.get("primary_topic", "General Knowledge"),
                     "topics": res.get("topics", ["General Knowledge"]),
                     "subtopic": res.get("subtopic"),
-                    "tags": res.get("tags", []),
-                    "question_hook": res.get("question_hook", "DIRECT_TRIVIA"),
+                    "tags": clean_tags,
+                    "question_hook": hook,
                     "curiosity_score": int(res.get("curiosity_score", 7)),
                     "temporal_nature": res.get("temporal_nature", "EVERGREEN")
                 }
@@ -253,9 +261,9 @@ class AutoTagger:
         q_lower = question.lower()
         exp_lower = explanation.lower()
 
-        # Narrative Story
+        # Narrative Context
         if re.search(r"\b(in \d{4}|on [a-z]+ \d{1,2}|returned from|discovered when|after years of|legend has it)\b", q_lower):
-            return "STORY_NARRATIVE"
+            return "HISTORICAL_CONTEXT"
 
         # Extraordinary Extremes / Did You Know
         if re.search(r"\b(tallest|deepest|driest|largest living|highest number|only mammal|fastest|slowest|heaviest|smallest)\b", q_lower):
@@ -276,7 +284,7 @@ class AutoTagger:
 
         if hook == "DID_YOU_KNOW":
             score += 2
-        elif hook in ["STORY_NARRATIVE", "LATERAL_CONNECT"]:
+        elif hook in ["HISTORICAL_CONTEXT", "STORY_NARRATIVE", "LATERAL_CONNECT"]:
             score += 2
         elif hook == "VISUAL_CLUE":
             score += 1

@@ -25,7 +25,7 @@ class Quiz(Base):
     question_types = Column(JSON, default=lambda: ["SLIDE_QA"])
     generation_mode: str = Column(String(50), default="NEW")  # NEW, REMIX, HISTORICAL, SIMILAR
     tags = Column(JSON, default=list)  # Target focus concept tags
-    personality = Column(String(50), default="CURIOSITY_STORYTELLER")  # CURIOSITY_STORYTELLER, DETECTIVE_PUZZLER, TOURNAMENT_PRO, SOCRATIC_EXPLORER
+    personality = Column(String(50), nullable=True, default=None)  # Optional host persona
     style = Column(String(50), default="QSHALA_HISTORICAL")
     raw_prompt = Column(Text, nullable=True)
     status = Column(String(50), default="READY")  # DRAFT, GENERATING, READY, ARCHIVED

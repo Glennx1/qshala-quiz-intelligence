@@ -19,7 +19,7 @@ class QuizGenerateRequest(BaseModel):
     generation_mode: str = Field(default="NEW", example="NEW")  # NEW, REMIX, HISTORICAL, SIMILAR
     tags: Optional[List[str]] = Field(default=None, description="Focus concept tags")
     tag_match_mode: str = Field(default="ANY", description="ANY or ALL")
-    personality: str = Field(default="CURIOSITY_STORYTELLER", description="CURIOSITY_STORYTELLER, DETECTIVE_PUZZLER, TOURNAMENT_PRO, SOCRATIC_EXPLORER")
+    personality: Optional[str] = Field(default=None, description="Optional host persona")
     style: str = Field(default="QSHALA_HISTORICAL")
     raw_prompt: Optional[str] = None
 
@@ -87,7 +87,7 @@ class QuizResponse(BaseModel):
     question_types: List[str]
     generation_mode: str
     tags: Optional[List[str]] = []
-    personality: Optional[str] = "CURIOSITY_STORYTELLER"
+    personality: Optional[str] = None
     style: str
     raw_prompt: Optional[str] = None
     status: str

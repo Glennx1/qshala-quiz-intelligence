@@ -126,7 +126,7 @@ def ensure_schema_columns():
             if quiz_table_check:
                 quiz_cols = [
                     ("tags", "TEXT"),
-                    ("personality", "VARCHAR(50) DEFAULT 'CURIOSITY_STORYTELLER'")
+                    ("personality", "VARCHAR(50) DEFAULT NULL")
                 ]
                 for col_name, col_type in quiz_cols:
                     try:

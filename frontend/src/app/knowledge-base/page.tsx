@@ -427,12 +427,12 @@ function KnowledgeBaseContent() {
                               {q.source_slide_range}
                             </span>
                           )}
-                          {q.question_hook && q.question_hook !== 'DIRECT_TRIVIA' && (
+                          {q.question_hook && q.question_hook !== 'DIRECT_TRIVIA' && q.question_hook !== 'STORY_NARRATIVE' && (
                             <span className="rounded bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 text-[10.5px] font-semibold text-indigo-700">
                               {q.question_hook.replace(/_/g, ' ')}
                             </span>
                           )}
-                          {q.tags && q.tags.map((tag) => (
+                          {q.tags && q.tags.filter((t: string) => !t.toLowerCase().includes('storyteller')).map((tag: string) => (
                             <button
                               key={tag}
                               type="button"

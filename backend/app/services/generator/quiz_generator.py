@@ -134,7 +134,7 @@ class QuizGenerator:
         while len(target_difficulties) < req.question_count:
             target_difficulties.append("Medium")
         # Step 2: Create Quiz record
-        personality = req.personality or "CURIOSITY_STORYTELLER"
+        personality = req.personality or None
         quiz_obj = Quiz(
             title=quiz_title,
             topic=req.topic,
@@ -264,14 +264,13 @@ class QuizGenerator:
             )
 
             grade_clause = f"Grades {grade_min}–{grade_max}" if grade_min else audience_label
-            personality_guide = PERSONALITY_PROMPTS.get(req.personality or "CURIOSITY_STORYTELLER", PERSONALITY_PROMPTS["CURIOSITY_STORYTELLER"])
+            personality_guide = f"- {PERSONALITY_PROMPTS[req.personality]}\n" if req.personality and req.personality in PERSONALITY_PROMPTS else ""
             tag_clause = f"- Target Concept Tags: {', '.join(req.tags)}\n" if req.tags else ""
             user_prompt = f"""
 Requirements:
 - Topic: {req.topic}
 {tag_clause}- Target Audience: {audience_label} ({grade_clause})
-- {personality_guide}
-- Format: {format_rule}
+{personality_guide}- Format: {format_rule}
 - Difficulty Preset: {req.difficulty}
 - Question Count: {req.question_count}
 - Exact Difficulty Distribution:
