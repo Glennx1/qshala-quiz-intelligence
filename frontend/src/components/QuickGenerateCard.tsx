@@ -281,7 +281,7 @@ export default function QuickGenerateCard() {
       router.push(`/quizzes/${quiz.id}`);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'Failed to generate quiz. Please verify the knowledge base.');
+      setError(err.message || 'Failed to create quiz. Please verify the questions repository.');
     } finally {
       setLoading(false);
     }

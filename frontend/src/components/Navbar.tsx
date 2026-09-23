@@ -9,9 +9,9 @@ export default function Navbar() {
 
   const navItems = [
     { label: 'Dashboard', href: '/', icon: Compass },
-    { label: 'Knowledge Base', href: '/knowledge-base', icon: BookOpen },
-    { label: 'Generate Quiz', href: '/generate', icon: Sparkles },
-    { label: 'Quiz Library', href: '/quizzes', icon: Library },
+    { label: 'Questions', href: '/knowledge-base', icon: BookOpen },
+    { label: 'Create Quiz', href: '/generate', icon: Sparkles },
+    { label: 'Generated Quizzes', href: '/quizzes', icon: Library },
     { label: 'Upload Center', href: '/uploads', icon: UploadCloud },
   ];
 

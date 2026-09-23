@@ -17,9 +17,9 @@ export default function Sidebar() {
 
   const navItems = [
     { label: 'Dashboard', href: '/', icon: Home },
-    { label: 'Knowledge Base', href: '/knowledge-base', icon: BookOpen },
-    { label: 'Generate Quiz', href: '/generate', icon: Sparkles },
-    { label: 'Quiz Library', href: '/quizzes', icon: FileText },
+    { label: 'Questions', href: '/knowledge-base', icon: BookOpen },
+    { label: 'Create Quiz', href: '/generate', icon: Sparkles },
+    { label: 'Generated Quizzes', href: '/quizzes', icon: FileText },
     { label: 'Uploads', href: '/uploads', icon: UploadCloud },
     { label: 'Settings', href: '/settings', icon: Settings },
   ];
@@ -72,7 +72,7 @@ export default function Sidebar() {
       <div className="border-t border-slate-100 p-5">
         <div className="text-[12px] leading-snug text-slate-400 font-medium">
           QShala Intelligent<br />
-          <span className="text-slate-500 font-normal">Knowledge Base</span>
+          <span className="text-slate-500 font-normal">Questions Vault</span>
         </div>
       </div>
     </aside>

@@ -115,7 +115,7 @@ function KnowledgeBaseContent() {
       <div className="flex items-center justify-between border-b border-slate-200/60 pb-5">
         <div>
           <h1 className="text-[28px] sm:text-[32px] font-bold tracking-tight text-slate-900 leading-tight">
-            Question Vault
+            Questions
           </h1>
           <p className="mt-1 text-[14px] text-slate-500 font-normal leading-relaxed">
             Verified, structured, and deduplicated questions across all historical QShala tournaments.

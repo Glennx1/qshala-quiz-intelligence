@@ -44,7 +44,7 @@ export default function DashboardPage() {
             Dashboard Overview
           </h1>
           <p className="mt-1 text-[14px] text-slate-500 font-normal leading-relaxed">
-            Real-time intelligence from your verified QShala knowledge base and generated quizzes.
+            Real-time intelligence from your verified QShala questions repository and generated quizzes.
           </p>
         </div>
 
@@ -63,7 +63,7 @@ export default function DashboardPage() {
             className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-[13.5px] font-semibold text-white shadow-sm shadow-blue-500/20 hover:bg-blue-700 active:scale-[0.99] transition-all"
           >
             <Sparkles className="h-4 w-4" />
-            <span>Generate Quiz</span>
+            <span>Create Quiz</span>
           </Link>
         </div>
       </div>
@@ -293,7 +293,7 @@ export default function DashboardPage() {
                   3
                 </div>
                 <div>
-                  <span className="font-semibold text-slate-800">Generate Calibrated Quizzes</span>
+                  <span className="font-semibold text-slate-800">Create Calibrated Quizzes</span>
                   <p className="text-slate-500 font-normal">Select target audience and difficulty distribution.</p>
                 </div>
               </div>
@@ -304,7 +304,7 @@ export default function DashboardPage() {
                 href="/generate"
                 className="flex items-center justify-center gap-1.5 w-full rounded-lg bg-slate-900 py-2 text-[13px] font-semibold text-white hover:bg-slate-800 transition-colors"
               >
-                <span>Go to Quiz Generator</span>
+                <span>Go to Create Quiz</span>
                 <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>

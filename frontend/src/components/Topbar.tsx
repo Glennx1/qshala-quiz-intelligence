@@ -18,7 +18,7 @@ export default function Topbar() {
         <Link
           href="/knowledge-base"
           className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200/60 text-slate-600 hover:bg-slate-200 hover:text-slate-900 transition-colors"
-          title="Search Knowledge Base"
+          title="Search Questions"
         >
           <Search className="h-3.5 w-3.5" />
         </Link>

@@ -38,7 +38,7 @@ export default function QuizzesLibraryPage() {
       <div className="flex items-center justify-between border-b border-slate-200/60 pb-5">
         <div>
           <h1 className="text-[28px] sm:text-[32px] font-bold tracking-tight text-slate-900 leading-tight">
-            Quiz Library
+            Generated Quizzes
           </h1>
           <p className="mt-1 text-[14px] text-slate-500 font-normal leading-relaxed">
             Browse, review, edit, and export generated quizzes.
@@ -59,7 +59,7 @@ export default function QuizzesLibraryPage() {
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20">
             <Loader2 className="h-6 w-6 animate-spin text-blue-600 mb-2" />
-            <p className="text-[13px] text-slate-400 font-normal">Loading quiz library...</p>
+            <p className="text-[13px] text-slate-400 font-normal">Loading generated quizzes...</p>
           </div>
         ) : (
           <table className="w-full text-left text-[13px] border-collapse">
