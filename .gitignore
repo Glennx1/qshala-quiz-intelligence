@@ -27,6 +27,8 @@ htmlcov/
 *.sqlite3
 backend/storage/exports/*
 !backend/storage/exports/.gitkeep
+backend/storage/uploads/*
+!backend/storage/uploads/.gitkeep
 backend/storage/chroma/
 
 # Environment Variables & Secrets

@@ -1,46 +1,64 @@
+import json
 import re
-import math
-from typing import Dict, Any, List, Tuple
+from pathlib import Path
+from typing import Dict, Any, List, Tuple, Set, Optional
+
+ANCHORS_FILE = Path(__file__).resolve().parent / "common_anchors.json"
 
 class DifficultyEngine:
     """
     Calculates the Pedagogical Difficulty Index (PDI) for quiz questions
     based on Bloom's cognitive depth, entity obscurity, readability, and clue scaffolding.
+    Features 200+ common elementary knowledge anchors, multi-step deduction indicators,
+    and overlapping pedagogical grade bands.
     """
 
-    # High frequency / easily recognizable elementary entities
-    COMMON_ELEMENTARY_ANCHORS = {
-        "sun", "moon", "earth", "france", "paris", "india", "london", "america",
-        "water", "dog", "cat", "lion", "tiger", "apple", "gold", "silver",
-        "football", "cricket", "everest", "pacific", "atlantic", "pyramid",
-        "red", "blue", "green", "winter", "summer", "tree", "plant", "canada"
+    DEFAULT_ANCHORS = {
+        "sun", "moon", "earth", "star", "water", "tree", "plant", "dog", "cat", "lion",
+        "tiger", "apple", "gold", "silver", "football", "cricket", "everest", "pacific",
+        "paris", "london", "rome", "tokyo", "cairo", "delhi", "canberra", "sydney",
+        "france", "england", "india", "australia", "america", "japan", "china", "egypt",
+        "pyramid", "colosseum", "taj mahal", "eiffel tower", "red", "blue", "green"
     }
 
-    # Cognitive level markers
     LATERAL_SYNTHESIS_PATTERNS = [
         r"\b(connect|connection|in common|link|linked|shared|irony|paradox|coincidence)\b",
-        r"\b(pivoted|reinvented|later became|originally named|formerly known)\b",
-        r"\b(why did|how did|what prompted|inspired by)\b",
-        r"\b(identify the connection|what connects)\b"
+        r"\b(pivoted|reinvented|later became|originally named|formerly known|what connects)\b",
+        r"\b(why did|how did|what prompted|inspired by|what was the connection)\b",
+        r"\b(identify the connection|common thread|common link)\b"
     ]
 
     INFERENCE_PATTERNS = [
         r"\b(how|why|reason|because|lead to|result of|significance|purpose)\b",
         r"\b(derived|consequence|discovery|breakthrough|symbolizes|represents)\b",
-        r"\b(which of the following caused|what made)\b"
+        r"\b(which of the following caused|what made|what explains)\b"
     ]
+
+    def __init__(self, anchors_path: Optional[Path] = None):
+        self.anchors_path = anchors_path or ANCHORS_FILE
+        self.common_anchors = self._load_anchors()
+
+    def _load_anchors(self) -> Set[str]:
+        if self.anchors_path.exists():
+            try:
+                with open(self.anchors_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    return set(data.get("anchors", self.DEFAULT_ANCHORS))
+            except Exception:
+                pass
+        return self.DEFAULT_ANCHORS
 
     def evaluate(self, question_text: str, answer_text: str, explanation: str = "", notes: str = "") -> Dict[str, Any]:
         """
         Computes the continuous difficulty score (0.00 - 1.00), Bloom's level,
-        calibrated grade range, and target audience suitabilities.
+        calibrated grade range with overlap, and target audience suitabilities.
         """
         q_clean = question_text.strip()
         ans_clean = answer_text.strip()
-        full_context = f"{q_clean} {ans_clean} {explanation} {notes}".lower()
+        exp_clean = explanation.strip()
 
-        # 1. Cognitive Depth (Bloom's Taxonomy / Webb's DOK)
-        cognitive_level, c_score = self._compute_cognitive_depth(q_clean)
+        # 1. Cognitive Depth (Bloom's Taxonomy / Multi-step deduction)
+        cognitive_level, c_score = self._compute_cognitive_depth(q_clean, exp_clean)
 
         # 2. Entity & Answer Obscurity
         e_score = self._compute_entity_obscurity(ans_clean, q_clean)
@@ -66,18 +84,18 @@ class DifficultyEngine:
 
         pdi = max(0.08, min(0.96, round(raw_pdi, 2)))
 
-        # Categorical mapping
-        if pdi < 0.40:
+        # Categorical mapping with overlapping grade ranges
+        if pdi < 0.35:
             category = "Easy"
             grade_min, grade_max = 1, 5
             audiences = ["primary"]
-        elif pdi <= 0.70:
+        elif pdi <= 0.65:
             category = "Medium"
-            grade_min, grade_max = 5, 9
+            grade_min, grade_max = 4, 9
             audiences = ["primary", "middle_school", "high_school"]
         else:
             category = "Hard"
-            grade_min, grade_max = 9, 12
+            grade_min, grade_max = 8, 12
             audiences = ["high_school", "college", "adult"]
 
         return {
@@ -96,18 +114,31 @@ class DifficultyEngine:
             }
         }
 
-    def _compute_cognitive_depth(self, question: str) -> Tuple[str, float]:
+    def _compute_cognitive_depth(self, question: str, explanation: str) -> Tuple[str, float]:
         q_lower = question.lower()
+        exp_lower = explanation.lower()
 
         # Check Level 3: Lateral Synthesis & Multi-domain connection
         for pat in self.LATERAL_SYNTHESIS_PATTERNS:
             if re.search(pat, q_lower):
                 return "Analyze / Lateral", 0.85
 
+        # Check for multi-step clues in question
+        has_multi_step = bool(
+            re.search(r"\b(which also|who later|although|despite|after being|before becoming)\b", q_lower)
+            and len(re.findall(r"\b[A-Z][a-z]+", question)) >= 2
+        )
+        if has_multi_step:
+            return "Analyze / Lateral", 0.80
+
         # Check Level 2: Inference & Relational understanding
         for pat in self.INFERENCE_PATTERNS:
             if re.search(pat, q_lower):
-                return "Understand / Apply", 0.55
+                return "Understand / Apply", 0.58
+
+        # If explanation contains causal reasoning
+        if re.search(r"\b(because|as a result|which caused|led to|discovered by accident|due to)\b", exp_lower):
+            return "Understand / Apply", 0.50
 
         # Default Level 1: Recall & Identification
         return "Recall / Remember", 0.25
@@ -116,26 +147,28 @@ class DifficultyEngine:
         ans_lower = answer.lower().strip()
         tokens = re.sub(r"[^\w\s]", "", ans_lower).split()
         if not tokens:
-            return 0.5
+            return 0.40
 
-        # If answer words are in elementary anchors, it's widely recognizable
-        if any(tok in self.COMMON_ELEMENTARY_ANCHORS for tok in tokens):
-            return 0.20
+        # If any token in the answer is in the 200+ common anchors set, it's familiar
+        anchor_hits = sum(1 for tok in tokens if tok in self.common_anchors)
+        if anchor_hits > 0:
+            ratio = anchor_hits / len(tokens)
+            return round(max(0.12, 0.35 - (ratio * 0.20)), 2)
 
-        # Multi-word obscure entity / latin / technical term
+        # Multi-word obscure entity / technical term
         syllable_count = sum(len(re.findall(r"[aeiouy]+", tok)) for tok in tokens)
         avg_syllables = syllable_count / max(len(tokens), 1)
 
         base = 0.45
         if avg_syllables >= 3.0:
-            base += 0.25
+            base += 0.22
         elif avg_syllables <= 1.5:
-            base -= 0.15
+            base -= 0.12
 
-        if re.search(r"\b(treaty|dynasty|syndrome|effect|phenomenon|nebula|trench)\b", ans_lower):
-            base += 0.20
+        if re.search(r"\b(treaty|dynasty|syndrome|effect|phenomenon|nebula|trench|protocol|pact)\b", ans_lower):
+            base += 0.18
 
-        return max(0.10, min(0.95, base))
+        return max(0.10, min(0.95, round(base, 2)))
 
     def _compute_specificity(self, question: str) -> float:
         constraints = 0
@@ -145,22 +178,22 @@ class DifficultyEngine:
             constraints += 1
         if re.search(r"['\"][^'\"]+['\"]", question):  # Quoted name or phrase
             constraints += 1
-        if re.search(r"\b(\d+(\.\d+)?\s*(km|miles|meters|percent|%|feet|years))\b", question, re.IGNORECASE):
+        if re.search(r"\b(\d+(\.\d+)?\s*(km|miles|meters|percent|%|feet|years|light-years))\b", question, re.IGNORECASE):
             constraints += 1
 
-        return min(1.0, 0.3 + (constraints * 0.18))
+        return min(1.0, round(0.28 + (constraints * 0.18), 2))
 
     def _compute_readability(self, question: str) -> float:
         words = question.split()
         word_count = len(words)
         if word_count == 0:
-            return 0.3
+            return 0.30
 
         long_words = sum(1 for w in words if len(w) > 7)
         long_ratio = long_words / word_count
 
         score = (min(word_count, 40) / 40.0) * 0.5 + (long_ratio * 0.5)
-        return max(0.1, min(1.0, score))
+        return max(0.10, min(1.0, round(score, 2)))
 
     def _compute_scaffolding(self, question: str, notes: str) -> float:
         scaffolding = 0.0
@@ -169,7 +202,7 @@ class DifficultyEngine:
             scaffolding += 0.4
         if notes and len(notes.strip()) > 10:
             scaffolding += 0.3
-        if re.search(r"\(also known as|famously called|popularly known\)", q_lower):
+        if re.search(r"\(also known as|famously called|popularly known|nickname\)", q_lower):
             scaffolding += 0.3
 
-        return min(1.0, scaffolding)
+        return min(1.0, round(scaffolding, 2))

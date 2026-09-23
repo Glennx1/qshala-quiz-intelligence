@@ -6,6 +6,8 @@ import {
   Quiz,
   GeneratedQuestion,
   IngestionStatus,
+  TopicItem,
+  TopicSummary,
 } from './types';
 
 export function getApiBase(): string {
@@ -82,22 +84,38 @@ export const api = {
     return handleResponse<{ message: string }>(res);
   },
 
-  // Questions / Knowledge Base
+  // Questions / Knowledge Base Vault
+  getTopics: async (): Promise<TopicItem[]> => {
+    const res = await fetch(`${getApiBase()}/questions/topics`, { cache: 'no-store' });
+    return handleResponse<TopicItem[]>(res);
+  },
+
+  getTopicSummary: async (topic: string): Promise<TopicSummary> => {
+    const res = await fetch(`${getApiBase()}/questions/topics/${encodeURIComponent(topic)}/summary`, { cache: 'no-store' });
+    return handleResponse<TopicSummary>(res);
+  },
+
   searchQuestions: async (params: {
     query?: string;
     topic?: string;
+    subtopic?: string;
     grade_min?: number;
     grade_max?: number;
     difficulty?: string;
+    sort_by?: string;
+    sort_order?: 'asc' | 'desc';
     limit?: number;
     offset?: number;
   }): Promise<HistoricalQuestion[]> => {
     const searchParams = new URLSearchParams();
     if (params.query) searchParams.append('query', params.query);
     if (params.topic) searchParams.append('topic', params.topic);
+    if (params.subtopic) searchParams.append('subtopic', params.subtopic);
     if (params.grade_min) searchParams.append('grade_min', params.grade_min.toString());
     if (params.grade_max) searchParams.append('grade_max', params.grade_max.toString());
     if (params.difficulty) searchParams.append('difficulty', params.difficulty);
+    if (params.sort_by) searchParams.append('sort_by', params.sort_by);
+    if (params.sort_order) searchParams.append('sort_order', params.sort_order);
     if (params.limit) searchParams.append('limit', params.limit.toString());
     if (params.offset) searchParams.append('offset', params.offset.toString());
 

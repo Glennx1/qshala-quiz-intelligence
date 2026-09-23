@@ -43,6 +43,7 @@ class Question(Base):
     
     question_type = Column(String(50), default="SLIDE_QA")
     source_year = Column(Integer, nullable=True)
+    round_number = Column(Integer, nullable=True)
     
     embedding = Column(get_vector_column_type(settings.EMBEDDING_DIM), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

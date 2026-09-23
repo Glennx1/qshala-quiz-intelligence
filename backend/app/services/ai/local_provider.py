@@ -1021,19 +1021,20 @@ class LocalLLMProvider(LLMProvider):
         # Merge in a natural order: Easy, Medium, Hard
         all_selected = easy_items + med_items + hard_items
 
+        is_mcq = bool("multiple_choice" in prompt.lower() or "multiple-choice" in prompt.lower() or "multiple choice" in prompt.lower())
         questions_output = []
         for q in all_selected[:count]:
             clean_ans = re.sub(r"^[A-D]\)\s*", "", q["answer"])
             questions_output.append({
                 "question_text": q["question_text"],
-                "options": None,
-                "answer": clean_ans,
+                "options": q.get("options") if is_mcq else None,
+                "answer": q["answer"] if is_mcq else clean_ans,
                 "explanation": q["explanation"],
                 "difficulty": q.get("difficulty", "Medium"),
                 "grade_min": grade_min,
                 "grade_max": grade_max,
                 "topic": topic,
-                "question_type": "SLIDE_QA",
+                "question_type": "MULTIPLE_CHOICE" if is_mcq else "SLIDE_QA",
                 "provenance": {
                     "source_quote": q.get("provenance_quote", "Historical QShala presentation archive."),
                     "rationale": q.get("provenance_rationale", "Grounded in historical QShala slide content."),

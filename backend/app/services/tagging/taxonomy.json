@@ -1,0 +1,111 @@
+{
+  "categories": {
+    "Australian History & Culture": [
+      "australia", "australian", "aboriginal", "indigenous", "first nations", "first peoples",
+      "dreamtime", "jukurrpa", "first fleet", "captain cook", "edmund barton", "canberra",
+      "sydney", "melbourne", "brisbane", "adelaide", "perth", "darwin", "hobart",
+      "eureka stockade", "ned kelly", "convict", "anzac", "gallipoli", "outback",
+      "bushranger", "boomerang", "didgeridoo", "woomera", "corroboree", "billabong",
+      "koala", "kangaroo", "platypus", "wombat", "dingo", "tasmanian devil", "kookaburra",
+      "great barrier reef", "uluru", "ayers rock", "daintree", "torres strait"
+    ],
+    "World History": [
+      "history", "historical", "ancient", "medieval", "century", "dynasty", "empire",
+      "emperor", "pharaoh", "pyramid", "civilization", "renaissance", "revolution",
+      "colonial", "monarchy", "monarch", "king", "queen", "roman", "rome", "sparta",
+      "athens", "byzantine", "ottoman", "viking", "samurai", "mongol", "genghis khan",
+      "alexander the great", "julius caesar", "cleopatra", "napoleon", "waterloo",
+      "world war", "battle", "treaty of versailles", "cold war", "titanic"
+    ],
+    "Science & Nature": [
+      "science", "scientific", "biology", "physics", "chemistry", "organism", "species",
+      "animal", "plant", "mammal", "reptile", "amphibian", "bird", "insect", "dinosaur",
+      "fossil", "photosynthesis", "cell", "dna", "genetics", "evolution", "darwin",
+      "element", "periodic table", "atom", "molecule", "electron", "proton", "neutron",
+      "gravity", "energy", "force", "magnetism", "electricity", "light", "sound",
+      "ecosystem", "habitat", "rainforest", "biodiversity", "fungus", "bacteria", "virus"
+    ],
+    "World Geography": [
+      "geography", "continent", "country", "countries", "capital", "city", "nation",
+      "mountain", "mountain range", "everest", "himalayas", "alps", "andes", "rockies",
+      "river", "nile", "amazon", "yangtze", "danube", "ganges", "thames",
+      "ocean", "pacific", "atlantic", "indian ocean", "arctic", "sea", "mediterranean",
+      "desert", "sahara", "gobi", "kalahari", "atacama", "island", "archipelago",
+      "lake", "trench", "mariana trench", "volcano", "equator", "hemisphere", "border",
+      "peninsula", "glacier", "strait", "canyon"
+    ],
+    "Politics & Governance": [
+      "politics", "political", "government", "parliament", "congress", "senate",
+      "president", "prime minister", "governor", "democracy", "republic", "constitution",
+      "election", "voting", "ballot", "treaty", "united nations", "european union",
+      "diplomacy", "ambassador", "sovereign", "supreme court", "legislation", "lawmaker",
+      "monarchy", "chancellor", "minister", "cabinet", "policy", "human rights"
+    ],
+    "Literature & Language": [
+      "literature", "literary", "author", "writer", "novelist", "poet", "poetry", "poem",
+      "playwright", "novel", "book", "fiction", "character", "protagonist", "tragedy",
+      "comedy", "sonnet", "shakespeare", "homer", "iliad", "odyssey", "dickens",
+      "orwell", "tolkien", "mythology", "myth", "greek mythology", "norse mythology",
+      "legend", "fable", "grammar", "etymology", "alphabet", "language", "linguistics"
+    ],
+    "Arts & Music": [
+      "art", "artist", "painting", "painter", "sculpture", "sculptor", "museum", "gallery",
+      "louvre", "mona lisa", "da vinci", "michelangelo", "van gogh", "picasso", "monet",
+      "music", "musician", "composer", "symphony", "orchestra", "opera", "instrument",
+      "piano", "violin", "guitar", "flute", "drums", "beethoven", "mozart", "bach",
+      "jazz", "classical", "rock", "melody", "harmony", "rhythm", "renaissance art"
+    ],
+    "Inventions & Technology": [
+      "invention", "inventor", "invented", "discovery", "discoverer", "patent",
+      "technology", "technological", "computer", "internet", "world wide web", "software",
+      "hardware", "artificial intelligence", "robot", "microchip", "transistor",
+      "telephone", "alexander graham bell", "lightbulb", "thomas edison", "tesla",
+      "airplane", "wright brothers", "printing press", "gutenberg", "steam engine",
+      "penicillin", "alexander fleming", "vaccine", "radar", "satellite", "cern"
+    ],
+    "Sports & Games": [
+      "sport", "sports", "game", "games", "olympic", "olympics", "olympiad", "medal",
+      "tournament", "championship", "world cup", "athlete", "stadium",
+      "cricket", "wicket", "batsman", "bowler", "ashes", "ipl",
+      "football", "soccer", "fifa", "penalty", "goal",
+      "tennis", "wimbledon", "grand slam", "basketball", "nba",
+      "golf", "rugby", "athletics", "swimming", "chess", "grandmaster", "formula 1"
+    ],
+    "Food & Cuisine": [
+      "food", "cuisine", "dish", "recipe", "cooking", "culinary", "chef", "ingredient",
+      "spice", "herb", "flavor", "fermentation", "beverage", "tea", "coffee", "cocoa",
+      "chocolate", "bread", "cheese", "pasta", "curry", "sushi", "dim sum", "pizza",
+      "pastry", "wine", "olive oil", "agriculture", "harvest", "staple"
+    ],
+    "Movies & Entertainment": [
+      "movie", "film", "cinema", "director", "actor", "actress", "hollywood", "bollywood",
+      "academy award", "oscar", "golden globe", "cannes", "box office", "animated",
+      "animation", "disney", "pixar", "blockbuster", "soundtrack", "screenplay",
+      "broadway", "theatre", "television", "series", "emmy", "streaming"
+    ],
+    "Mathematics & Logic": [
+      "mathematics", "math", "arithmetic", "algebra", "geometry", "calculus", "trigonometry",
+      "equation", "formula", "theorem", "pythagoras", "euclid", "prime number", "fibonacci",
+      "pi", "infinity", "fraction", "percentage", "probability", "statistics", "puzzle",
+      "riddle", "logic", "deduction", "sequence", "algorithm", "symmetry"
+    ],
+    "Culture & Traditions": [
+      "culture", "cultural", "tradition", "traditional", "festival", "celebration", "holiday",
+      "custom", "heritage", "folklore", "ceremony", "ritual", "costume", "carnival",
+      "diwali", "holi", "eid", "christmas", "hanukkah", "lunar new year", "thanksgiving",
+      "indigenous culture", "folktale", "indigenous knowledge", "sacred"
+    ],
+    "Space & Astronomy": [
+      "space", "astronomy", "astronomical", "universe", "cosmos", "cosmic", "galaxy",
+      "milky way", "solar system", "planet", "mercury", "venus", "earth", "mars",
+      "jupiter", "saturn", "uranus", "neptune", "pluto", "moon", "lunar", "satellite",
+      "sun", "star", "supernova", "black hole", "nebula", "asteroid", "comet", "meteor",
+      "orbit", "telescope", "hubble", "james webb", "nasa", "esa", "isro", "apollo"
+    ],
+    "Current Affairs & People": [
+      "leader", "figure", "biography", "contemporary", "modern era", "international",
+      "laureate", "nobel prize", "peace prize", "summit", "treaty", "global",
+      "organization", "who", "unesco", "red cross", "advocate", "activist", "pioneer"
+    ]
+  }
+}

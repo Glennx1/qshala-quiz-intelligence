@@ -1,12 +1,25 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Loader2, Info, ChevronDown, CheckCircle2, AlertCircle } from 'lucide-react';
+import {
+  ArrowRight,
+  Loader2,
+  Info,
+  ChevronDown,
+  CheckCircle2,
+  AlertCircle,
+  Sparkles,
+  Database,
+  Layers,
+  BookOpen,
+} from 'lucide-react';
 import { api } from '../lib/api';
+import { TopicItem, TopicSummary } from '../lib/types';
 
 type AudienceType = 'primary' | 'middle_school' | 'high_school' | 'college' | 'adult';
 type DifficultyPreset = 'Balanced' | 'Easy-heavy' | 'Hard-heavy' | 'Custom';
+type GenerationMode = 'HISTORICAL' | 'NEW' | 'REMIX' | 'SIMILAR';
 
 interface AudienceOption {
   id: AudienceType;
@@ -87,7 +100,17 @@ function getDistributionForPreset(preset: DifficultyPreset, count: number): { ea
 
 export default function QuickGenerateCard() {
   const router = useRouter();
+
+  // Topic Predictive State
   const [topic, setTopic] = useState('Australian History');
+  const [subtopic, setSubtopic] = useState('');
+  const [topicsList, setTopicsList] = useState<TopicItem[]>([]);
+  const [filteredTopics, setFilteredTopics] = useState<TopicItem[]>([]);
+  const [showTopicDropdown, setShowTopicDropdown] = useState(false);
+  const [topicSummary, setTopicSummary] = useState<TopicSummary | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Audience & Grades
   const [audienceType, setAudienceType] = useState<AudienceType>('primary');
   const [selectedGrades, setSelectedGrades] = useState<number[]>([3, 4, 5]);
   const [questionCount, setQuestionCount] = useState<number>(10);
@@ -98,9 +121,60 @@ export default function QuickGenerateCard() {
   const [mediumCount, setMediumCount] = useState<number>(5);
   const [hardCount, setHardCount] = useState<number>(2);
 
+  // Mode & Format
+  const [generationMode, setGenerationMode] = useState<GenerationMode>('HISTORICAL');
   const [questionTypes, setQuestionTypes] = useState<string[]>(['SLIDE_QA']);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Load topics from vault on mount
+  useEffect(() => {
+    api.getTopics()
+      .then((list) => {
+        setTopicsList(list);
+        setFilteredTopics(list);
+      })
+      .catch((err) => console.error('Error fetching vault topics:', err));
+  }, []);
+
+  // Update topic summary whenever selected topic matches an indexed topic
+  useEffect(() => {
+    if (topic.trim()) {
+      api.getTopicSummary(topic.trim())
+        .then((summary) => setTopicSummary(summary))
+        .catch(() => setTopicSummary(null));
+    } else {
+      setTopicSummary(null);
+    }
+  }, [topic]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowTopicDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleTopicInputChange = (val: string) => {
+    setTopic(val);
+    if (!val.trim()) {
+      setFilteredTopics(topicsList);
+    } else {
+      const q = val.toLowerCase();
+      setFilteredTopics(topicsList.filter((t) => t.topic.toLowerCase().includes(q)));
+    }
+    setShowTopicDropdown(true);
+  };
+
+  const handleSelectTopic = (selected: string) => {
+    setTopic(selected);
+    setShowTopicDropdown(false);
+  };
 
   const currentAudience = AUDIENCE_OPTIONS.find((a) => a.id === audienceType) || AUDIENCE_OPTIONS[0];
   const totalAllocated = easyCount + mediumCount + hardCount;
@@ -122,10 +196,6 @@ export default function QuickGenerateCard() {
     } else {
       setSelectedGrades([...selectedGrades, g].sort((a, b) => a - b));
     }
-  };
-
-  const setGradeRange = (grades: number[]) => {
-    setSelectedGrades(grades);
   };
 
   const handleQuestionCountChange = (newCount: number) => {
@@ -190,6 +260,7 @@ export default function QuickGenerateCard() {
 
       const quiz = await api.generateQuiz({
         topic: topic.trim(),
+        subtopic: subtopic.trim() || undefined,
         audience_type: audienceType,
         grades: hasGrades ? selectedGrades : undefined,
         grade_min: minG,
@@ -202,7 +273,7 @@ export default function QuickGenerateCard() {
         },
         question_count: questionCount,
         question_types: questionTypes,
-        generation_mode: 'HISTORICAL',
+        generation_mode: generationMode,
         style: 'QSHALA_HISTORICAL',
         raw_prompt: promptSummary,
       });
@@ -218,328 +289,371 @@ export default function QuickGenerateCard() {
 
   return (
     <div className="rounded-xl border border-slate-200/80 bg-white p-6 sm:p-7 shadow-sm shadow-slate-100/50">
-      {/* Header */}
-      <div className="border-b border-slate-100 pb-4 mb-6">
-        <h2 className="text-[20px] font-bold tracking-tight text-slate-900">Create a Quiz</h2>
-        <p className="mt-1 text-[13px] text-slate-500 font-normal leading-relaxed">
-          Configure audience calibration and difficulty distribution to generate fresh questions grounded in your knowledge base.
-        </p>
-      </div>
-
-      {error && (
-        <div className="mb-5 rounded-lg border border-red-200 bg-red-50 p-3 text-[13px] text-red-700 flex items-center gap-2">
-          <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
-          <span>{error}</span>
-        </div>
-      )}
-
       <form onSubmit={handleGenerate} className="space-y-6">
-        {/* Row 1: Topic */}
-        <div>
-          <label className="block text-[13px] font-semibold text-slate-700 mb-1.5">Topic</label>
+        {/* Section 1: Predictive Topic Input with Vault Auto-Detection */}
+        <div className="space-y-2" ref={dropdownRef}>
+          <div className="flex items-center justify-between">
+            <label className="text-[13px] font-semibold text-slate-800">
+              Quiz Topic
+            </label>
+            <span className="text-[12px] text-slate-400 font-normal">
+              Type to search or predict from Vault
+            </span>
+          </div>
+
           <div className="relative">
             <input
               type="text"
               value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              placeholder="e.g. World Geography, Australian History, Science & Nature"
-              className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-[14px] font-normal text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              onChange={(e) => handleTopicInputChange(e.target.value)}
+              onFocus={() => setShowTopicDropdown(true)}
+              placeholder="e.g. Australian History, World Geography, Science & Nature"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-[14px] font-normal text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
-          </div>
-        </div>
 
-        {/* Row 2: Target Audience */}
-        <div className="rounded-lg border border-slate-200/90 bg-slate-50/40 p-4 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
-            {/* Audience Dropdown */}
-            <div>
-              <label className="block text-[13px] font-semibold text-slate-700 mb-1.5">
-                Target Audience
-              </label>
-              <div className="relative">
-                <select
-                  value={audienceType}
-                  onChange={(e) => handleAudienceChange(e.target.value as AudienceType)}
-                  className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-[13.5px] font-normal text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 pr-9 cursor-pointer"
-                >
-                  {AUDIENCE_OPTIONS.map((opt) => (
-                    <option key={opt.id} value={opt.id}>
-                      {opt.label} ({opt.sublabel})
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-3 h-4 w-4 text-slate-400 pointer-events-none" />
-              </div>
-            </div>
-
-            {/* Conditional Grade Selector or Audience Description */}
-            <div>
-              {currentAudience.availableGrades.length > 0 ? (
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-[13px] font-semibold text-slate-700">
-                      Select Grades ({currentAudience.label})
-                    </label>
-                    {/* Quick Range Presets */}
-                    {audienceType === 'primary' && (
-                      <div className="flex gap-1.5 items-center">
-                        <button
-                          type="button"
-                          onClick={() => setGradeRange([1, 2])}
-                          className="text-[12px] text-blue-600 hover:underline font-medium cursor-pointer"
-                        >
-                          Grades 1–2
-                        </button>
-                        <span className="text-[11px] text-slate-300">·</span>
-                        <button
-                          type="button"
-                          onClick={() => setGradeRange([3, 4, 5])}
-                          className="text-[12px] text-blue-600 hover:underline font-medium cursor-pointer"
-                        >
-                          Grades 3–5
-                        </button>
-                      </div>
-                    )}
-                    {audienceType === 'high_school' && (
-                      <div className="flex gap-1.5 items-center">
-                        <button
-                          type="button"
-                          onClick={() => setGradeRange([9, 10])}
-                          className="text-[12px] text-blue-600 hover:underline font-medium cursor-pointer"
-                        >
-                          Grades 9–10
-                        </button>
-                        <span className="text-[11px] text-slate-300">·</span>
-                        <button
-                          type="button"
-                          onClick={() => setGradeRange([11, 12])}
-                          className="text-[12px] text-blue-600 hover:underline font-medium cursor-pointer"
-                        >
-                          Grades 11–12
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap gap-1.5">
-                    {currentAudience.availableGrades.map((g) => {
-                      const isSelected = selectedGrades.includes(g);
-                      return (
-                        <button
-                          key={g}
-                          type="button"
-                          onClick={() => toggleGrade(g)}
-                          className={`h-9 min-w-10 px-2.5 rounded-lg border text-[13px] font-medium transition-all cursor-pointer ${
-                            isSelected
-                              ? 'border-blue-600 bg-blue-50/90 text-blue-700 font-semibold shadow-xs'
-                              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                          }`}
-                        >
-                          Grade {g}
-                        </button>
-                      );
-                    })}
-                  </div>
+            {showTopicDropdown && filteredTopics.length > 0 && (
+              <div className="absolute z-20 left-0 right-0 mt-1 max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg py-1">
+                <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                  Predicted Vault Topics ({filteredTopics.length})
                 </div>
-              ) : (
-                <div className="h-full flex flex-col justify-center pt-2 sm:pt-6">
-                  <div className="rounded-lg border border-slate-200/60 bg-white/80 px-3.5 py-2 text-[13px] text-slate-600 leading-relaxed">
-                    <span className="font-semibold text-slate-800">
-                      {currentAudience.label} Audience:
-                    </span>{' '}
-                    {audienceType === 'college'
-                      ? 'Questions calibrated for tertiary students with academic rigor and multi-step critical synthesis.'
-                      : 'Questions designed for adult pub-trivia, tournaments, and corporate engagement.'}
-                  </div>
+                {filteredTopics.map((t) => (
+                  <button
+                    key={t.topic}
+                    type="button"
+                    onClick={() => handleSelectTopic(t.topic)}
+                    className="w-full text-left px-3.5 py-2 hover:bg-slate-50 flex items-center justify-between text-[13px] text-slate-800 cursor-pointer"
+                  >
+                    <span className="font-medium">{t.topic}</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                      {t.count} questions
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Live Topic Intelligence Badge */}
+          {topicSummary && topicSummary.total_questions > 0 ? (
+            <div className="rounded-lg bg-blue-50/60 border border-blue-100 p-3 text-[12px] space-y-1.5">
+              <div className="flex items-center justify-between font-semibold text-blue-900">
+                <span className="flex items-center gap-1.5">
+                  <Database className="h-3.5 w-3.5 text-blue-600" />
+                  Vault Intelligence: {topicSummary.total_questions} Questions Available
+                </span>
+                <span className="text-[11px] text-blue-600 font-medium">
+                  Grades {topicSummary.grade_min}–{topicSummary.grade_max}
+                </span>
+              </div>
+              <div className="flex items-center gap-3 text-slate-600">
+                <span>Easy: <strong className="text-emerald-700">{topicSummary.difficulty_breakdown.Easy || 0}</strong></span>
+                <span>Medium: <strong className="text-amber-700">{topicSummary.difficulty_breakdown.Medium || 0}</strong></span>
+                <span>Hard: <strong className="text-purple-700">{topicSummary.difficulty_breakdown.Hard || 0}</strong></span>
+              </div>
+              {topicSummary.subtopics && topicSummary.subtopics.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1 pt-1">
+                  <span className="text-slate-400 text-[11px]">Subtopics:</span>
+                  {topicSummary.subtopics.map((sub) => (
+                    <button
+                      key={sub}
+                      type="button"
+                      onClick={() => setSubtopic(subtopic === sub ? '' : sub)}
+                      className={`px-1.5 py-0.5 rounded text-[10.5px] font-medium border cursor-pointer ${
+                        subtopic === sub
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {sub}
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
+          ) : (
+            topic.trim() && (
+              <p className="text-[11.5px] text-amber-600 flex items-center gap-1">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                <span>Novel topic: AI generator will synthesize grounded questions if vault has few matches.</span>
+              </p>
+            )
+          )}
+        </div>
+
+        {/* Section 2: Generation Mode Selector */}
+        <div className="space-y-2">
+          <label className="text-[13px] font-semibold text-slate-800">
+            Generation Strategy
+          </label>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[
+              {
+                id: 'HISTORICAL',
+                label: 'Vault Curation',
+                desc: 'Compile real tournament slide pairs',
+              },
+              {
+                id: 'NEW',
+                label: 'AI Fresh',
+                desc: 'Craft novel questions from facts',
+              },
+              {
+                id: 'REMIX',
+                label: 'AI Remix',
+                desc: 'Reimagined angles & reverse clues',
+              },
+              {
+                id: 'SIMILAR',
+                label: 'AI Sibling',
+                desc: 'Mirror tournament intellectual depth',
+              },
+            ].map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setGenerationMode(m.id as GenerationMode)}
+                className={`p-3 text-left rounded-lg border transition-all cursor-pointer ${
+                  generationMode === m.id
+                    ? 'border-blue-600 bg-blue-50/50 text-blue-900 shadow-xs'
+                    : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                }`}
+              >
+                <div className="text-[12.5px] font-bold">{m.label}</div>
+                <div className="text-[11px] text-slate-500 font-normal mt-0.5 leading-tight">{m.desc}</div>
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* Row 3: Question Count & Difficulty Distribution */}
-        <div className="rounded-lg border border-slate-200/90 bg-white p-4 space-y-4">
-          {/* Top Bar: Question Count + Distribution Presets */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end pb-3 border-b border-slate-100">
-            {/* Number of Questions */}
-            <div>
-              <label className="block text-[13px] font-semibold text-slate-700 mb-1.5">
-                Number of Questions
-              </label>
-              <div className="flex gap-2">
-                {[5, 10, 15, 20].map((num) => (
-                  <button
-                    key={num}
-                    type="button"
-                    onClick={() => handleQuestionCountChange(num)}
-                    className={`flex-1 rounded-lg border py-2 text-[13px] font-medium transition-all cursor-pointer ${
-                      questionCount === num
-                        ? 'border-blue-600 bg-blue-50/80 text-blue-700 font-semibold'
-                        : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    {num} Qs
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Distribution Presets */}
-            <div>
-              <label className="block text-[13px] font-semibold text-slate-700 mb-1.5">
-                Difficulty Presets
-              </label>
-              <div className="grid grid-cols-4 gap-1 rounded-lg border border-slate-200 bg-slate-50/60 p-1">
-                {(['Balanced', 'Easy-heavy', 'Hard-heavy', 'Custom'] as DifficultyPreset[]).map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => handlePresetChange(p)}
-                    className={`rounded-md py-1.5 text-[12px] font-medium transition-all cursor-pointer truncate ${
-                      difficultyPreset === p
-                        ? 'bg-white text-blue-700 font-semibold shadow-xs border border-slate-200/80'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Editable Distribution Inputs */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[13px] font-semibold text-slate-700">
-                Difficulty Distribution Allocation
-              </span>
-              <div className="flex items-center gap-1.5 text-[12px]">
-                {isDistributionValid ? (
-                  <span className="flex items-center gap-1 font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60">
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    Total: {totalAllocated} / {questionCount} ✓
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1 font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/60">
-                    <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
-                    Total: {totalAllocated} / {questionCount} (Must equal {questionCount})
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-3">
-              {/* Easy Input */}
-              <div className="rounded-lg border border-slate-200 bg-slate-50/30 p-2.5">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[13px] font-semibold text-emerald-700">Easy</span>
-                  <span className="text-[11px] text-slate-400 font-medium">
-                    {Math.round((easyCount / (questionCount || 1)) * 100)}%
-                  </span>
-                </div>
-                <input
-                  type="number"
-                  min="0"
-                  max={questionCount}
-                  value={easyCount}
-                  onChange={(e) => handleDistributionInput('easy', parseInt(e.target.value))}
-                  className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[14px] font-semibold text-slate-900 focus:border-emerald-500 focus:outline-none"
-                />
-              </div>
-
-              {/* Medium Input */}
-              <div className="rounded-lg border border-slate-200 bg-slate-50/30 p-2.5">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[13px] font-semibold text-blue-700">Medium</span>
-                  <span className="text-[11px] text-slate-400 font-medium">
-                    {Math.round((mediumCount / (questionCount || 1)) * 100)}%
-                  </span>
-                </div>
-                <input
-                  type="number"
-                  min="0"
-                  max={questionCount}
-                  value={mediumCount}
-                  onChange={(e) => handleDistributionInput('medium', parseInt(e.target.value))}
-                  className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[14px] font-semibold text-slate-900 focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-
-              {/* Hard Input */}
-              <div className="rounded-lg border border-slate-200 bg-slate-50/30 p-2.5">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[13px] font-semibold text-purple-700">Hard</span>
-                  <span className="text-[11px] text-slate-400 font-medium">
-                    {Math.round((hardCount / (questionCount || 1)) * 100)}%
-                  </span>
-                </div>
-                <input
-                  type="number"
-                  min="0"
-                  max={questionCount}
-                  value={hardCount}
-                  onChange={(e) => handleDistributionInput('hard', parseInt(e.target.value))}
-                  className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[14px] font-semibold text-slate-900 focus:border-purple-500 focus:outline-none"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Row 4: Question & Slide Format */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="block text-[13px] font-semibold text-slate-700">Quiz Question Format</label>
-            <span className="text-[12px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
-              QShala Signature: Question & Next Slide Answer + Explanation
-            </span>
-          </div>
-          <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-[13px]">
-            <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-100 text-blue-700 font-bold text-[12px]">
-                Q&A
-              </div>
-              <div>
-                <span className="font-semibold text-slate-900 block">Slide Pair Presentation (Question → Answer Slide)</span>
-                <span className="text-[12px] text-slate-500 font-normal">
-                  Slide 1 displays the curiosity-driven question; Slide 2 reveals the answer and educational backstory (no MCQs).
+        {/* Section 3: Audience Category */}
+        <div className="space-y-2">
+          <label className="text-[13px] font-semibold text-slate-800">
+            Target Audience
+          </label>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            {AUDIENCE_OPTIONS.map((aud) => (
+              <button
+                key={aud.id}
+                type="button"
+                onClick={() => handleAudienceChange(aud.id)}
+                className={`flex flex-col items-start p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                  audienceType === aud.id
+                    ? 'border-blue-600 bg-blue-50/40 text-blue-900 shadow-xs'
+                    : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50/50'
+                }`}
+              >
+                <span className="text-[12.5px] font-semibold">{aud.label}</span>
+                <span className="text-[10.5px] text-slate-400 font-normal mt-0.5 leading-tight">
+                  {aud.sublabel}
                 </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Section 4: Grade Selector (for school audiences) */}
+        {currentAudience.availableGrades.length > 0 && (
+          <div className="space-y-2 rounded-lg border border-slate-100 bg-slate-50/60 p-3">
+            <div className="flex items-center justify-between">
+              <label className="text-[12.5px] font-semibold text-slate-700">
+                School Grade Band
+              </label>
+              <div className="flex gap-1.5 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setSelectedGrades(currentAudience.availableGrades)}
+                  className="text-blue-600 hover:underline cursor-pointer font-medium"
+                >
+                  All {currentAudience.label}
+                </button>
               </div>
             </div>
-            <span className="shrink-0 text-[11px] font-bold uppercase tracking-wider text-slate-600 bg-white border border-slate-200 px-2.5 py-1 rounded-md">
-              Active Format
-            </span>
+
+            <div className="flex flex-wrap gap-2 pt-1">
+              {currentAudience.availableGrades.map((g) => {
+                const isSelected = selectedGrades.includes(g);
+                return (
+                  <button
+                    key={g}
+                    type="button"
+                    onClick={() => toggleGrade(g)}
+                    className={`h-8 w-11 rounded-md text-[12.5px] font-semibold transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    Gr {g}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Section 5: Question Count & Format */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <label className="text-[13px] font-semibold text-slate-800">
+              Question Count
+            </label>
+            <div className="flex gap-2">
+              {[5, 10, 15, 20].map((cnt) => (
+                <button
+                  key={cnt}
+                  type="button"
+                  onClick={() => handleQuestionCountChange(cnt)}
+                  className={`flex-1 py-1.5 rounded-md text-[13px] font-semibold transition-colors cursor-pointer ${
+                    questionCount === cnt
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  {cnt} Qs
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[13px] font-semibold text-slate-800">
+              Presentation Format
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setQuestionTypes(['SLIDE_QA'])}
+                className={`flex-1 py-1.5 rounded-md text-[12px] font-semibold transition-colors cursor-pointer ${
+                  questionTypes.includes('SLIDE_QA') && !questionTypes.includes('MULTIPLE_CHOICE')
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                Q&A Slide Pairs
+              </button>
+              <button
+                type="button"
+                onClick={() => setQuestionTypes(['MULTIPLE_CHOICE'])}
+                className={`flex-1 py-1.5 rounded-md text-[12px] font-semibold transition-colors cursor-pointer ${
+                  questionTypes.includes('MULTIPLE_CHOICE')
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                4-Option MCQ
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Footer: Info Note & Primary Action */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-4 border-t border-slate-100">
-          <div className="flex items-start gap-2 max-w-md text-[13px] text-slate-500 font-normal leading-relaxed">
-            <Info className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
-            <span>
-              Questions and slide pairs are retrieved and assembled directly from your curated QShala knowledge base.
+        {/* Section 6: Difficulty Distribution */}
+        <div className="space-y-3 rounded-lg border border-slate-200/80 bg-white p-4">
+          <div className="flex items-center justify-between">
+            <label className="text-[13px] font-semibold text-slate-800">
+              Difficulty Distribution
+            </label>
+            <span
+              className={`text-[12px] font-semibold ${
+                isDistributionValid ? 'text-emerald-600' : 'text-rose-600'
+              }`}
+            >
+              {totalAllocated} / {questionCount} Allocated
             </span>
           </div>
 
-          <button
-            type="submit"
-            disabled={loading || !isDistributionValid}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-6 py-2.5 text-[14px] font-semibold text-white shadow-sm shadow-blue-500/20 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer shrink-0"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span>Searching & Generating...</span>
-              </>
-            ) : (
-              <>
-                <span>Generate Quiz</span>
-                <ArrowRight className="h-4 w-4" />
-              </>
-            )}
-          </button>
+          <div className="flex gap-2">
+            {(['Balanced', 'Easy-heavy', 'Hard-heavy'] as DifficultyPreset[]).map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => handlePresetChange(preset)}
+                className={`px-3 py-1 text-[12px] rounded-md font-medium transition-colors cursor-pointer ${
+                  difficultyPreset === preset
+                    ? 'bg-slate-900 text-white'
+                    : 'border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                {preset}
+              </button>
+            ))}
+          </div>
+
+          {/* Granular Sliders / Number Controls */}
+          <div className="grid grid-cols-3 gap-3 pt-2">
+            <div className="rounded-md border border-emerald-100 bg-emerald-50/30 p-2.5 text-center">
+              <div className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">
+                Easy
+              </div>
+              <input
+                type="number"
+                min={0}
+                max={questionCount}
+                value={easyCount}
+                onChange={(e) => handleDistributionInput('easy', parseInt(e.target.value))}
+                className="mt-1 w-full text-center text-[16px] font-bold text-slate-900 bg-transparent border-0 focus:ring-0"
+              />
+            </div>
+
+            <div className="rounded-md border border-amber-100 bg-amber-50/30 p-2.5 text-center">
+              <div className="text-[11px] font-bold text-amber-700 uppercase tracking-wider">
+                Medium
+              </div>
+              <input
+                type="number"
+                min={0}
+                max={questionCount}
+                value={mediumCount}
+                onChange={(e) => handleDistributionInput('medium', parseInt(e.target.value))}
+                className="mt-1 w-full text-center text-[16px] font-bold text-slate-900 bg-transparent border-0 focus:ring-0"
+              />
+            </div>
+
+            <div className="rounded-md border border-purple-100 bg-purple-50/30 p-2.5 text-center">
+              <div className="text-[11px] font-bold text-purple-700 uppercase tracking-wider">
+                Hard
+              </div>
+              <input
+                type="number"
+                min={0}
+                max={questionCount}
+                value={hardCount}
+                onChange={(e) => handleDistributionInput('hard', parseInt(e.target.value))}
+                className="mt-1 w-full text-center text-[16px] font-bold text-slate-900 bg-transparent border-0 focus:ring-0"
+              />
+            </div>
+          </div>
         </div>
+
+        {error && (
+          <div className="rounded-lg bg-rose-50 border border-rose-200 p-3 text-[13px] text-rose-700 flex items-start gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {/* Submit Action */}
+        <button
+          type="submit"
+          disabled={loading || !isDistributionValid}
+          className="w-full rounded-lg bg-blue-600 py-3 text-[14px] font-semibold text-white shadow-sm shadow-blue-500/20 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer flex items-center justify-center gap-2"
+        >
+          {loading ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Compiling Quiz from Vault & Generating Slides...</span>
+            </>
+          ) : (
+            <>
+              <Sparkles className="h-4 w-4" />
+              <span>
+                {generationMode === 'HISTORICAL'
+                  ? `Compile ${questionCount}-Question Quiz from Vault`
+                  : `Generate ${questionCount}-Question AI Quiz`}
+              </span>
+              <ArrowRight className="h-4 w-4" />
+            </>
+          )}
+        </button>
       </form>
     </div>
   );

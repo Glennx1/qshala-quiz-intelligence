@@ -6,6 +6,7 @@ import {
   Plus,
   FileJson,
   FileSpreadsheet,
+  Presentation,
   ArrowRight,
   Loader2,
 } from 'lucide-react';
@@ -112,6 +113,14 @@ export default function QuizzesLibraryPage() {
                         title="Download CSV"
                       >
                         <FileSpreadsheet className="h-3.5 w-3.5" />
+                      </a>
+                      <a
+                        href={api.exportQuizUrl(quiz.id, 'pptx')}
+                        download
+                        className="rounded p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                        title="Download QShala Master PPTX"
+                      >
+                        <Presentation className="h-3.5 w-3.5" />
                       </a>
                       <Link
                         href={`/quizzes/${quiz.id}`}

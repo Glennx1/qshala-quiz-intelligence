@@ -1,7 +1,7 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func, desc, asc
 from backend.app.database import get_db
 from backend.app.models.question import Question
 from backend.app.models.document import Document, Slide
@@ -35,6 +35,8 @@ def to_question_response(q: Question, doc: Optional[Document], slide: Optional[S
         curiosity_score=getattr(q, "curiosity_score", 7) or 7,
         temporal_nature=getattr(q, "temporal_nature", "EVERGREEN") or "EVERGREEN",
         occurrence_count=getattr(q, "occurrence_count", 1) or 1,
+        provenance_decks=getattr(q, "provenance_decks", []) or [],
+        round_number=getattr(q, "round_number", None),
         question_type=q.question_type or "SLIDE_QA",
         source_year=q.source_year,
         created_at=q.created_at,
@@ -42,14 +44,85 @@ def to_question_response(q: Question, doc: Optional[Document], slide: Optional[S
         slide_number=slide.slide_number if slide else None
     )
 
+@router.get("/topics", response_model=List[Dict[str, Any]])
+def list_vault_topics(db: Session = Depends(get_db)):
+    """
+    Returns all distinct topics currently stored in the Question Vault along with their counts.
+    Used for predictive topic autocomplete and topic browsing.
+    """
+    results = (
+        db.query(Question.topic, func.count(Question.id).label("count"))
+        .filter(Question.topic.isnot(None))
+        .group_by(Question.topic)
+        .order_by(desc("count"))
+        .all()
+    )
+    return [{"topic": r[0], "count": r[1]} for r in results]
+
+@router.get("/topics/{topic}/summary", response_model=Dict[str, Any])
+def get_topic_summary(topic: str, db: Session = Depends(get_db)):
+    """
+    Returns deep pedagogical metadata for a given topic in the vault:
+    total questions, difficulty breakdown, subtopics, grade coverage, and previews.
+    """
+    questions = (
+        db.query(Question)
+        .filter(or_(Question.topic.ilike(f"%{topic}%"), Question.subtopic.ilike(f"%{topic}%")))
+        .all()
+    )
+
+    if not questions:
+        return {
+            "topic": topic,
+            "total_questions": 0,
+            "difficulty_breakdown": {"Easy": 0, "Medium": 0, "Hard": 0},
+            "subtopics": [],
+            "grade_min": None,
+            "grade_max": None,
+            "sample_questions": []
+        }
+
+    diff_counts = {"Easy": 0, "Medium": 0, "Hard": 0}
+    subtopics = set()
+    grade_mins = []
+    grade_maxs = []
+
+    for q in questions:
+        d = q.difficulty or "Medium"
+        diff_counts[d] = diff_counts.get(d, 0) + 1
+        if q.subtopic:
+            subtopics.add(q.subtopic)
+        if q.grade_min:
+            grade_mins.append(q.grade_min)
+        if q.grade_max:
+            grade_maxs.append(q.grade_max)
+
+    samples = [
+        {"question_text": q.question_text, "difficulty": q.difficulty, "answer": q.answer}
+        for q in questions[:3]
+    ]
+
+    return {
+        "topic": topic,
+        "total_questions": len(questions),
+        "difficulty_breakdown": diff_counts,
+        "subtopics": sorted(list(subtopics)),
+        "grade_min": min(grade_mins) if grade_mins else 3,
+        "grade_max": max(grade_maxs) if grade_maxs else 12,
+        "sample_questions": samples
+    }
+
 @router.get("", response_model=List[QuestionResponse])
 async def search_questions(
     query: Optional[str] = Query(None),
     topic: Optional[str] = Query(None),
+    subtopic: Optional[str] = Query(None),
     grade_min: Optional[int] = Query(None),
     grade_max: Optional[int] = Query(None),
     difficulty: Optional[str] = Query(None),
-    limit: int = Query(25, ge=1, le=100),
+    sort_by: Optional[str] = Query("created_at"),
+    sort_order: Optional[str] = Query("desc"),
+    limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db)
 ):
@@ -69,7 +142,7 @@ async def search_questions(
             output.append(to_question_response(r["question"], r["document"], r["slide"]))
         return output
 
-    # Direct query with filters
+    # Direct query with rich metadata filters
     q_builder = db.query(Question, Document, Slide).\
         join(Document, Question.document_id == Document.id).\
         outerjoin(Slide, Question.slide_id == Slide.id)
@@ -81,6 +154,8 @@ async def search_questions(
                 Question.subtopic.ilike(f"%{topic}%")
             )
         )
+    if subtopic:
+        q_builder = q_builder.filter(Question.subtopic.ilike(f"%{subtopic}%"))
     if difficulty:
         q_builder = q_builder.filter(Question.difficulty.ilike(difficulty))
     if grade_min is not None:
@@ -88,7 +163,14 @@ async def search_questions(
     if grade_max is not None:
         q_builder = q_builder.filter(Question.grade_max <= grade_max)
 
-    items = q_builder.order_by(Question.created_at.desc()).offset(offset).limit(limit).all()
+    # Sorting
+    sort_col = getattr(Question, sort_by, Question.created_at)
+    if sort_order == "asc":
+        q_builder = q_builder.order_by(asc(sort_col))
+    else:
+        q_builder = q_builder.order_by(desc(sort_col))
+
+    items = q_builder.offset(offset).limit(limit).all()
 
     output = []
     for q, doc, slide in items:

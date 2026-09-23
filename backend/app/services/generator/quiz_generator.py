@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import random
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from backend.app.models.quiz import Quiz, GeneratedQuestion, RetrievalSource
@@ -14,6 +15,12 @@ from backend.app.schemas.quiz import QuizGenerateRequest
 logger = logging.getLogger(__name__)
 
 class QuizGenerator:
+    """
+    Intelligent Quiz Compilation Engine for QShala.
+    Supports Vault-First compilation (pulling from verified historical questions by difficulty tier)
+    and AI-assisted novel generation (grounded strictly in knowledge base facts).
+    """
+
     def __init__(self, db: Session):
         self.db = db
         self.llm = get_llm_provider()
@@ -21,30 +28,10 @@ class QuizGenerator:
         self.validator = QuestionValidator(db)
 
     async def generate_quiz(self, req: QuizGenerateRequest) -> Quiz:
-        # Step 1: Hybrid Retrieval of historical context
-        retrieved_items = await self.retriever.search(
-            query=f"{req.topic} {req.subtopic or ''} {req.raw_prompt or ''}",
-            topic=req.topic,
-            grade_min=req.grade_min,
-            grade_max=req.grade_max,
-            difficulty=req.difficulty,
-            limit=max(req.question_count * 2, 10)
-        )
+        # Step 1: Clean Retrieval Query (do not contaminate vector search with prompt boilerplate)
+        clean_query = f"{req.topic} {req.subtopic or ''}".strip()
 
-        # Check for insufficient evidence
-        if not retrieved_items and req.generation_mode != "HISTORICAL":
-            # If no items retrieved at all, check if database is empty
-            total_q_count = self.db.query(Question).count()
-            if total_q_count == 0:
-                raise ValueError("Insufficient supporting material in the QShala knowledge base. Please upload historical quiz slides first.")
-
-        # Step 2: Context Building & Exemplars
-        context_data = ContextBuilder.build_prompt_context(retrieved_items)
-        evidence_context = context_data["evidence_context"]
-        source_mapping = context_data["source_mapping"]
-        style_examples = context_data["style_examples"]
-
-        # Step 3: Audience & Difficulty Distribution Resolution
+        # Step 2: Audience & Difficulty Distribution Resolution
         audience_map = {
             "primary": "Primary School",
             "middle_school": "Middle School",
@@ -100,7 +87,7 @@ class QuizGenerator:
                 easy_count, medium_count, hard_count = req.question_count, 0, 0
             elif diff_lower == "hard":
                 easy_count, medium_count, hard_count = 0, 0, req.question_count
-            else:  # Balanced
+            else:  # Balanced default
                 if req.question_count == 10:
                     easy_count, medium_count, hard_count = 3, 5, 2
                 elif req.question_count == 20:
@@ -134,13 +121,52 @@ class QuizGenerator:
         self.db.add(quiz_obj)
         self.db.flush()
 
-        generated_raw_questions = []
+        # Step 3: Vault-First Retrieval or Hybrid Search
+        retrieved_items = await self.retriever.search(
+            query=clean_query,
+            topic=req.topic,
+            grade_min=grade_min,
+            grade_max=grade_max,
+            difficulty=req.difficulty,
+            limit=max(req.question_count * 3, 20)
+        )
 
+        context_data = ContextBuilder.build_prompt_context(retrieved_items)
+        evidence_context = context_data["evidence_context"]
+        source_mapping = context_data["source_mapping"]
+        style_examples = context_data["style_examples"]
+
+        generated_raw_questions: List[Dict[str, Any]] = []
+
+        # Check if user wants Vault Curation (HISTORICAL) or Vault is sufficient
         if req.generation_mode == "HISTORICAL":
-            # Direct curation mode
-            for i, item in enumerate(retrieved_items[:req.question_count], start=1):
+            # Vault-First Compilation: compile questions tier by tier
+            by_diff: Dict[str, List[Dict[str, Any]]] = {"Easy": [], "Medium": [], "Hard": []}
+            for item in retrieved_items:
+                d = item["question"].difficulty or "Medium"
+                by_diff.setdefault(d, []).append(item)
+
+            # Randomize within tiers so repeated quiz generation produces varied sets
+            for k in by_diff:
+                random.shuffle(by_diff[k])
+
+            selected_items: List[Dict[str, Any]] = []
+            selected_items.extend(by_diff["Easy"][:easy_count])
+            selected_items.extend(by_diff["Medium"][:medium_count])
+            selected_items.extend(by_diff["Hard"][:hard_count])
+
+            # If shortfall, backfill from remaining pool
+            if len(selected_items) < req.question_count:
+                selected_ids = {it["question"].id for it in selected_items}
+                for it in retrieved_items:
+                    if it["question"].id not in selected_ids:
+                        selected_items.append(it)
+                        if len(selected_items) == req.question_count:
+                            break
+
+            for i, item in enumerate(selected_items[:req.question_count], start=1):
                 hist_q = item["question"]
-                assigned_diff = target_difficulties[i - 1] if (i - 1) < len(target_difficulties) else hist_q.difficulty
+                assigned_diff = hist_q.difficulty if hist_q.difficulty in ["Easy", "Medium", "Hard"] else (target_difficulties[i - 1] if i - 1 < len(target_difficulties) else "Medium")
                 generated_raw_questions.append({
                     "question_text": hist_q.question_text,
                     "options": hist_q.options,
@@ -161,21 +187,28 @@ class QuizGenerator:
                         "source_quote": item.get("quote")
                     }
                 })
+
         else:
-            # Construct Prompt for LLM
+            # AI Generation Mode (NEW, REMIX, or SIMILAR)
             mode_instructions = {
                 "NEW": "Generate FRESH, NOVEL questions grounded in the retrieved historical knowledge base facts. Do NOT copy historical questions word for word.",
                 "REMIX": "Take the concepts from the historical questions but create substantially different questions with novel framing, reverse clues, or perspective shifts.",
                 "SIMILAR": "Generate questions that closely mirror the structure, intellectual depth, and topic angle of the retrieved historical examples."
             }.get(req.generation_mode, "Generate fresh, engaging questions.")
 
+            is_mcq = "MULTIPLE_CHOICE" in req.question_types
+            format_rule = (
+                "Format: 4 distinct Multiple-Choice Options ('A) ...', 'B) ...', 'C) ...', 'D) ...') with a clear answer."
+                if is_mcq else
+                "Format: QShala Question Slide + Next Slide Answer with Explanation (NO multiple choice options, options must be null)."
+            )
+
             system_instruction = (
                 "You are the Lead Quiz Master at QShala. Your mission is to craft captivating, curiosity-inducing "
                 f"quiz questions calibrated for {audience_label}"
                 + (f" (Grades {grade_min}–{grade_max})" if grade_min else "")
                 + ".\n"
-                "CORE QSHALA FORMAT PRINCIPLE: QShala quiz questions operate on the basis of a Question Slide followed by a Next Slide Answer with Explanation. "
-                "They are NOT multiple-choice questions (do NOT generate A, B, C, D distractor choices; set options to null).\n"
+                f"{format_rule}\n"
                 "Slide 1 (Question Slide): An engaging, curiosity-driven question or narrative clue.\n"
                 "Slide 2 (Answer Slide): The clear, unambiguous answer, followed by a rich educational explanation and backstory.\n"
                 "Ground all questions strictly in the provided evidence. Always reference the source tag (e.g. [SRC-1]).\n"
@@ -187,7 +220,7 @@ class QuizGenerator:
 Requirements:
 - Topic: {req.topic}
 - Target Audience: {audience_label} ({grade_clause})
-- Format: QShala Question Slide + Next Slide Answer with Explanation (NO multiple choice options, options must be null)
+- Format: {format_rule}
 - Difficulty Preset: {req.difficulty}
 - Question Count: {req.question_count}
 - Exact Difficulty Distribution:
@@ -195,11 +228,9 @@ Requirements:
   * Medium: {medium_count} questions
   * Hard: {hard_count} questions
 - Note on Difficulty Calibration:
-  Difficulty is RELATIVE to the audience.
-  * For Primary (Grades 1-5): Easy is direct recognition; Medium is associative comparison; Hard is multi-step deduction for children.
-  * For High School (Grades 9-12): Easy is foundational recall; Medium is contextual cause-and-effect; Hard requires synthesis of complex historical themes.
-  * For College / University and Adults: Questions should feature academic rigor and advanced conceptual connections.
-- Question Types: {', '.join(req.question_types)}
+  * Easy is direct recognition / foundational recall.
+  * Medium is associative comparison / cause-and-effect.
+  * Hard requires multi-step deduction or lateral synthesis.
 - Generation Mode: {req.generation_mode} ({mode_instructions})
 
 Available QShala Evidence from Historical Archives:
@@ -214,14 +245,14 @@ Please return a JSON object with this exact structure:
   "questions": [
     {{
       "question_text": "...",
-      "options": null,
+      "options": { '["A) ...", "B) ...", "C) ...", "D) ..."]' if is_mcq else 'null' },
       "answer": "...",
       "explanation": "...",
       "difficulty": "Easy",
       "grade_min": {grade_min if grade_min is not None else 'null'},
       "grade_max": {grade_max if grade_max is not None else 'null'},
       "topic": "{req.topic}",
-      "question_type": "SLIDE_QA",
+      "question_type": "{'MULTIPLE_CHOICE' if is_mcq else 'SLIDE_QA'}",
       "source_tag": "SRC-1",
       "provenance_quote": "...",
       "provenance_rationale": "..."
@@ -232,7 +263,7 @@ Please return a JSON object with this exact structure:
             try:
                 llm_response = await self.llm.generate_json(user_prompt, system_instruction=system_instruction)
                 raw_list = llm_response.get("questions", [])
-                
+
                 for item in raw_list:
                     src_tag = item.get("source_tag", "SRC-1")
                     src_meta = source_mapping.get(src_tag) or (list(source_mapping.values())[0] if source_mapping else {})
@@ -249,7 +280,6 @@ Please return a JSON object with this exact structure:
                     generated_raw_questions.append(item)
             except Exception as e:
                 logger.exception(f"Error calling LLM for quiz generation: {e}")
-                # Fallback to local mock if LLM call failed
                 from backend.app.services.ai.local_provider import LocalLLMProvider
                 fallback_llm = LocalLLMProvider()
                 mock_res = await fallback_llm.generate_json(user_prompt)
@@ -269,7 +299,7 @@ Please return a JSON object with this exact structure:
 
         # Step 4: Validate and Persist Questions
         for idx, q_data in enumerate(generated_raw_questions, start=1):
-            assigned_diff = target_difficulties[idx - 1] if (idx - 1) < len(target_difficulties) else q_data.get("difficulty", "Medium")
+            assigned_diff = q_data.get("difficulty") or (target_difficulties[idx - 1] if idx - 1 < len(target_difficulties) else "Medium")
             q_data["difficulty"] = assigned_diff
 
             val_result = await self.validator.validate_question(
@@ -301,7 +331,6 @@ Please return a JSON object with this exact structure:
             self.db.add(gen_q)
             self.db.flush()
 
-            # Add RetrievalSource
             prov = q_data.get("provenance") or {}
             retrieval_src = RetrievalSource(
                 generated_question_id=gen_q.id,
@@ -344,6 +373,9 @@ Please return a JSON object with this exact structure:
         elif action == "make_harder":
             new_diff = "Hard"
 
+        has_options = bool(gen_q.options and len(gen_q.options) >= 2)
+        opt_instructions = '4 distinct choices: ["A) ...", "B) ...", "C) ...", "D) ..."]' if has_options else "null (no options for open slide QA format)"
+
         prompt = f"""
 Current Question: {gen_q.question_text}
 Current Answer: {gen_q.answer}
@@ -354,17 +386,19 @@ Target Grade: Grades {gen_q.grade_min}–{gen_q.grade_max}
 Custom instructions: {custom_instruction or 'None'}
 
 Please construct a revised or newly regenerated question keeping QShala's engaging quiz style.
+Options format: {opt_instructions}
+
 Return JSON:
 {{
   "question_text": "...",
-  "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
+  "options": { '["A) ...", "B) ...", "C) ...", "D) ..."]' if has_options else 'null' },
   "answer": "...",
   "explanation": "...",
   "difficulty": "{new_diff}"
 }}
 """
         res = await self.llm.generate_json(prompt)
-        
+
         gen_q.question_text = res.get("question_text", gen_q.question_text)
         gen_q.options = res.get("options", gen_q.options)
         gen_q.answer = res.get("answer", gen_q.answer)
@@ -378,12 +412,12 @@ Return JSON:
                 "answer": gen_q.answer,
                 "options": gen_q.options,
                 "difficulty": gen_q.difficulty,
-                "provenance": {"source_quote": "Regenerated from user action."}
+                "provenance": {"source_quote": gen_q.explanation or "Regenerated from vault."}
             },
             target_grade_min=gen_q.grade_min or 3,
             target_grade_max=gen_q.grade_max or 5,
             target_difficulty=gen_q.difficulty,
-            evidence_context=""
+            evidence_context=gen_q.explanation or ""
         )
         gen_q.validation_status = val_result["overall_status"]
         gen_q.validation_details = val_result["details"]

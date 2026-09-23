@@ -28,8 +28,10 @@ async def main():
     assert sample_file.exists(), f"Sample deck not found at {sample_file}"
 
     doc_id = "test-doc-aust-hist-001"
-    # Clean up previous test run if exists
-    db.query(Document).filter(Document.id == doc_id).delete()
+    # Clean up previous test runs for a clean slate
+    db.query(Question).delete()
+    db.query(Slide).delete()
+    db.query(Document).delete()
     db.commit()
 
     dest_file = settings.UPLOAD_DIR / f"{doc_id}.pptx"

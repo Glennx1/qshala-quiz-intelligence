@@ -1,0 +1,25 @@
+{
+  "anchors": [
+    "sun", "moon", "earth", "star", "water", "fire", "air", "tree", "plant", "flower",
+    "dog", "cat", "lion", "tiger", "bear", "elephant", "horse", "cow", "sheep", "pig",
+    "bird", "fish", "whale", "dolphin", "shark", "frog", "snake", "ant", "bee", "spider",
+    "koala", "kangaroo", "emu", "panda", "monkey", "rabbit", "deer", "wolf", "fox", "duck",
+    "apple", "banana", "orange", "grape", "mango", "lemon", "potato", "tomato", "onion", "carrot",
+    "rice", "wheat", "bread", "milk", "cheese", "egg", "butter", "sugar", "salt", "tea", "coffee",
+    "red", "blue", "yellow", "green", "orange", "purple", "pink", "black", "white", "brown", "gold", "silver",
+    "circle", "square", "triangle", "rectangle", "one", "two", "three", "four", "five", "ten", "hundred", "thousand",
+    "summer", "winter", "spring", "autumn", "rain", "snow", "wind", "cloud", "storm", "ice",
+    "eye", "ear", "nose", "mouth", "hand", "foot", "heart", "brain", "bone", "blood",
+    "mother", "father", "sister", "brother", "baby", "child", "teacher", "doctor", "farmer", "king", "queen",
+    "house", "school", "hospital", "car", "bus", "train", "plane", "boat", "ship", "bicycle", "wheel",
+    "book", "pen", "pencil", "paper", "clock", "watch", "telephone", "computer", "light", "door", "window",
+    "paris", "london", "rome", "tokyo", "beijing", "cairo", "delhi", "canberra", "sydney", "melbourne",
+    "washington", "new york", "berlin", "moscow", "madrid", "ottawa",
+    "france", "england", "britain", "germany", "italy", "spain", "china", "japan", "india", "australia",
+    "canada", "america", "usa", "brazil", "russia", "egypt", "south africa", "mexico", "greece",
+    "everest", "nile", "amazon", "pacific", "atlantic", "sahara", "antarctica", "arctic",
+    "pyramid", "colosseum", "taj mahal", "eiffel tower", "statue of liberty", "big ben",
+    "cricket", "football", "soccer", "tennis", "basketball", "swimming", "running", "chess",
+    "piano", "guitar", "drum", "violin", "music", "song", "dance", "game", "movie"
+  ]
+}

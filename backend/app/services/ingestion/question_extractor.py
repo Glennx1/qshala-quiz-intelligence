@@ -1,10 +1,14 @@
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 class QuestionExtractor:
     """
-    Extracts structured question-answer pairs from classified slides,
-    linking cross-slide Q&A sequences and extracting options and metadata.
+    Extracts structured question-answer pairs from classified slides.
+    Supports:
+    - Pattern A: Consecutive Slide Pair (Slide i = QUESTION, Slide i+1 = ANSWER)
+    - Pattern C: Lookahead Triplet (Slide i = QUESTION, Slide i+1 = CLUE/CONTENT, Slide i+2 = ANSWER)
+    - Pattern B: Self-contained Slide (Answer in speaker notes or body text)
+    - Section/Round Tracking: Captures round number and round subtopic
     """
 
     MCQ_PATTERN = re.compile(
@@ -17,26 +21,39 @@ class QuestionExtractor:
         re.IGNORECASE
     )
 
-    TOPIC_KEYWORDS = {
-        "Australian History": ["australia", "aboriginal", "first fleet", "cook", "barton", "canberra", "sydney", "melbourne", "eureka", "outback", "koala", "kangaroo"],
-        "Science & Nature": ["planet", "gravity", "animal", "plant", "solar", "molecule", "energy", "dinosaur", "species", "biology", "physics"],
-        "World Geography": ["capital", "river", "mountain", "ocean", "continent", "flag", "border", "desert", "country"],
-        "Literature & Arts": ["author", "book", "character", "painting", "poem", "shakespeare", "mythology", "artist"],
-        "Sports & Games": ["olympics", "cricket", "football", "tennis", "world cup", "player", "tournament"],
-        "General Knowledge": []
-    }
+    ROUND_REGEX = re.compile(
+        r"Round\s*(\d+)(?:\s*[:\-]?\s*(.*))?",
+        re.IGNORECASE
+    )
 
     def extract_from_slides(self, slides: List[Dict[str, Any]], doc_title: str, doc_year: Optional[int]) -> List[Dict[str, Any]]:
         extracted_questions = []
         i = 0
         n = len(slides)
 
+        current_round_num: Optional[int] = None
+        current_subtopic: Optional[str] = None
+
         while i < n:
             current = slides[i]
             slide_type = current.get("slide_type", "CONTENT")
+            title = current.get("title", "")
             text = current.get("extracted_text", "")
             notes = current.get("speaker_notes", "")
-            full_text = f"{text}\n{notes}".strip()
+
+            # Check if this slide is a Section / Round Marker
+            if slide_type == "SECTION_MARKER" or re.search(r"\bround\s*\d+", title, re.IGNORECASE):
+                round_match = self.ROUND_REGEX.search(f"{title} {text}")
+                if round_match:
+                    try:
+                        current_round_num = int(round_match.group(1))
+                    except Exception:
+                        pass
+                    sub = round_match.group(2)
+                    if sub and len(sub.strip()) > 2:
+                        current_subtopic = sub.strip()
+                i += 1
+                continue
 
             # Pattern A: Question on Slide i, Answer on Slide i + 1
             if slide_type == "QUESTION" and i + 1 < n and slides[i+1].get("slide_type") == "ANSWER":
@@ -44,30 +61,58 @@ class QuestionExtractor:
                 q_text, options = self._parse_question_and_options(text)
                 ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("extracted_text", ""))
 
-                topic = self._infer_topic(f"{doc_title} {q_text} {ans_text}")
-                diff = self._infer_difficulty(q_text, options)
-                g_min, g_max = self._infer_grades(q_text, diff)
+                # If answer text is still empty, check speaker notes of the answer slide
+                if not ans_text and ans_slide.get("speaker_notes"):
+                    ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("speaker_notes", ""))
 
-                extracted_questions.append({
-                    "slide_id": current.get("id"),
-                    "answer_slide_id": ans_slide.get("id"),
-                    "question_text": q_text,
-                    "answer": ans_text or "See explanation",
-                    "options": options,
-                    "explanation": explanation or ans_slide.get("extracted_text", ""),
-                    "topic": topic,
-                    "difficulty": diff,
-                    "grade_min": g_min,
-                    "grade_max": g_max,
-                    "question_type": "MULTIPLE_CHOICE" if options else "SLIDE_QA",
-                    "source_year": doc_year or 2024,
-                    "slide_number": current.get("slide_number"),
-                    "answer_slide_number": ans_slide.get("slide_number")
-                })
-                i += 2
-                continue
+                if ans_text:
+                    extracted_questions.append({
+                        "slide_id": current.get("id"),
+                        "answer_slide_id": ans_slide.get("id"),
+                        "question_text": q_text,
+                        "answer": ans_text,
+                        "options": options,
+                        "explanation": explanation or ans_slide.get("extracted_text", ""),
+                        "subtopic": current_subtopic,
+                        "round_number": current_round_num,
+                        "question_type": "MULTIPLE_CHOICE" if options else "SLIDE_QA",
+                        "source_year": doc_year or 2024,
+                        "slide_number": current.get("slide_number"),
+                        "answer_slide_number": ans_slide.get("slide_number"),
+                        "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
+                    })
+                    i += 2
+                    continue
 
-            # Pattern B: Question and Answer on same slide (notes or text)
+            # Pattern C: Question on Slide i, Clue/Image on Slide i + 1, Answer on Slide i + 2
+            if slide_type == "QUESTION" and i + 2 < n and slides[i+2].get("slide_type") == "ANSWER":
+                middle_slide = slides[i+1]
+                ans_slide = slides[i+2]
+                q_text, options = self._parse_question_and_options(text)
+                ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("extracted_text", ""))
+
+                if ans_text:
+                    mid_text = middle_slide.get("extracted_text", "")
+                    combined_exp = f"{explanation}\nClue: {mid_text}".strip() if mid_text else explanation
+                    extracted_questions.append({
+                        "slide_id": current.get("id"),
+                        "answer_slide_id": ans_slide.get("id"),
+                        "question_text": q_text,
+                        "answer": ans_text,
+                        "options": options,
+                        "explanation": combined_exp,
+                        "subtopic": current_subtopic,
+                        "round_number": current_round_num,
+                        "question_type": "MULTIPLE_CHOICE" if options else "SLIDE_QA",
+                        "source_year": doc_year or 2024,
+                        "slide_number": current.get("slide_number"),
+                        "answer_slide_number": ans_slide.get("slide_number"),
+                        "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
+                    })
+                    i += 3
+                    continue
+
+            # Pattern B: Question and Answer on same slide (notes or trailing text)
             if slide_type == "QUESTION":
                 q_text, options = self._parse_question_and_options(text)
                 ans_text = ""
@@ -77,33 +122,27 @@ class QuestionExtractor:
                 if notes:
                     ans_text, explanation = self._parse_answer_and_explanation(notes)
 
-                # Look in text if not in notes
+                # Look in body text if not found in notes
                 if not ans_text:
                     ans_text, explanation = self._parse_answer_and_explanation(text)
 
-                if not ans_text:
-                    ans_text = "Historical reference: Consult slide notes."
-
-                topic = self._infer_topic(f"{doc_title} {q_text} {ans_text}")
-                diff = self._infer_difficulty(q_text, options)
-                g_min, g_max = self._infer_grades(q_text, diff)
-
-                extracted_questions.append({
-                    "slide_id": current.get("id"),
-                    "answer_slide_id": None,
-                    "question_text": q_text,
-                    "answer": ans_text,
-                    "options": options,
-                    "explanation": explanation,
-                    "topic": topic,
-                    "difficulty": diff,
-                    "grade_min": g_min,
-                    "grade_max": g_max,
-                    "question_type": "MULTIPLE_CHOICE" if options else "SLIDE_QA",
-                    "source_year": doc_year or 2024,
-                    "slide_number": current.get("slide_number"),
-                    "answer_slide_number": None
-                })
+                # Only include if a real answer was resolved
+                if ans_text and ans_text.lower() not in ["see explanation", "answer indicated on slide", ""]:
+                    extracted_questions.append({
+                        "slide_id": current.get("id"),
+                        "answer_slide_id": None,
+                        "question_text": q_text,
+                        "answer": ans_text,
+                        "options": options,
+                        "explanation": explanation,
+                        "subtopic": current_subtopic,
+                        "round_number": current_round_num,
+                        "question_type": "MULTIPLE_CHOICE" if options else "SLIDE_QA",
+                        "source_year": doc_year or 2024,
+                        "slide_number": current.get("slide_number"),
+                        "answer_slide_number": None,
+                        "speaker_notes": notes
+                    })
                 i += 1
                 continue
 
@@ -111,7 +150,7 @@ class QuestionExtractor:
 
         return extracted_questions
 
-    def _parse_question_and_options(self, text: str) -> (str, Optional[List[str]]):
+    def _parse_question_and_options(self, text: str) -> Tuple[str, Optional[List[str]]]:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         if not lines:
             return text, None
@@ -122,8 +161,8 @@ class QuestionExtractor:
         for line in lines:
             if re.match(r"^QUESTION\s*\d*[:\.\-]?$", line, re.IGNORECASE):
                 continue
-            # Check if this line is an option
-            if re.match(r"^(\([A-D1-4]\)|[A-D1-4][\.\)])\s+", line, re.IGNORECASE):
+            # Check if this line is an option: (A), A., A), [A], 1., 1)
+            if re.match(r"^(\([A-D1-4]\)|\[[A-D1-4]\]|[A-D1-4][\.\)])\s+", line, re.IGNORECASE):
                 options.append(line)
             else:
                 if not options:
@@ -134,7 +173,9 @@ class QuestionExtractor:
 
         return question_text.strip(), options if len(options) >= 2 else None
 
-    def _parse_answer_and_explanation(self, text: str) -> (str, str):
+    def _parse_answer_and_explanation(self, text: str) -> Tuple[str, str]:
+        if not text:
+            return "", ""
         cleaned_text = re.sub(r"^ANSWER\s*\d*[:\.\-]?\s*", "", text, flags=re.IGNORECASE).strip()
         match = self.ANSWER_REGEX.search(cleaned_text)
         if match:
@@ -145,28 +186,10 @@ class QuestionExtractor:
 
         lines = [l.strip() for l in cleaned_text.splitlines() if l.strip()]
         if lines:
-            return lines[0], " ".join(lines[1:]) if len(lines) > 1 else ""
-        return "Answer indicated on slide", cleaned_text
+            # First line is answer if concise (< 80 chars), remaining is explanation
+            first = lines[0]
+            if len(first) < 120 and not first.endswith("?"):
+                return first, " ".join(lines[1:]) if len(lines) > 1 else ""
+            return lines[0], " ".join(lines[1:])
 
-    def _infer_topic(self, text: str) -> str:
-        text_lower = text.lower()
-        for topic, keywords in self.TOPIC_KEYWORDS.items():
-            if any(kw in text_lower for kw in keywords):
-                return topic
-        return "General Knowledge"
-
-    def _infer_difficulty(self, question: str, options: Optional[List[str]]) -> str:
-        words = len(question.split())
-        if words < 12 and options:
-            return "Easy"
-        elif words > 25 or not options:
-            return "Hard"
-        return "Medium"
-
-    def _infer_grades(self, question: str, difficulty: str) -> (int, int):
-        if difficulty == "Easy":
-            return 3, 5
-        elif difficulty == "Medium":
-            return 3, 6
-        else:
-            return 6, 8
+        return "", ""

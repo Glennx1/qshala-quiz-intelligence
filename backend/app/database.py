@@ -96,7 +96,8 @@ def ensure_schema_columns():
                     ("curiosity_score", "INTEGER DEFAULT 7"),
                     ("temporal_nature", "VARCHAR(20) DEFAULT 'EVERGREEN'"),
                     ("provenance_decks", "TEXT"),
-                    ("occurrence_count", "INTEGER DEFAULT 1")
+                    ("occurrence_count", "INTEGER DEFAULT 1"),
+                    ("round_number", "INTEGER")
                 ]
                 for col_name, col_type in new_cols:
                     try:

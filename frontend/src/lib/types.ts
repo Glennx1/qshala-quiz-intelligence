@@ -49,12 +49,29 @@ export interface HistoricalQuestion {
   curiosity_score?: number;
   temporal_nature?: string;
   occurrence_count?: number;
+  provenance_decks?: { document_id: string; slide_id?: string }[];
+  round_number?: number | null;
   content_hash?: string;
   question_type: string;
   source_year?: number | null;
   document_title?: string | null;
   slide_number?: number | null;
   created_at: string;
+}
+
+export interface TopicItem {
+  topic: string;
+  count: number;
+}
+
+export interface TopicSummary {
+  topic: string;
+  total_questions: number;
+  difficulty_breakdown: Record<string, number>;
+  subtopics: string[];
+  grade_min: number | null;
+  grade_max: number | null;
+  sample_questions: { question_text: string; difficulty: string; answer: string }[];
 }
 
 export interface RetrievalSource {

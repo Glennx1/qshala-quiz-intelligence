@@ -21,6 +21,8 @@ class QuestionBase(BaseModel):
     curiosity_score: int = 7
     temporal_nature: str = "EVERGREEN"
     occurrence_count: int = 1
+    provenance_decks: List[Dict[str, Any]] = []
+    round_number: Optional[int] = None
     question_type: str = "SLIDE_QA"
     source_year: Optional[int] = None
 

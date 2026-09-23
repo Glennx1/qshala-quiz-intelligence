@@ -73,11 +73,12 @@ class IngestionPipeline:
             else:
                 raise ValueError(f"Unsupported file format: {file_ext}")
 
-            # Classify each slide
+            # Classify each slide using 2-pass contextual deck classifier
             classified_slides = []
             slide_models = []
-            for s in raw_slides:
-                slide_type = self.classifier.classify(s)
+            deck_types = self.classifier.classify_deck(raw_slides)
+
+            for s, slide_type in zip(raw_slides, deck_types):
                 s["slide_type"] = slide_type
                 classified_slides.append(s)
 
@@ -235,6 +236,7 @@ class IngestionPipeline:
                     occurrence_count=1,
                     question_type=q_data.get("question_type", "SLIDE_QA"),
                     source_year=q_data.get("source_year", doc.year),
+                    round_number=q_data.get("round_number"),
                     embedding=emb
                 )
                 db.add(q_obj)
