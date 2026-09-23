@@ -23,7 +23,9 @@ class Quiz(Base):
     difficulty_distribution = Column(JSON, default=dict)  # {"easy": 5, "medium": 10, "hard": 5}
     question_count = Column(Integer, default=10)
     question_types = Column(JSON, default=lambda: ["SLIDE_QA"])
-    generation_mode = Column(String(50), default="NEW")  # NEW, REMIX, HISTORICAL, SIMILAR
+    generation_mode: str = Column(String(50), default="NEW")  # NEW, REMIX, HISTORICAL, SIMILAR
+    tags = Column(JSON, default=list)  # Target focus concept tags
+    personality = Column(String(50), default="CURIOSITY_STORYTELLER")  # CURIOSITY_STORYTELLER, DETECTIVE_PUZZLER, TOURNAMENT_PRO, SOCRATIC_EXPLORER
     style = Column(String(50), default="QSHALA_HISTORICAL")
     raw_prompt = Column(Text, nullable=True)
     status = Column(String(50), default="READY")  # DRAFT, GENERATING, READY, ARCHIVED

@@ -8,6 +8,8 @@ import {
   IngestionStatus,
   TopicItem,
   TopicSummary,
+  TagItem,
+  TagPreviewResponse,
 } from './types';
 
 export function getApiBase(): string {
@@ -155,6 +157,20 @@ export const api = {
   },
 
 
+  getVaultTags: async (topic?: string): Promise<TagItem[]> => {
+    const q = topic ? `?topic=${encodeURIComponent(topic)}` : '';
+    const res = await fetch(`${getApiBase()}/questions/tags${q}`, { cache: 'no-store' });
+    return handleResponse<TagItem[]>(res);
+  },
+
+  getTagPreview: async (topic?: string, tags?: string[]): Promise<TagPreviewResponse> => {
+    const params = new URLSearchParams();
+    if (topic) params.append('topic', topic);
+    if (tags && tags.length > 0) params.append('tags', tags.join(','));
+    const res = await fetch(`${getApiBase()}/questions/tag-preview?${params.toString()}`, { cache: 'no-store' });
+    return handleResponse<TagPreviewResponse>(res);
+  },
+
   // Quizzes
   generateQuiz: async (payload: {
     topic: string;
@@ -169,6 +185,8 @@ export const api = {
     question_count: number;
     question_types: string[];
     generation_mode: string;
+    tags?: string[];
+    personality?: string;
     style?: string;
     raw_prompt?: string;
   }): Promise<Quiz> => {

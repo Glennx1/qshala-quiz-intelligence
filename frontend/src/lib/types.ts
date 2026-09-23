@@ -142,12 +142,39 @@ export interface Quiz {
   question_count: number;
   question_types: string[];
   generation_mode: string;
+  tags?: string[];
+  personality?: string;
   style: string;
   raw_prompt?: string | null;
   status: string;
   created_at: string;
   updated_at: string;
   questions: GeneratedQuestion[];
+}
+
+export interface TagItem {
+  tag: string;
+  count: number;
+  topics: string[];
+  co_occurring_tags: string[];
+}
+
+export interface TagPreviewResponse {
+  topic?: string | null;
+  tags: string[];
+  total_available: number;
+  exact_matches_count: number;
+  cross_topic_tag_matches_count: number;
+  difficulty_breakdown: Record<string, number>;
+  suggested_mode: 'HISTORICAL' | 'NEW';
+  sample_questions: {
+    id: string;
+    question_text: string;
+    answer: string;
+    difficulty: string;
+    topic: string;
+    tags: string[];
+  }[];
 }
 
 export interface DashboardStats {

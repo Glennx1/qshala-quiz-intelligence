@@ -14,6 +14,31 @@ from backend.app.schemas.quiz import QuizGenerateRequest
 
 logger = logging.getLogger(__name__)
 
+PERSONALITY_PROMPTS = {
+    "CURIOSITY_STORYTELLER": (
+        "Host Persona: The Storyteller & Curiosity Coach.\n"
+        "Style Guidelines: Weave an engaging narrative hook into the question and explanation. "
+        "Use curiosity triggers ('Did you know?', 'In an astonishing turn of events...'), "
+        "human interest details, and memorable trivia that sparks wonder and leaves students eager to learn more."
+    ),
+    "DETECTIVE_PUZZLER": (
+        "Host Persona: The Detective & Puzzle Master.\n"
+        "Style Guidelines: Frame the question as an intriguing mystery or deduction challenge. "
+        "Provide progressive clues ('Clue 1: ...', 'Clue 2: ...') that reward analytical and lateral thinking "
+        "rather than pure recall."
+    ),
+    "TOURNAMENT_PRO": (
+        "Host Persona: Tournament Quizmaster (Classic Buzzer).\n"
+        "Style Guidelines: Crisp, authoritative, high-energy contest questions with strictly unambiguous factual answers. "
+        "Format questions with clear, direct phrasing suitable for high-stakes competition buzzer rounds."
+    ),
+    "SOCRATIC_EXPLORER": (
+        "Host Persona: Socratic Discussion Host.\n"
+        "Style Guidelines: Thought-provoking, inquiry-driven questions that connect facts to deeper concepts. "
+        "Include a 'Host Discussion Prompt' in the explanation to stimulate lively classroom debate."
+    )
+}
+
 class QuizGenerator:
     """
     Intelligent Quiz Compilation Engine for QShala.
@@ -26,6 +51,13 @@ class QuizGenerator:
         self.llm = get_llm_provider()
         self.retriever = HybridRetriever(db)
         self.validator = QuestionValidator(db)
+
+    @staticmethod
+    def _sanitize_query(topic: str, subtopic: Optional[str] = None) -> str:
+        parts = [topic.strip()] if topic else []
+        if subtopic and subtopic.strip():
+            parts.append(subtopic.strip())
+        return " ".join(parts)
 
     async def generate_quiz(self, req: QuizGenerateRequest) -> Quiz:
         # Step 1: Clean Retrieval Query (do not contaminate vector search with prompt boilerplate)
@@ -98,14 +130,17 @@ class QuizGenerator:
                     medium_count = req.question_count - easy_count - hard_count
             dist = {"easy": easy_count, "medium": medium_count, "hard": hard_count}
 
-        target_difficulties = (["Easy"] * easy_count) + (["Medium"] * medium_count) + (["Hard"] * hard_count)
-
+        target_difficulties = ["Easy"] * easy_count + ["Medium"] * medium_count + ["Hard"] * hard_count
+        while len(target_difficulties) < req.question_count:
+            target_difficulties.append("Medium")
+        # Step 2: Create Quiz record
+        personality = req.personality or "CURIOSITY_STORYTELLER"
         quiz_obj = Quiz(
             title=quiz_title,
             topic=req.topic,
             subtopic=req.subtopic,
-            audience_type=aud_type,
-            grades=grades_list,
+            audience_type=req.audience_type,
+            grades=req.grades or [],
             age_range=req.age_range,
             grade_min=grade_min,
             grade_max=grade_max,
@@ -114,6 +149,8 @@ class QuizGenerator:
             question_count=req.question_count,
             question_types=req.question_types,
             generation_mode=req.generation_mode,
+            tags=req.tags or [],
+            personality=personality,
             style=req.style,
             raw_prompt=req.raw_prompt,
             status="READY"
@@ -121,14 +158,19 @@ class QuizGenerator:
         self.db.add(quiz_obj)
         self.db.flush()
 
-        # Step 3: Vault-First Retrieval or Hybrid Search
+        # Step 3: Vault-First Retrieval or Hybrid Search with Tag Overlap
+        clean_query = self._sanitize_query(req.topic, req.subtopic)
+        if req.tags:
+            clean_query = f"{clean_query} {' '.join(req.tags)}"
+
         retrieved_items = await self.retriever.search(
             query=clean_query,
             topic=req.topic,
+            tags=req.tags,
             grade_min=grade_min,
             grade_max=grade_max,
             difficulty=req.difficulty,
-            limit=max(req.question_count * 3, 20)
+            limit=max(req.question_count * 4, 30)
         )
 
         context_data = ContextBuilder.build_prompt_context(retrieved_items)
@@ -140,15 +182,15 @@ class QuizGenerator:
 
         # Check if user wants Vault Curation (HISTORICAL) or Vault is sufficient
         if req.generation_mode == "HISTORICAL":
-            # Vault-First Compilation: compile questions tier by tier
+            # Vault-First Compilation: compile questions tier by tier with tag prioritization
             by_diff: Dict[str, List[Dict[str, Any]]] = {"Easy": [], "Medium": [], "Hard": []}
             for item in retrieved_items:
                 d = item["question"].difficulty or "Medium"
                 by_diff.setdefault(d, []).append(item)
 
-            # Randomize within tiers so repeated quiz generation produces varied sets
+            # Within each tier, sort by tag_overlap descending
             for k in by_diff:
-                random.shuffle(by_diff[k])
+                by_diff[k].sort(key=lambda it: it.get("tag_overlap", 0), reverse=True)
 
             selected_items: List[Dict[str, Any]] = []
             selected_items.extend(by_diff["Easy"][:easy_count])
@@ -216,10 +258,13 @@ class QuizGenerator:
             )
 
             grade_clause = f"Grades {grade_min}–{grade_max}" if grade_min else audience_label
+            personality_guide = PERSONALITY_PROMPTS.get(req.personality or "CURIOSITY_STORYTELLER", PERSONALITY_PROMPTS["CURIOSITY_STORYTELLER"])
+            tag_clause = f"- Target Concept Tags: {', '.join(req.tags)}\n" if req.tags else ""
             user_prompt = f"""
 Requirements:
 - Topic: {req.topic}
-- Target Audience: {audience_label} ({grade_clause})
+{tag_clause}- Target Audience: {audience_label} ({grade_clause})
+- {personality_guide}
 - Format: {format_rule}
 - Difficulty Preset: {req.difficulty}
 - Question Count: {req.question_count}

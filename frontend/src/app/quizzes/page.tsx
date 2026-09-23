@@ -84,6 +84,14 @@ export default function QuizzesLibraryPage() {
                     >
                       <span>{quiz.title}</span>
                     </Link>
+                    {quiz.personality && (
+                      <span className="inline-block mt-0.5 text-[11px] font-medium text-slate-400">
+                        {quiz.personality === 'CURIOSITY_STORYTELLER' && '🌟 Storyteller'}
+                        {quiz.personality === 'DETECTIVE_PUZZLER' && '🔍 Detective'}
+                        {quiz.personality === 'TOURNAMENT_PRO' && '🏆 Tournament Pro'}
+                        {quiz.personality === 'SOCRATIC_EXPLORER' && '💡 Socratic Host'}
+                      </span>
+                    )}
                   </td>
                   <td className="py-3.5 px-4 text-slate-600">{quiz.topic}</td>
                   <td className="py-3.5 px-4 text-slate-600">

@@ -107,6 +107,23 @@ def ensure_schema_columns():
                             conn.exec_driver_sql(f"ALTER TABLE questions ADD COLUMN {col_name} {col_type};")
                     except Exception:
                         pass # Column already exists
+
+            # Check if quizzes table exists
+            quiz_table_check = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='quizzes';").fetchone() if not is_postgres else True
+            if quiz_table_check:
+                quiz_cols = [
+                    ("tags", "TEXT"),
+                    ("personality", "VARCHAR(50) DEFAULT 'CURIOSITY_STORYTELLER'")
+                ]
+                for col_name, col_type in quiz_cols:
+                    try:
+                        if is_postgres:
+                            conn.exec_driver_sql(f"ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS {col_name} {col_type};")
+                        else:
+                            conn.exec_driver_sql(f"ALTER TABLE quizzes ADD COLUMN {col_name} {col_type};")
+                    except Exception:
+                        pass
+
             conn.commit()
 
         # One-time backfill of content_hash and topics for legacy questions

@@ -149,8 +149,16 @@ class QuizExporter:
 
         p3 = tf_title.add_paragraph()
         p3.space_before = Pt(24)
-        p3.text = "QShala Quiz Intelligence Platform  •  Tournament Master Deck"
-        p3.font.size = Pt(12)
+        p_val = getattr(quiz, "personality", None)
+        personality_label = {
+            "CURIOSITY_STORYTELLER": "The Storyteller / Curiosity Coach",
+            "DETECTIVE_PUZZLER": "The Detective / Puzzle Master",
+            "TOURNAMENT_PRO": "Tournament Pro (Classic Buzzer)",
+            "SOCRATIC_EXPLORER": "Socratic Discussion Host"
+        }.get(p_val or "CURIOSITY_STORYTELLER", "The Storyteller")
+        tags_info = f"  •  Focus: {', '.join(getattr(quiz, 'tags', [])[:3])}" if getattr(quiz, 'tags', []) else ""
+        p3.text = f"Host Style: {personality_label}{tags_info}"
+        p3.font.size = Pt(13)
         p3.font.color.rgb = c_blue_500
         p3.font.bold = True
 
@@ -262,7 +270,21 @@ class QuizExporter:
                 tf_exp.margin_right = Inches(0.25)
 
                 p_exp_h = tf_exp.paragraphs[0]
-                p_exp_h.text = "THE STORY BEHIND THE ANSWER"
+                exp_header = "THE STORY BEHIND THE ANSWER"
+                personality_note = ""
+                if p_val == "DETECTIVE_PUZZLER":
+                    exp_header = "THE DEDUCTION & SOLUTION"
+                    personality_note = "\nHost Deduction Clue: Point out the key reasoning chain that solves the question."
+                elif p_val == "TOURNAMENT_PRO":
+                    exp_header = "OFFICIAL TOURNAMENT RATIONALE"
+                    personality_note = "\nTournament Rule: Accept exact name/event or verified historical variants only."
+                elif p_val == "SOCRATIC_EXPLORER":
+                    exp_header = "CONCEPT BREAKDOWN & DISCUSSION"
+                    personality_note = "\nSocratic Discussion Prompt: Ask the group 'How does this principle apply to modern times?'"
+                else:
+                    personality_note = "\nStory Hook: Deliver the answer with excitement, emphasizing the surprising trivia."
+
+                p_exp_h.text = exp_header
                 p_exp_h.font.size = Pt(11)
                 p_exp_h.font.bold = True
                 p_exp_h.font.color.rgb = c_blue_600
@@ -289,7 +311,7 @@ class QuizExporter:
             # Speaker notes for presenter
             notes_slide = s_a.notes_slide
             tf_notes = notes_slide.notes_text_frame
-            tf_notes.text = f"Question: {q.question_text}\nAnswer: {q.answer}\nSource: {src_doc} (Slide {src_slide})\nNotes: {q.explanation or ''}"
+            tf_notes.text = f"Question: {q.question_text}\nAnswer: {q.answer}\nSource: {src_doc} (Slide {src_slide})\nNotes: {q.explanation or ''}{personality_note}"
 
         # ---------------------------------------------------------------------
         # SLIDE FINAL: Summary / Concluding Slide

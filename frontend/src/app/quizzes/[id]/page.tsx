@@ -15,11 +15,19 @@ import {
   ChevronRight,
   X,
   Sparkles,
+  Tag,
 } from 'lucide-react';
 import { api } from '../../../lib/api';
 import { Quiz, GeneratedQuestion, RetrievalSource } from '../../../lib/types';
 import QuestionCard from '../../../components/QuestionCard';
 import SlideViewerModal from '../../../components/SlideViewerModal';
+
+const PERSONALITY_MAP: Record<string, { title: string; icon: string; badge: string }> = {
+  CURIOSITY_STORYTELLER: { title: 'The Storyteller', icon: '🌟', badge: 'Curiosity Coach' },
+  DETECTIVE_PUZZLER: { title: 'The Detective', icon: '🔍', badge: 'Puzzle Master' },
+  TOURNAMENT_PRO: { title: 'Tournament Pro', icon: '🏆', badge: 'Classic Buzzer' },
+  SOCRATIC_EXPLORER: { title: 'Socratic Host', icon: '💡', badge: 'Discussion Lead' },
+};
 
 export default function QuizReviewStudioPage() {
   const params = useParams();
@@ -234,6 +242,28 @@ export default function QuizReviewStudioPage() {
           <span className="text-slate-300">•</span>
           <span className="text-emerald-600 font-medium">Question → Next Slide Answer Format</span>
         </div>
+
+        {(quiz.personality || (quiz.tags && quiz.tags.length > 0)) && (
+          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 text-[12px]">
+            {quiz.personality && PERSONALITY_MAP[quiz.personality] && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200/80 px-2.5 py-0.5 font-semibold text-blue-800">
+                <span>{PERSONALITY_MAP[quiz.personality].icon}</span>
+                <span>{PERSONALITY_MAP[quiz.personality].title}</span>
+                <span className="text-blue-500 font-normal">({PERSONALITY_MAP[quiz.personality].badge})</span>
+              </span>
+            )}
+            {quiz.tags && quiz.tags.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1">
+                {quiz.tags.map((t) => (
+                  <span key={t} className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                    <Tag className="h-3 w-3 text-slate-400" />
+                    <span>#{t}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Questions Stream */}

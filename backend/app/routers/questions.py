@@ -112,6 +112,133 @@ def get_topic_summary(topic: str, db: Session = Depends(get_db)):
         "sample_questions": samples
     }
 
+@router.get("/tags", response_model=List[Dict[str, Any]])
+def list_vault_tags(
+    topic: Optional[str] = Query(None, description="Optional topic filter"),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns an inverted tag index of all unique entity tags in the Question Vault,
+    their frequency counts, linked macro-topics, and co-occurring tags.
+    """
+    topic_str = topic if isinstance(topic, str) and topic.strip() else None
+    q_query = db.query(Question)
+    if topic_str:
+        q_query = q_query.filter(Question.topic.ilike(f"%{topic_str}%"))
+    questions = q_query.all()
+
+    tag_counts: Dict[str, int] = {}
+    tag_topics: Dict[str, Set[str]] = {}
+    tag_co_occur: Dict[str, Dict[str, int]] = {}
+
+    for q in questions:
+        q_tags = [t.strip().lstrip("#").strip() for t in (q.tags or []) if isinstance(t, str) and t.strip()]
+        for t in q_tags:
+            tag_counts[t] = tag_counts.get(t, 0) + 1
+            if q.topic:
+                tag_topics.setdefault(t, set()).add(q.topic)
+            if t not in tag_co_occur:
+                tag_co_occur[t] = {}
+            for other_t in q_tags:
+                if other_t.lower() != t.lower():
+                    tag_co_occur[t][other_t] = tag_co_occur[t].get(other_t, 0) + 1
+
+    sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
+    results = []
+    for t_name, count in sorted_tags:
+        co_sorted = sorted(tag_co_occur.get(t_name, {}).items(), key=lambda x: x[1], reverse=True)
+        top_co = [c[0] for c in co_sorted[:3]]
+        results.append({
+            "tag": t_name,
+            "count": count,
+            "topics": sorted(list(tag_topics.get(t_name, set()))),
+            "co_occurring_tags": top_co
+        })
+    return results
+
+@router.get("/tag-preview", response_model=Dict[str, Any])
+def preview_tag_quiz_availability(
+    topic: Optional[str] = Query(None),
+    tags: Optional[str] = Query(None, description="Comma-separated tags"),
+    grade_min: Optional[int] = Query(None),
+    grade_max: Optional[int] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns live compilation preview based on selected topic and/or concept tags.
+    Identifies exact topic+tag matches and cross-topic tag synthesis matches.
+    """
+    topic_str = topic if isinstance(topic, str) and topic.strip() else None
+    tags_str = tags if isinstance(tags, str) and tags.strip() else None
+    grade_min_val = grade_min if isinstance(grade_min, int) else None
+    grade_max_val = grade_max if isinstance(grade_max, int) else None
+
+    tag_list = [t.strip().lstrip("#").strip().lower() for t in (tags_str.split(",") if tags_str else []) if t.strip()]
+
+    all_questions = db.query(Question).all()
+
+    exact_matches = []
+    cross_topic_tag_matches = []
+    topic_only_matches = []
+
+    for q in all_questions:
+        if grade_min_val and q.grade_max and q.grade_max < grade_min_val:
+            continue
+        if grade_max_val and q.grade_min and q.grade_min > grade_max_val:
+            continue
+
+        q_tags_lower = [t.strip().lstrip("#").strip().lower() for t in (q.tags or []) if isinstance(t, str)]
+        matches_topic = bool(topic_str and topic_str.lower() in (q.topic or "").lower())
+        matches_tags = bool(
+            tag_list and any(
+                any(t == qt or t in qt or qt in t for t in tag_list)
+                for qt in q_tags_lower
+            )
+        )
+
+        if matches_topic and matches_tags:
+            exact_matches.append(q)
+        elif matches_tags:
+            cross_topic_tag_matches.append(q)
+        elif matches_topic:
+            topic_only_matches.append(q)
+
+    combined_pool = exact_matches + cross_topic_tag_matches
+    if not tag_list:
+        combined_pool = topic_only_matches
+
+    diff_counts = {"Easy": 0, "Medium": 0, "Hard": 0}
+    for q in combined_pool:
+        d = q.difficulty or "Medium"
+        diff_counts[d] = diff_counts.get(d, 0) + 1
+
+    sample_previews = [
+        {
+            "id": q.id,
+            "question_text": q.question_text,
+            "answer": q.answer,
+            "difficulty": q.difficulty,
+            "topic": q.topic,
+            "tags": q.tags or []
+        }
+        for q in combined_pool[:3]
+    ]
+
+    total = len(combined_pool)
+    suggested_mode = "HISTORICAL" if total >= 5 else "NEW"
+
+    return {
+        "topic": topic,
+        "tags": tag_list,
+        "total_available": total,
+        "exact_matches_count": len(exact_matches),
+        "cross_topic_tag_matches_count": len(cross_topic_tag_matches),
+        "difficulty_breakdown": diff_counts,
+        "suggested_mode": suggested_mode,
+        "sample_questions": sample_previews
+    }
+
+
 @router.get("", response_model=List[QuestionResponse])
 async def search_questions(
     query: Optional[str] = Query(None),
