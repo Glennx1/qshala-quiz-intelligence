@@ -4,8 +4,6 @@ import { useEffect, useState } from 'react';
 import {
   Settings as SettingsIcon,
   Database,
-  Cpu,
-  ShieldCheck,
   HardDrive,
   RefreshCw,
   Play,
@@ -166,63 +164,6 @@ export default function SettingsPage() {
 
       {activeTab === 'platform' ? (
         <>
-          {/* AI Provider Settings */}
-          <div className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm shadow-slate-100/50 space-y-4">
-            <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
-              <Cpu className="h-4 w-4 text-blue-600" />
-              <h2 className="text-[16px] font-semibold text-slate-900">AI & Embeddings Engine</h2>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-[13px]">
-              <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-3.5 space-y-1">
-                <span className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider">
-                  LLM Provider
-                </span>
-                <div className="font-semibold text-[14px] text-slate-900">Multi-Modal Gemini / Local Engine</div>
-                <p className="text-[12px] text-slate-400 font-normal">
-                  Configured via <code className="font-mono">GEMINI_API_KEY</code> with OCR Vision and Audio transcription
-                </p>
-              </div>
-
-              <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-3.5 space-y-1">
-                <span className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider">
-                  Vector Dimension & Dedup
-                </span>
-                <div className="font-semibold text-[14px] text-slate-900">768-dim Vectors (0.92 Dedup Threshold)</div>
-                <p className="text-[12px] text-slate-400 font-normal">
-                  Pgvector cosine similarity with interactive human resolution
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Validation Pipeline Thresholds */}
-          <div className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm shadow-slate-100/50 space-y-4">
-            <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
-              <ShieldCheck className="h-4 w-4 text-emerald-600" />
-              <h2 className="text-[16px] font-semibold text-slate-900">Validation & Ingestion Thresholds</h2>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-[13px]">
-              <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-3.5 space-y-1">
-                <span className="text-[12px] font-semibold text-slate-500">Duplicate Review Limit</span>
-                <div className="text-[24px] font-bold text-slate-900 leading-tight">92%</div>
-                <p className="text-[12px] text-slate-400 font-normal">Scores &ge; 0.92 flagged for human review</p>
-              </div>
-
-              <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-3.5 space-y-1">
-                <span className="text-[12px] font-semibold text-slate-500">Min Factual Grounding</span>
-                <div className="text-[24px] font-bold text-slate-900 leading-tight">70%</div>
-                <p className="text-[12px] text-slate-400 font-normal">Requires slide source corroboration</p>
-              </div>
-
-              <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-3.5 space-y-1">
-                <span className="text-[12px] font-semibold text-slate-500">Object Storage Tier</span>
-                <div className="text-[20px] font-bold text-slate-900 leading-tight">Vercel Blob</div>
-                <p className="text-[12px] text-slate-400 font-normal">Durable object storage tier for media & decks</p>
-              </div>
-            </div>
-          </div>
 
           {/* Storage & Engine Status */}
           <div className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm shadow-slate-100/50 space-y-4">

@@ -43,9 +43,6 @@ export default function DashboardPage() {
           <h1 className="text-[28px] sm:text-[32px] font-bold tracking-tight text-slate-900 leading-tight">
             Dashboard Overview
           </h1>
-          <p className="mt-1 text-[14px] text-slate-500 font-normal leading-relaxed">
-            Real-time intelligence from your verified QShala questions repository and generated quizzes.
-          </p>
         </div>
 
         {/* Top Direct Actions */}
@@ -158,22 +155,22 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Recent Knowledge Decks */}
+          {/* Recent Uploaded Quizzes */}
           <div className="rounded-xl border border-slate-200/80 bg-white shadow-sm shadow-slate-100/50 overflow-hidden">
             <div className="flex items-center justify-between p-5 border-b border-slate-100">
               <div>
                 <h3 className="text-[16px] font-bold tracking-tight text-slate-900">
-                  Recent Knowledge Decks
+                  Uploaded Quizzes
                 </h3>
                 <p className="text-[12.5px] text-slate-500 font-normal mt-0.5">
-                  Ingested PowerPoint presentations and question collections
+                  Uploaded PowerPoint presentations and quiz decks
                 </p>
               </div>
               <Link
                 href="/uploads"
                 className="flex items-center gap-1 text-[13px] font-semibold text-blue-600 hover:text-blue-700 transition-colors"
               >
-                <span>View all decks</span>
+                <span>View all uploaded quizzes</span>
                 <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
@@ -206,7 +203,7 @@ export default function DashboardPage() {
                 ))
               ) : (
                 <div className="p-8 text-center text-[13px] text-slate-400">
-                  No documents ingested yet.
+                  No quizzes uploaded yet.
                 </div>
               )}
             </div>
