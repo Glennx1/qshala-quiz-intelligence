@@ -38,7 +38,7 @@ export default function StatsOverview({ stats, loading }: Props) {
     {
       label: 'Topics',
       value: loading ? '-' : (stats?.total_topics ?? 0).toLocaleString(),
-      sub: 'In questions vault',
+      sub: 'Categorized topics',
       icon: Tag,
       iconBg: 'bg-rose-50 text-rose-600',
       href: '/knowledge-base',

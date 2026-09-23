@@ -297,7 +297,7 @@ export default function QuickGenerateCard() {
               Quiz Topic
             </label>
             <span className="text-[12px] text-slate-400 font-normal">
-              Type to search or predict from Vault
+              Type to search available topics
             </span>
           </div>
 
@@ -314,7 +314,7 @@ export default function QuickGenerateCard() {
             {showTopicDropdown && filteredTopics.length > 0 && (
               <div className="absolute z-20 left-0 right-0 mt-1 max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg py-1">
                 <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-100">
-                  Predicted Vault Topics ({filteredTopics.length})
+                  Available Topics ({filteredTopics.length})
                 </div>
                 {filteredTopics.map((t) => (
                   <button
@@ -339,7 +339,7 @@ export default function QuickGenerateCard() {
               <div className="flex items-center justify-between font-semibold text-blue-900">
                 <span className="flex items-center gap-1.5">
                   <Database className="h-3.5 w-3.5 text-blue-600" />
-                  Vault Intelligence: {topicSummary.total_questions} Questions Available
+                  {topicSummary.total_questions} Questions Available in Total
                 </span>
                 <span className="text-[11px] text-blue-600 font-medium">
                   Grades {topicSummary.grade_min}–{topicSummary.grade_max}
@@ -374,7 +374,7 @@ export default function QuickGenerateCard() {
             topic.trim() && (
               <p className="text-[11.5px] text-amber-600 flex items-center gap-1">
                 <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                <span>Novel topic: AI generator will synthesize grounded questions if vault has few matches.</span>
+                <span>Novel topic: AI generator will synthesize grounded questions if few existing matches are found.</span>
               </p>
             )
           )}
@@ -595,14 +595,14 @@ export default function QuickGenerateCard() {
           {loading ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Compiling Quiz from Vault & Generating Slides...</span>
+              <span>Compiling Quiz & Generating Slides...</span>
             </>
           ) : (
             <>
               <Sparkles className="h-4 w-4" />
               <span>
                 {topicSummary && topicSummary.total_questions > 0
-                  ? `Compile ${questionCount}-Question Quiz from Vault`
+                  ? `Compile ${questionCount}-Question Quiz`
                   : `Generate ${questionCount}-Question AI Quiz`}
               </span>
               <ArrowRight className="h-4 w-4" />

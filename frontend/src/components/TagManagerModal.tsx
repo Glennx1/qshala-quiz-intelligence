@@ -113,7 +113,7 @@ export default function TagManagerModal({
                 Manage Question Tags & Topics
               </h3>
               <p className="text-[12px] text-slate-500 font-normal">
-                Curate classification and discoverability for this vault question
+                Curate classification and discoverability for this question
               </p>
             </div>
           </div>

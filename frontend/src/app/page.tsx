@@ -223,14 +223,14 @@ export default function DashboardPage() {
                   Topic Coverage
                 </h3>
                 <p className="text-[12px] text-slate-500 font-normal">
-                  Question distribution in vault
+                  Question distribution by topic
                 </p>
               </div>
               <Link
                 href="/knowledge-base"
                 className="text-[12px] font-medium text-blue-600 hover:text-blue-700"
               >
-                Browse vault
+                Browse questions
               </Link>
             </div>
 
@@ -274,7 +274,7 @@ export default function DashboardPage() {
                 </div>
                 <div>
                   <span className="font-semibold text-slate-800">Upload Presentation Decks</span>
-                  <p className="text-slate-500 font-normal">Add PPTX or PDF slides to expand the question vault.</p>
+                  <p className="text-slate-500 font-normal">Add PPTX or PDF slides to expand the question repository.</p>
                 </div>
               </div>
 

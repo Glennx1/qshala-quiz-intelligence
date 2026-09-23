@@ -72,7 +72,7 @@ export default function Sidebar() {
       <div className="border-t border-slate-100 p-5">
         <div className="text-[12px] leading-snug text-slate-400 font-medium">
           QShala Intelligent<br />
-          <span className="text-slate-500 font-normal">Questions Vault</span>
+          <span className="text-slate-500 font-normal">Questions Repository</span>
         </div>
       </div>
     </aside>

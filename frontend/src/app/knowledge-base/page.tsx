@@ -286,7 +286,7 @@ function KnowledgeBaseContent() {
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20">
             <Loader2 className="h-6 w-6 animate-spin text-blue-600 mb-2" />
-            <p className="text-[13px] text-slate-400 font-normal">Loading question vault...</p>
+            <p className="text-[13px] text-slate-400 font-normal">Loading questions...</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -329,7 +329,7 @@ function KnowledgeBaseContent() {
                                 ? 'bg-indigo-600 text-white font-semibold'
                                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                             }`}
-                            title={`Filter vault by #${tag}`}
+                            title={`Filter by #${tag}`}
                           >
                             #{tag}
                           </button>

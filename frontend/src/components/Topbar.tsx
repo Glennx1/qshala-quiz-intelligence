@@ -10,7 +10,7 @@ export default function Topbar() {
       <div className="flex items-center gap-2">
         <span className="text-[13px] font-medium text-slate-400">Workspace</span>
         <span className="text-[13px] text-slate-300">/</span>
-        <span className="text-[13px] font-semibold text-slate-700">QShala Content Vault</span>
+        <span className="text-[13px] font-semibold text-slate-700">QShala Questions Repository</span>
       </div>
 
       {/* Right Controls */}
