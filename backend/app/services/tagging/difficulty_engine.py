@@ -22,7 +22,7 @@ class DifficultyEngine:
     }
 
     LATERAL_SYNTHESIS_PATTERNS = [
-        r"\b(connect|connection|in common|link|linked|shared|irony|paradox|coincidence)\b",
+        r"\b(connect|connection|connects|in common|link|links|linked|shared|irony|paradox|coincidence)\b",
         r"\b(pivoted|reinvented|later became|originally named|formerly known|what connects)\b",
         r"\b(why did|how did|what prompted|inspired by|what was the connection)\b",
         r"\b(identify the connection|common thread|common link)\b"
