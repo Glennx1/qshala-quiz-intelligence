@@ -19,7 +19,6 @@ import { TopicItem, TopicSummary } from '../lib/types';
 
 type AudienceType = 'primary' | 'middle_school' | 'high_school' | 'college' | 'adult';
 type DifficultyPreset = 'Balanced' | 'Easy-heavy' | 'Hard-heavy' | 'Custom';
-type GenerationMode = 'HISTORICAL' | 'NEW' | 'REMIX' | 'SIMILAR';
 
 interface AudienceOption {
   id: AudienceType;
@@ -121,8 +120,7 @@ export default function QuickGenerateCard() {
   const [mediumCount, setMediumCount] = useState<number>(5);
   const [hardCount, setHardCount] = useState<number>(2);
 
-  // Mode & Format
-  const [generationMode, setGenerationMode] = useState<GenerationMode>('HISTORICAL');
+  // Format
   const [questionTypes, setQuestionTypes] = useState<string[]>(['SLIDE_QA']);
 
   const [loading, setLoading] = useState(false);
@@ -258,6 +256,8 @@ export default function QuickGenerateCard() {
       const gradeSuffix = minG && maxG ? ` (Grades ${minG}–${maxG})` : ` (${currentAudience.label})`;
       const promptSummary = `Create a ${questionCount}-question quiz on ${topic} for ${currentAudience.label}${gradeSuffix} with distribution: ${easyCount} Easy, ${mediumCount} Medium, ${hardCount} Hard.`;
 
+      const mode = (topicSummary && topicSummary.total_questions > 0) ? 'HISTORICAL' : 'NEW';
+
       const quiz = await api.generateQuiz({
         topic: topic.trim(),
         subtopic: subtopic.trim() || undefined,
@@ -273,7 +273,7 @@ export default function QuickGenerateCard() {
         },
         question_count: questionCount,
         question_types: questionTypes,
-        generation_mode: generationMode,
+        generation_mode: mode,
         style: 'QSHALA_HISTORICAL',
         raw_prompt: promptSummary,
       });
@@ -380,52 +380,7 @@ export default function QuickGenerateCard() {
           )}
         </div>
 
-        {/* Section 2: Generation Mode Selector */}
-        <div className="space-y-2">
-          <label className="text-[13px] font-semibold text-slate-800">
-            Generation Strategy
-          </label>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {[
-              {
-                id: 'HISTORICAL',
-                label: 'Vault Curation',
-                desc: 'Compile real tournament slide pairs',
-              },
-              {
-                id: 'NEW',
-                label: 'AI Fresh',
-                desc: 'Craft novel questions from facts',
-              },
-              {
-                id: 'REMIX',
-                label: 'AI Remix',
-                desc: 'Reimagined angles & reverse clues',
-              },
-              {
-                id: 'SIMILAR',
-                label: 'AI Sibling',
-                desc: 'Mirror tournament intellectual depth',
-              },
-            ].map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => setGenerationMode(m.id as GenerationMode)}
-                className={`p-3 text-left rounded-lg border transition-all cursor-pointer ${
-                  generationMode === m.id
-                    ? 'border-blue-600 bg-blue-50/50 text-blue-900 shadow-xs'
-                    : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
-                }`}
-              >
-                <div className="text-[12.5px] font-bold">{m.label}</div>
-                <div className="text-[11px] text-slate-500 font-normal mt-0.5 leading-tight">{m.desc}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Section 3: Audience Category */}
+        {/* Section 2: Audience Category */}
         <div className="space-y-2">
           <label className="text-[13px] font-semibold text-slate-800">
             Target Audience
@@ -646,7 +601,7 @@ export default function QuickGenerateCard() {
             <>
               <Sparkles className="h-4 w-4" />
               <span>
-                {generationMode === 'HISTORICAL'
+                {topicSummary && topicSummary.total_questions > 0
                   ? `Compile ${questionCount}-Question Quiz from Vault`
                   : `Generate ${questionCount}-Question AI Quiz`}
               </span>
