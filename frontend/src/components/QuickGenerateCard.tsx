@@ -490,7 +490,6 @@ export default function QuickGenerateCard() {
                     className="inline-flex items-center gap-1 rounded-md bg-blue-100 text-blue-800 px-2.5 py-1 text-[12px] font-medium"
                   >
                     <span>#{tag}</span>
->>>>>>> 89331fc (feat: tag-to-topic quiz compilation, concept tag cloud, live vault preview, and quizmaster personalities)
                     <button
                       type="button"
                       onClick={() => handleRemoveTag(tag)}
