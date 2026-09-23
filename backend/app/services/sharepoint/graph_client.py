@@ -1,0 +1,361 @@
+import os
+import time
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple
+import httpx
+from sqlalchemy.orm import Session
+from backend.app.config import settings
+from backend.app.models.sharepoint import SharePointSyncState, SharePointFile
+from backend.app.models.job import IngestionJob
+from backend.app.services.storage.blob_storage import get_blob_service, VercelBlobService
+
+logger = logging.getLogger(__name__)
+
+class SharePointClient:
+    """
+    Microsoft Graph API client for SharePoint document library ingestion.
+    Uses Azure AD OAuth2 client credentials flow with least-privilege Sites.Selected grant.
+    Implements delta query synchronization, paging, 410 Gone recovery, and streaming to Vercel Blob.
+    """
+    GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+    LOGIN_BASE = "https://login.microsoftonline.com"
+
+    def __init__(
+        self,
+        tenant_id: Optional[str] = None,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
+        site_id: Optional[str] = None,
+        drive_id: Optional[str] = None,
+        blob_service: Optional[VercelBlobService] = None,
+        http_client: Optional[httpx.AsyncClient] = None
+    ):
+        self.tenant_id = tenant_id or settings.AZURE_TENANT_ID
+        self.client_id = client_id or settings.AZURE_CLIENT_ID
+        self.client_secret = client_secret or settings.AZURE_CLIENT_SECRET
+        self.site_id = site_id or settings.SHAREPOINT_SITE_ID
+        self.drive_id = drive_id or settings.SHAREPOINT_DRIVE_ID
+        self.blob_service = blob_service or get_blob_service()
+        self._custom_http_client = http_client
+
+        self._access_token: Optional[str] = None
+        self._token_expires_at: float = 0.0
+
+    async def _get_http_client(self) -> httpx.AsyncClient:
+        if self._custom_http_client:
+            return self._custom_http_client
+        return httpx.AsyncClient(timeout=120.0, follow_redirects=True)
+
+    async def get_access_token(self) -> str:
+        """
+        Retrieves or refreshes OAuth 2.0 access token via Azure AD client credentials.
+        """
+        if self._access_token and time.time() < self._token_expires_at - 60:
+            return self._access_token
+
+        if not self.tenant_id or not self.client_id or not self.client_secret:
+            raise ValueError(
+                "Azure AD credentials (AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET) are not configured"
+            )
+
+        token_url = f"{self.LOGIN_BASE}/{self.tenant_id}/oauth2/v2.0/token"
+        payload = {
+            "grant_type": "client_credentials",
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "scope": "https://graph.microsoft.com/.default"
+        }
+
+        client = await self._get_http_client()
+        should_close = self._custom_http_client is None
+        try:
+            resp = await client.post(token_url, data=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            self._access_token = data["access_token"]
+            expires_in = data.get("expires_in", 3600)
+            self._token_expires_at = time.time() + float(expires_in)
+            return self._access_token
+        finally:
+            if should_close:
+                await client.aclose()
+
+    async def fetch_delta_page(self, url: str) -> Dict[str, Any]:
+        """
+        Fetches a delta query page from Microsoft Graph API with Bearer token authentication.
+        """
+        token = await self.get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+
+        client = await self._get_http_client()
+        should_close = self._custom_http_client is None
+        try:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 410:
+                # HTTP 410 Gone: Delta token expired
+                raise httpx.HTTPStatusError("Delta token expired", request=resp.request, response=resp)
+            resp.raise_for_status()
+            return resp.json()
+        finally:
+            if should_close:
+                await client.aclose()
+
+    async def download_item_content(
+        self,
+        item_id: str,
+        drive_id: Optional[str] = None,
+        download_url: Optional[str] = None
+    ) -> bytes:
+        """
+        Streams file content directly from Microsoft Graph or pre-authenticated downloadUrl.
+        """
+        client = await self._get_http_client()
+        should_close = self._custom_http_client is None
+        try:
+            if download_url:
+                resp = await client.get(download_url)
+                resp.raise_for_status()
+                return resp.content
+
+            target_drive = drive_id or self.drive_id
+            if target_drive:
+                url = f"{self.GRAPH_BASE}/drives/{target_drive}/items/{item_id}/content"
+            elif self.site_id:
+                url = f"{self.GRAPH_BASE}/sites/{self.site_id}/drive/items/{item_id}/content"
+            else:
+                raise ValueError("SharePoint drive_id or site_id is not specified")
+
+            token = await self.get_access_token()
+            headers = {"Authorization": f"Bearer {token}"}
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            return resp.content
+        finally:
+            if should_close:
+                await client.aclose()
+
+    async def sync_delta(
+        self,
+        db: Session,
+        drive_id: Optional[str] = None,
+        sync_state_id: str = "qshala_main_library"
+    ) -> Dict[str, Any]:
+        """
+        Executes incremental delta sync for a SharePoint document library.
+        Paginates until deltaLink is reached, filters .pptx and .pdf, handles 410 Gone recovery,
+        persists state in DB, streams new files to Vercel Blob, and queues ingestion jobs.
+        """
+        target_drive = drive_id or self.drive_id
+        if not target_drive and not self.site_id:
+            raise ValueError("SharePoint drive_id or site_id must be provided or configured in settings")
+
+        state = db.query(SharePointSyncState).filter(SharePointSyncState.id == sync_state_id).first()
+        if not state:
+            state = SharePointSyncState(
+                id=sync_state_id,
+                site_id=self.site_id,
+                drive_id=target_drive,
+                status="SYNCING"
+            )
+            db.add(state)
+            db.commit()
+            db.refresh(state)
+
+        state.status = "SYNCING"
+        state.last_error = None
+        db.commit()
+
+        root_delta_url = f"{self.GRAPH_BASE}/drives/{target_drive}/root/delta" if target_drive else f"{self.GRAPH_BASE}/sites/{self.site_id}/drive/root/delta"
+        initial_url = state.delta_token or root_delta_url
+        current_url: Optional[str] = initial_url
+        discovered_files: List[Tuple[SharePointFile, Optional[str]]] = []
+        latest_delta_link: Optional[str] = None
+        deleted_count = 0
+        pages_processed = 0
+
+        try:
+            while current_url:
+                pages_processed += 1
+                try:
+                    data = await self.fetch_delta_page(current_url)
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 410:
+                        logger.warning("Delta token expired (410 Gone). Resetting delta token and restarting sync.")
+                        state.delta_token = None
+                        db.commit()
+                        current_url = root_delta_url
+                        continue
+                    raise
+
+                items = data.get("value", [])
+                for item in items:
+                    item_id = item.get("id")
+                    if not item_id:
+                        continue
+
+                    # Handle deleted items
+                    if "@removed" in item or item.get("deleted"):
+                        existing = db.query(SharePointFile).filter(SharePointFile.id == item_id).first()
+                        if existing:
+                            existing.sync_status = "DELETED"
+                            deleted_count += 1
+                        continue
+
+                    # Filter for .pptx and .pdf files only
+                    name = item.get("name", "")
+                    ext = Path(name).suffix.lower()
+                    is_file = "file" in item
+                    if not is_file or ext not in [".pptx", ".pdf"]:
+                        continue
+
+                    etag = item.get("eTag")
+                    c_tag = item.get("cTag")
+                    size = item.get("size", 0)
+                    mod_str = item.get("lastModifiedDateTime")
+                    mod_dt = None
+                    if mod_str:
+                        try:
+                            mod_dt = datetime.fromisoformat(mod_str.replace("Z", "+00:00"))
+                        except Exception:
+                            mod_dt = datetime.now(timezone.utc)
+
+                    web_url = item.get("webUrl")
+                    d_url = item.get("@microsoft.graph.downloadUrl")
+
+                    sp_file = db.query(SharePointFile).filter(SharePointFile.id == item_id).first()
+                    if not sp_file:
+                        sp_file = SharePointFile(
+                            id=item_id,
+                            name=name,
+                            web_url=web_url,
+                            etag=etag,
+                            c_tag=c_tag,
+                            file_size_bytes=size,
+                            last_modified_date_time=mod_dt,
+                            sync_status="DISCOVERED"
+                        )
+                        db.add(sp_file)
+                        discovered_files.append((sp_file, d_url))
+                    elif sp_file.etag != etag or sp_file.sync_status in ["FAILED", "DISCOVERED"]:
+                        sp_file.name = name
+                        sp_file.web_url = web_url
+                        sp_file.etag = etag
+                        sp_file.c_tag = c_tag
+                        sp_file.file_size_bytes = size
+                        sp_file.last_modified_date_time = mod_dt
+                        sp_file.sync_status = "DISCOVERED"
+                        sp_file.error_message = None
+                        discovered_files.append((sp_file, d_url))
+
+                # Handle pagination
+                next_link = data.get("@odata.nextLink")
+                delta_link = data.get("@odata.deltaLink")
+
+                if next_link:
+                    current_url = next_link
+                else:
+                    if delta_link:
+                        latest_delta_link = delta_link
+                    current_url = None
+
+            db.commit()
+
+            # Include any existing files from DB that were previously discovered or failed transfer
+            existing_pending = db.query(SharePointFile).filter(
+                SharePointFile.sync_status.in_(["DISCOVERED", "FAILED"])
+            ).all()
+            for ep in existing_pending:
+                if not any(f.id == ep.id for f, _ in discovered_files):
+                    discovered_files.append((ep, None))
+
+            # Stream newly discovered files into Vercel Blob and enqueue IngestionJobs
+            enqueued_jobs = []
+            for sp_file, download_url in discovered_files:
+                try:
+                    file_content = await self.download_item_content(
+                        item_id=sp_file.id,
+                        drive_id=target_drive,
+                        download_url=download_url
+                    )
+
+                    blob_pathname = f"sharepoint/{sp_file.id}/{sp_file.name}"
+                    blob_result = await self.blob_service.put(
+                        pathname=blob_pathname,
+                        data=file_content
+                    )
+
+                    sp_file.blob_url = blob_result["url"]
+                    sp_file.sync_status = "QUEUED"
+
+                    # Check if an active job already exists for this file to avoid duplicate concurrent jobs
+                    existing_job = db.query(IngestionJob).filter(
+                        IngestionJob.source_file_id == sp_file.id,
+                        IngestionJob.status.in_(["PENDING", "PROCESSING"])
+                    ).first()
+
+                    if existing_job:
+                        existing_job.blob_url = blob_result["url"]
+                        existing_job.filename = sp_file.name
+                        existing_job.current_step = "DOWNLOAD"
+                        existing_job.status = "PENDING"
+                        existing_job.retry_count = 0
+                        existing_job.error_message = None
+                        job = existing_job
+                    else:
+                        job = IngestionJob(
+                            source_type="SHAREPOINT",
+                            source_file_id=sp_file.id,
+                            filename=sp_file.name,
+                            blob_url=blob_result["url"],
+                            status="PENDING",
+                            current_step="DOWNLOAD",
+                            step_data={"sharepoint_item_id": sp_file.id}
+                        )
+                        db.add(job)
+
+                    db.commit()
+                    enqueued_jobs.append(job.id)
+                except Exception as file_err:
+                    logger.error(f"Error transferring file {sp_file.name} to Blob/JobQueue: {file_err}")
+                    sp_file.sync_status = "FAILED"
+                    sp_file.error_message = str(file_err)
+                    db.commit()
+
+            # Update final sync state & delta token atomically after successful iteration
+            if latest_delta_link:
+                state.delta_token = latest_delta_link
+            state.last_sync_at = datetime.now(timezone.utc)
+            state.status = "IDLE"
+            state.total_files_tracked = db.query(SharePointFile).filter(SharePointFile.sync_status != "DELETED").count()
+            db.commit()
+
+            return {
+                "status": "SUCCESS",
+                "pages_processed": pages_processed,
+                "discovered_files_count": len(discovered_files),
+                "enqueued_jobs_count": len(enqueued_jobs),
+                "deleted_files_count": deleted_count,
+                "enqueued_job_ids": enqueued_jobs,
+                "delta_token": state.delta_token
+            }
+
+        except Exception as e:
+            logger.exception(f"SharePoint delta sync failed: {e}")
+            state.status = "FAILED"
+            state.last_error = str(e)
+            db.commit()
+            raise
+
+
+_global_sharepoint_client: Optional[SharePointClient] = None
+
+def get_sharepoint_client() -> SharePointClient:
+    global _global_sharepoint_client
+    if _global_sharepoint_client is None:
+        _global_sharepoint_client = SharePointClient()
+    return _global_sharepoint_client

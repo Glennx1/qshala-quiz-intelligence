@@ -56,7 +56,63 @@ export interface HistoricalQuestion {
   source_year?: number | null;
   document_title?: string | null;
   slide_number?: number | null;
+  duplicate_status?: string;
+  duplicate_similarity?: number | null;
+  duplicate_of_id?: string | null;
+  duplicate_of_text?: string | null;
+  duplicate_of_answer?: string | null;
+  image_refs?: string[];
+  visual_clues?: string | null;
+  audio_transcript?: string | null;
+  video_transcript?: string | null;
+  raw_media_refs?: string[];
+  source_slide_range?: string | null;
   created_at: string;
+}
+
+export interface SharePointSyncStatus {
+  id: string;
+  site_id?: string | null;
+  drive_id?: string | null;
+  status: string;
+  last_sync_at?: string | null;
+  total_files_tracked: number;
+  last_error?: string | null;
+}
+
+export interface SharePointFileItem {
+  id: string;
+  name: string;
+  web_url?: string | null;
+  file_size_bytes: number;
+  last_modified_date_time?: string | null;
+  blob_url?: string | null;
+  sync_status: string;
+  error_message?: string | null;
+}
+
+export interface IngestionJobItem {
+  id: string;
+  source_type: string;
+  source_file_id?: string | null;
+  filename: string;
+  blob_url?: string | null;
+  status: string;
+  current_step: string;
+  retry_count: number;
+  max_retries: number;
+  error_message?: string | null;
+  document_id?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+  completed_at?: string | null;
+  step_summary?: {
+    slides_count: number;
+    media_count: number;
+    media_cursor: number;
+    questions_count: number;
+    exact_duplicates: number;
+  };
 }
 
 export interface TopicItem {

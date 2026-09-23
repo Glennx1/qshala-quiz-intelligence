@@ -10,6 +10,9 @@ import {
   TopicSummary,
   TagItem,
   TagPreviewResponse,
+  SharePointSyncStatus,
+  SharePointFileItem,
+  IngestionJobItem,
 } from './types';
 
 export function getApiBase(): string {
@@ -105,6 +108,7 @@ export const api = {
     grade_min?: number;
     grade_max?: number;
     difficulty?: string;
+    duplicate_status?: string;
     sort_by?: string;
     sort_order?: 'asc' | 'desc';
     limit?: number;
@@ -118,6 +122,7 @@ export const api = {
     if (params.grade_min) searchParams.append('grade_min', params.grade_min.toString());
     if (params.grade_max) searchParams.append('grade_max', params.grade_max.toString());
     if (params.difficulty) searchParams.append('difficulty', params.difficulty);
+    if (params.duplicate_status) searchParams.append('duplicate_status', params.duplicate_status);
     if (params.sort_by) searchParams.append('sort_by', params.sort_by);
     if (params.sort_order) searchParams.append('sort_order', params.sort_order);
     if (params.limit) searchParams.append('limit', params.limit.toString());
@@ -125,6 +130,71 @@ export const api = {
 
     const res = await fetch(`${getApiBase()}/questions?${searchParams.toString()}`, { cache: 'no-store' });
     return handleResponse<HistoricalQuestion[]>(res);
+  },
+
+  getDuplicateCandidates: async (): Promise<HistoricalQuestion[]> => {
+    const res = await fetch(`${getApiBase()}/questions/duplicates`, { cache: 'no-store' });
+    return handleResponse<HistoricalQuestion[]>(res);
+  },
+
+  resolveDuplicate: async (
+    questionId: string,
+    action: 'CONFIRM_DUPLICATE' | 'DISMISS_UNIQUE' | 'MERGE',
+    notes?: string
+  ): Promise<HistoricalQuestion> => {
+    const res = await fetch(`${getApiBase()}/questions/${questionId}/resolve-duplicate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, notes }),
+    });
+    return handleResponse<HistoricalQuestion>(res);
+  },
+
+  // SharePoint & Job Queue Integration
+  getSharePointStatus: async (): Promise<SharePointSyncStatus> => {
+    const res = await fetch(`${getApiBase()}/sharepoint/status`, { cache: 'no-store' });
+    return handleResponse<SharePointSyncStatus>(res);
+  },
+
+  triggerSharePointSync: async (driveId?: string): Promise<any> => {
+    const url = driveId ? `${getApiBase()}/sharepoint/sync?drive_id=${encodeURIComponent(driveId)}` : `${getApiBase()}/sharepoint/sync`;
+    const res = await fetch(url, {
+      method: 'POST',
+    });
+    return handleResponse<any>(res);
+  },
+
+  listSharePointFiles: async (sync_status?: string): Promise<{ total: number; files: SharePointFileItem[] }> => {
+    const url = sync_status ? `${getApiBase()}/sharepoint/files?sync_status=${encodeURIComponent(sync_status)}` : `${getApiBase()}/sharepoint/files`;
+    const res = await fetch(url, { cache: 'no-store' });
+    return handleResponse<{ total: number; files: SharePointFileItem[] }>(res);
+  },
+
+  requeueSharePointFile: async (fileId: string): Promise<any> => {
+    const res = await fetch(`${getApiBase()}/sharepoint/files/${fileId}/re-queue`, {
+      method: 'POST',
+    });
+    return handleResponse<any>(res);
+  },
+
+  listJobs: async (status?: string): Promise<{ total: number; jobs: IngestionJobItem[] }> => {
+    const url = status ? `${getApiBase()}/jobs?status=${encodeURIComponent(status)}` : `${getApiBase()}/jobs`;
+    const res = await fetch(url, { cache: 'no-store' });
+    return handleResponse<{ total: number; jobs: IngestionJobItem[] }>(res);
+  },
+
+  processNextJob: async (): Promise<any> => {
+    const res = await fetch(`${getApiBase()}/jobs/process-next`, {
+      method: 'POST',
+    });
+    return handleResponse<any>(res);
+  },
+
+  retryJob: async (jobId: string): Promise<any> => {
+    const res = await fetch(`${getApiBase()}/jobs/${jobId}/retry`, {
+      method: 'POST',
+    });
+    return handleResponse<any>(res);
   },
 
   updateQuestionTags: async (

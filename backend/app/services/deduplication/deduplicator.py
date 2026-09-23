@@ -1,3 +1,4 @@
+import uuid
 import hashlib
 import re
 import logging
@@ -7,18 +8,21 @@ from sqlalchemy.orm import Session
 from backend.app.models.question import Question
 from backend.app.services.retrieval.vector_search import batch_cosine_similarities
 from backend.app.config import settings
+from backend.app.database import is_postgres, PG_VECTOR_AVAILABLE
 
 logger = logging.getLogger(__name__)
 
 class Deduplicator:
     """
     Two-Tier High-Scale Deduplication Engine:
-    - Tier 1: O(1) Canonical Normalized SHA-256 Hash
-    - Tier 2: Semantic Vector Cosine Similarity (against DB and intra-batch)
-    - Batched provenance tracking across presentations
+    - Tier 1: O(1) Canonical Normalized SHA-256 Hash Pre-Filter
+    - Tier 2: Semantic Vector Cosine Similarity Nearest-Neighbor Lookup (0.92 Threshold)
+    
+    Candidates >= 0.92 similarity are flagged as 'POSSIBLE_DUPLICATE' for human review
+    in the Questions UI (NOT auto-rejected or discarded).
     """
 
-    DEFAULT_SEMANTIC_THRESHOLD = getattr(settings, "DUPLICATE_SIMILARITY_THRESHOLD", 0.88)
+    DEFAULT_SEMANTIC_THRESHOLD = getattr(settings, "DUPLICATE_SIMILARITY_THRESHOLD", 0.92)
 
     @staticmethod
     def canonicalize_text(text: str) -> str:
@@ -45,12 +49,16 @@ class Deduplicator:
         threshold: Optional[float] = None
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
-        Deduplicates candidate questions against both existing DB records and intra-batch items.
+        Deduplicates candidate questions:
+        - Tier 1: Exact hash match updates provenance on existing record and skips vector search.
+        - Tier 2: Vector nearest-neighbor check. Candidates >= threshold (0.92) are flagged as
+          'POSSIBLE_DUPLICATE' with matched ID and similarity score, but KEPT for insertion
+          and human UI review.
         """
         if not candidates:
             return [], []
 
-        thresh = threshold or self.DEFAULT_SEMANTIC_THRESHOLD
+        thresh = threshold if threshold is not None else self.DEFAULT_SEMANTIC_THRESHOLD
 
         # 1. Compute canonical hashes
         for c in candidates:
@@ -58,121 +66,141 @@ class Deduplicator:
 
         candidate_hashes = [c["content_hash"] for c in candidates]
 
-        # 2. Tier 1: Exact Hash Batch Lookup
+        # 2. Tier 1: Exact Hash Pre-filter
         existing_hash_map: Dict[str, Question] = {}
         matched_records = db.query(Question).filter(Question.content_hash.in_(candidate_hashes)).all()
         for rec in matched_records:
             existing_hash_map[rec.content_hash] = rec
 
-        tier1_unique: List[Dict[str, Any]] = []
-        tier1_unique_embeddings: List[List[float]] = []
-        duplicates: List[Dict[str, Any]] = []
+        tier1_passed: List[Dict[str, Any]] = []
+        tier1_passed_embeddings: List[List[float]] = []
+        exact_duplicates: List[Dict[str, Any]] = []
         provenance_updates: List[Tuple[Question, Optional[str]]] = []
+        seen_in_batch_hashes: Set[str] = set()
 
         for i, c in enumerate(candidates):
             chash = c["content_hash"]
             if chash in existing_hash_map:
                 existing = existing_hash_map[chash]
                 provenance_updates.append((existing, c.get("slide_id")))
-                duplicates.append({
+                exact_duplicates.append({
                     "candidate_question": c["question_text"],
                     "matched_id": existing.id,
                     "duplicate_type": "EXACT_HASH",
                     "similarity": 1.0
                 })
-            else:
-                tier1_unique.append(c)
-                if i < len(candidate_embeddings):
-                    tier1_unique_embeddings.append(candidate_embeddings[i])
-                else:
-                    tier1_unique_embeddings.append([])
-
-        if not tier1_unique:
-            self._batch_commit_provenance(db, provenance_updates, doc_id)
-            return [], duplicates
-
-        # 3. Tier 2: Vector Semantic Deduplication
-        # Topic-scoped candidate loading to keep comparison fast and scalable
-        batch_topics = set()
-        for c in tier1_unique:
-            pt = c.get("primary_topic")
-            if pt:
-                batch_topics.add(pt)
-
-        query = db.query(Question.id, Question.embedding).filter(Question.embedding.isnot(None))
-        if batch_topics and len(batch_topics) <= 4:
-            query = query.filter(Question.topic.in_(list(batch_topics)))
-
-        existing_vec_records = query.all()
-        # Fallback to general pool if topic pool is empty
-        if not existing_vec_records:
-            existing_vec_records = db.query(Question.id, Question.embedding).filter(Question.embedding.isnot(None)).limit(1000).all()
-
-        existing_ids = [q_id for q_id, q_emb in existing_vec_records if q_emb and len(q_emb) > 0]
-        existing_matrix = [q_emb for q_id, q_emb in existing_vec_records if q_emb and len(q_emb) > 0]
-
-        final_unique: List[Dict[str, Any]] = []
-        final_unique_embeddings: List[List[float]] = []
-        seen_in_batch_hashes: Set[str] = set()
-
-        for idx, item in enumerate(tier1_unique):
-            chash = item["content_hash"]
-            # Intra-batch exact check
-            if chash in seen_in_batch_hashes:
-                duplicates.append({
-                    "candidate_question": item["question_text"],
+            elif chash in seen_in_batch_hashes:
+                exact_duplicates.append({
+                    "candidate_question": c["question_text"],
                     "duplicate_type": "INTRA_BATCH_EXACT",
                     "similarity": 1.0
                 })
-                continue
+            else:
+                seen_in_batch_hashes.add(chash)
+                tier1_passed.append(c)
+                if i < len(candidate_embeddings):
+                    tier1_passed_embeddings.append(candidate_embeddings[i])
+                else:
+                    tier1_passed_embeddings.append([])
 
-            item_emb = tier1_unique_embeddings[idx] if idx < len(tier1_unique_embeddings) else None
-            is_semantic_dup = False
+        if not tier1_passed:
+            self._batch_commit_provenance(db, provenance_updates, doc_id)
+            return [], exact_duplicates
+
+        # 3. Tier 2: Nearest-Neighbor Semantic Vector Similarity
+        batch_topics = set()
+        for c in tier1_passed:
+            c["id"] = c.get("id") or str(uuid.uuid4())
+            pt = c.get("primary_topic") or c.get("topic")
+            if pt:
+                batch_topics.add(pt)
+
+        existing_ids = []
+        existing_matrix = []
+
+        # Only load in-memory matrix if not running on native pgvector
+        if not (is_postgres and PG_VECTOR_AVAILABLE):
+            query = db.query(Question.id, Question.embedding).filter(Question.embedding.isnot(None))
+            if batch_topics and len(batch_topics) <= 4:
+                query = query.filter(Question.topic.in_(list(batch_topics)))
+
+            existing_vec_records = query.all()
+            if not existing_vec_records:
+                existing_vec_records = db.query(Question.id, Question.embedding).filter(Question.embedding.isnot(None)).limit(1000).all()
+
+            existing_ids = [q_id for q_id, q_emb in existing_vec_records if q_emb and len(q_emb) > 0]
+            existing_matrix = [q_emb for q_id, q_emb in existing_vec_records if q_emb and len(q_emb) > 0]
+
+        final_candidates: List[Dict[str, Any]] = []
+        final_candidates_embeddings: List[List[float]] = []
+
+        for idx, item in enumerate(tier1_passed):
+            item_emb = tier1_passed_embeddings[idx] if idx < len(tier1_passed_embeddings) else None
+            best_sim = 0.0
+            best_matched_id: Optional[str] = None
+            is_possible_dup = False
 
             # Check against existing DB embeddings
-            if item_emb and existing_matrix:
-                sims = batch_cosine_similarities(item_emb, existing_matrix)
-                if len(sims) > 0:
-                    best_idx = int(np.argmax(sims))
-                    best_sim = float(sims[best_idx])
-                    if best_sim >= thresh:
-                        matched_id = existing_ids[best_idx]
-                        existing_q = db.query(Question).filter(Question.id == matched_id).first()
-                        if existing_q:
-                            provenance_updates.append((existing_q, item.get("slide_id")))
-                        duplicates.append({
-                            "candidate_question": item["question_text"],
-                            "matched_id": matched_id,
-                            "duplicate_type": "SEMANTIC_SIMILARITY",
-                            "similarity": round(best_sim, 3)
-                        })
-                        is_semantic_dup = True
+            if item_emb:
+                if is_postgres and PG_VECTOR_AVAILABLE:
+                    try:
+                        q_query = db.query(
+                            Question.id,
+                            Question.embedding.cosine_distance(item_emb).label("distance")
+                        ).filter(Question.embedding.isnot(None))
+                        if batch_topics and len(batch_topics) <= 4:
+                            q_query = q_query.filter(Question.topic.in_(list(batch_topics)))
+                        nn_rec = q_query.order_by("distance").first()
+                        if nn_rec and nn_rec.distance is not None:
+                            pg_sim = float(1.0 - nn_rec.distance)
+                            if pg_sim >= thresh and pg_sim > best_sim:
+                                best_sim = pg_sim
+                                best_matched_id = nn_rec.id
+                                is_possible_dup = True
+                    except Exception as e:
+                        logger.warning(f"pgvector query error ({e}), falling back")
 
-            # Intra-batch semantic check against already accepted unique items
-            if not is_semantic_dup and item_emb and final_unique_embeddings:
-                intra_sims = batch_cosine_similarities(item_emb, final_unique_embeddings)
+                if not is_possible_dup and existing_matrix:
+                    sims = batch_cosine_similarities(item_emb, existing_matrix)
+                    if len(sims) > 0:
+                        best_idx = int(np.argmax(sims))
+                        sim = float(sims[best_idx])
+                        if sim >= thresh and sim > best_sim:
+                            best_sim = sim
+                            best_matched_id = existing_ids[best_idx]
+                            is_possible_dup = True
+
+            # Intra-batch comparison against previously accepted items in this batch
+            if not is_possible_dup and item_emb and final_candidates_embeddings:
+                intra_sims = batch_cosine_similarities(item_emb, final_candidates_embeddings)
                 if len(intra_sims) > 0:
                     best_intra_idx = int(np.argmax(intra_sims))
                     best_intra_sim = float(intra_sims[best_intra_idx])
                     if best_intra_sim >= thresh:
-                        duplicates.append({
-                            "candidate_question": item["question_text"],
-                            "matched_id": final_unique[best_intra_idx].get("content_hash"),
-                            "duplicate_type": "INTRA_BATCH_SEMANTIC",
-                            "similarity": round(best_intra_sim, 3)
-                        })
-                        is_semantic_dup = True
+                        best_sim = best_intra_sim
+                        matched_cand = final_candidates[best_intra_idx]
+                        if not matched_cand.get("id"):
+                            matched_cand["id"] = str(uuid.uuid4())
+                        best_matched_id = matched_cand["id"]
+                        is_possible_dup = True
 
-            if not is_semantic_dup:
-                seen_in_batch_hashes.add(chash)
-                final_unique.append(item)
-                if item_emb:
-                    final_unique_embeddings.append(item_emb)
+            if is_possible_dup:
+                item["duplicate_status"] = "POSSIBLE_DUPLICATE"
+                item["duplicate_similarity"] = round(best_sim, 4)
+                item["duplicate_of_id"] = best_matched_id
+            else:
+                item["duplicate_status"] = "UNIQUE"
+                item["duplicate_similarity"] = round(best_sim, 4) if best_sim > 0 else None
+                item["duplicate_of_id"] = None
 
-        # Batch commit all provenance records
+            final_candidates.append(item)
+            if item_emb:
+                final_candidates_embeddings.append(item_emb)
+
+        # Commit provenance for exact hash matches
         self._batch_commit_provenance(db, provenance_updates, doc_id)
 
-        return final_unique, duplicates
+        return final_candidates, exact_duplicates
 
     def _batch_commit_provenance(
         self,

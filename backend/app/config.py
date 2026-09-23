@@ -73,8 +73,9 @@ else:
 UPLOAD_DIR = STORAGE_DIR / "uploads"
 SLIDES_DIR = STORAGE_DIR / "slides"
 EXPORTS_DIR = STORAGE_DIR / "exports"
+BLOBS_DIR = STORAGE_DIR / "blobs"
 
-for d in [STORAGE_DIR, UPLOAD_DIR, SLIDES_DIR, EXPORTS_DIR]:
+for d in [STORAGE_DIR, UPLOAD_DIR, SLIDES_DIR, EXPORTS_DIR, BLOBS_DIR]:
     try:
         d.mkdir(parents=True, exist_ok=True)
     except Exception:
@@ -97,6 +98,17 @@ class Settings(BaseSettings):
     UPLOAD_DIR: Path = UPLOAD_DIR
     SLIDES_DIR: Path = SLIDES_DIR
     EXPORTS_DIR: Path = EXPORTS_DIR
+    BLOBS_DIR: Path = BLOBS_DIR
+
+    # Vercel Blob Object Storage
+    BLOB_READ_WRITE_TOKEN: Optional[str] = None
+
+    # Azure AD / Microsoft Graph / SharePoint Integration
+    AZURE_TENANT_ID: Optional[str] = None
+    AZURE_CLIENT_ID: Optional[str] = None
+    AZURE_CLIENT_SECRET: Optional[str] = None
+    SHAREPOINT_SITE_ID: Optional[str] = None
+    SHAREPOINT_DRIVE_ID: Optional[str] = None
     
     # AI Provider: 'gemini', 'openai', 'anthropic', or 'local'
     LLM_PROVIDER: str = "local"
@@ -111,7 +123,7 @@ class Settings(BaseSettings):
     EMBEDDING_DIM: int = 768  # 768 for Gemini / all-mpnet, 1536 for OpenAI
     
     # Validation thresholds
-    DUPLICATE_SIMILARITY_THRESHOLD: float = 0.85
+    DUPLICATE_SIMILARITY_THRESHOLD: float = 0.92
     MIN_GROUNDING_SCORE: float = 0.70
     @field_validator("EMBEDDING_DIM", mode="before")
     @classmethod
@@ -124,7 +136,7 @@ class Settings(BaseSettings):
     @classmethod
     def parse_dup_thresh(cls, v):
         if v == "" or v is None:
-            return 0.85
+            return 0.92
         return float(v)
 
     @field_validator("MIN_GROUNDING_SCORE", mode="before")
@@ -148,7 +160,10 @@ class Settings(BaseSettings):
             return default_db_url
         return str(v)
 
-    @field_validator("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", mode="before")
+    @field_validator("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+                     "BLOB_READ_WRITE_TOKEN", "AZURE_TENANT_ID", "AZURE_CLIENT_ID",
+                     "AZURE_CLIENT_SECRET", "SHAREPOINT_SITE_ID", "SHAREPOINT_DRIVE_ID",
+                     mode="before")
     @classmethod
     def parse_empty_keys(cls, v):
         if v == "" or v is None:

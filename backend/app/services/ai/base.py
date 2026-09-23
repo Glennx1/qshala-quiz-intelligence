@@ -12,6 +12,23 @@ class LLMProvider(ABC):
         """Generate structured JSON response from prompt."""
         pass
 
+    async def generate_multimodal(
+        self,
+        prompt: str,
+        media_parts: List[Dict[str, str]],
+        system_instruction: Optional[str] = None
+    ) -> str:
+        """Generate text from multimodal inputs (inline images/audio base64 parts)."""
+        return await self.generate_text(prompt, system_instruction=system_instruction)
+
+    async def describe_image(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> str:
+        """Extract visual OCR and content description from image bytes."""
+        return ""
+
+    async def transcribe_audio(self, audio_bytes: bytes, mime_type: str = "audio/mp3") -> str:
+        """Transcribe spoken words and audio cues from audio bytes."""
+        return ""
+
 class EmbeddingProvider(ABC):
     @abstractmethod
     async def get_embedding(self, text: str) -> List[float]:

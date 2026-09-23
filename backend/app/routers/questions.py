@@ -5,12 +5,18 @@ from sqlalchemy import or_, func, desc, asc, String
 from backend.app.database import get_db
 from backend.app.models.question import Question
 from backend.app.models.document import Document, Slide
-from backend.app.schemas.question import QuestionResponse, QuestionUpdate
+from backend.app.schemas.question import QuestionResponse, QuestionUpdate, DuplicateResolveRequest
 from backend.app.services.retrieval.hybrid_retriever import HybridRetriever
 
 router = APIRouter(prefix="/questions", tags=["Knowledge Base Questions"])
 
 def to_question_response(q: Question, doc: Optional[Document], slide: Optional[Slide]) -> QuestionResponse:
+    dup_text = None
+    dup_ans = None
+    if getattr(q, "duplicate_of", None):
+        dup_text = q.duplicate_of.question_text
+        dup_ans = q.duplicate_of.answer
+
     return QuestionResponse(
         id=q.id,
         content_hash=getattr(q, "content_hash", None),
@@ -39,6 +45,17 @@ def to_question_response(q: Question, doc: Optional[Document], slide: Optional[S
         round_number=getattr(q, "round_number", None),
         question_type=q.question_type or "SLIDE_QA",
         source_year=q.source_year,
+        image_refs=getattr(q, "image_refs", []) or [],
+        visual_clues=getattr(q, "visual_clues", None),
+        audio_transcript=getattr(q, "audio_transcript", None),
+        video_transcript=getattr(q, "video_transcript", None),
+        raw_media_refs=getattr(q, "raw_media_refs", []) or [],
+        source_slide_range=getattr(q, "source_slide_range", None),
+        duplicate_status=getattr(q, "duplicate_status", "UNIQUE") or "UNIQUE",
+        duplicate_similarity=getattr(q, "duplicate_similarity", None),
+        duplicate_of_id=getattr(q, "duplicate_of_id", None),
+        duplicate_of_text=dup_text,
+        duplicate_of_answer=dup_ans,
         created_at=q.created_at,
         document_title=doc.title if doc else None,
         slide_number=slide.slide_number if slide else None
@@ -248,6 +265,7 @@ async def search_questions(
     grade_min: Optional[int] = Query(None),
     grade_max: Optional[int] = Query(None),
     difficulty: Optional[str] = Query(None),
+    duplicate_status: Optional[str] = Query(None),
     sort_by: Optional[str] = Query("created_at"),
     sort_order: Optional[str] = Query("desc"),
     limit: int = Query(50, ge=1, le=200),
@@ -260,6 +278,7 @@ async def search_questions(
     subtopic_str = subtopic if isinstance(subtopic, str) and subtopic.strip() else None
     tag_str = tag if isinstance(tag, str) and tag.strip() else None
     diff_str = difficulty if isinstance(difficulty, str) and difficulty.strip() else None
+    dup_status_str = duplicate_status if isinstance(duplicate_status, str) and duplicate_status.strip() else None
     grade_min_val = grade_min if isinstance(grade_min, int) else None
     grade_max_val = grade_max if isinstance(grade_max, int) else None
     sort_by_str = sort_by if isinstance(sort_by, str) else "created_at"
@@ -288,6 +307,8 @@ async def search_questions(
         join(Document, Question.document_id == Document.id).\
         outerjoin(Slide, Question.slide_id == Slide.id)
 
+    if dup_status_str:
+        q_builder = q_builder.filter(Question.duplicate_status == dup_status_str)
     if topic_str:
         q_builder = q_builder.filter(
             or_(
@@ -321,6 +342,24 @@ async def search_questions(
         output.append(to_question_response(q, doc, slide))
     return output
 
+@router.get("/duplicates", response_model=List[QuestionResponse])
+def list_duplicate_candidates(
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db)
+):
+    """
+    Lists all questions flagged with duplicate_status == 'POSSIBLE_DUPLICATE' for human review.
+    """
+    items = db.query(Question, Document, Slide).\
+        join(Document, Question.document_id == Document.id).\
+        outerjoin(Slide, Question.slide_id == Slide.id).\
+        filter(Question.duplicate_status == "POSSIBLE_DUPLICATE").\
+        order_by(desc(Question.duplicate_similarity)).\
+        offset(offset).limit(limit).all()
+
+    return [to_question_response(q, doc, slide) for q, doc, slide in items]
+
 @router.get("/{question_id}", response_model=QuestionResponse)
 def get_question(question_id: str, db: Session = Depends(get_db)):
     item = db.query(Question, Document, Slide).\
@@ -332,6 +371,48 @@ def get_question(question_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Question not found")
 
     q, doc, slide = item
+    return to_question_response(q, doc, slide)
+
+@router.post("/{question_id}/resolve-duplicate", response_model=QuestionResponse)
+def resolve_question_duplicate(
+    question_id: str,
+    req: DuplicateResolveRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Resolves a question flagged as POSSIBLE_DUPLICATE:
+    - CONFIRM_DUPLICATE: marks question as confirmed duplicate and merges provenance with original.
+    - DISMISS_UNIQUE: marks question as verified UNIQUE / RESOLVED.
+    - MERGE: updates occurrence count and merges source deck references.
+    """
+    item = db.query(Question, Document, Slide).\
+        join(Document, Question.document_id == Document.id).\
+        outerjoin(Slide, Question.slide_id == Slide.id).\
+        filter(Question.id == question_id).first()
+
+    if not item:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    q, doc, slide = item
+    action = req.action.upper()
+
+    if action in ["CONFIRM_DUPLICATE", "MERGE"]:
+        q.duplicate_status = "CONFIRMED_DUPLICATE"
+        if q.duplicate_of_id:
+            original = db.query(Question).filter(Question.id == q.duplicate_of_id).first()
+            if original:
+                original.occurrence_count = (original.occurrence_count or 1) + 1
+                prov = list(original.provenance_decks or [])
+                if not any(p.get("document_id") == q.document_id for p in prov):
+                    prov.append({"document_id": q.document_id, "slide_id": q.slide_id})
+                    original.provenance_decks = prov
+    elif action in ["DISMISS_UNIQUE", "RESOLVE"]:
+        q.duplicate_status = "RESOLVED"
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown resolution action: {req.action}")
+
+    db.commit()
+    db.refresh(q)
     return to_question_response(q, doc, slide)
 
 @router.patch("/{question_id}", response_model=QuestionResponse)

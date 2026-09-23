@@ -51,17 +51,23 @@ class AutoTagger:
         question_text: str,
         answer_text: str,
         explanation: str = "",
-        doc_title: str = ""
+        doc_title: str = "",
+        visual_clues: str = "",
+        audio_transcript: str = "",
+        video_transcript: str = ""
     ) -> Dict[str, Any]:
         """
         Extracts primary topic, multi-topic array, named entity tags,
         question hook style, curiosity quotient, and temporal nature.
-        Uses position-weighted scoring: Question (2.5x) > Answer (2.0x) > Title (1.5x) > Explanation (1.0x).
+        Uses position-weighted scoring including multi-modal context clues.
         """
         q_clean = question_text.lower()
         a_clean = answer_text.lower()
         exp_clean = explanation.lower()
         title_clean = doc_title.lower()
+        vis_clean = (visual_clues or "").lower()
+        audio_clean = (audio_transcript or "").lower()
+        vid_clean = (video_transcript or "").lower()
 
         # 1. Multi-Topic Weighted Scoring
         topic_scores: Dict[str, float] = {}
@@ -78,6 +84,12 @@ class AutoTagger:
                     score += 1.5
                 if re.search(pattern, exp_clean):
                     score += 1.0
+                if vis_clean and re.search(pattern, vis_clean):
+                    score += 1.5
+                if audio_clean and re.search(pattern, audio_clean):
+                    score += 1.5
+                if vid_clean and re.search(pattern, vid_clean):
+                    score += 1.5
 
             if score > 0:
                 topic_scores[topic] = score
@@ -94,16 +106,22 @@ class AutoTagger:
             primary_topic = "General Knowledge"
             multi_topics = ["General Knowledge"]
 
-        # Subtopic heuristic: if secondary topic exists with high score, or extract from doc_title
+        # Subtopic heuristic
         subtopic = None
         if len(sorted_topics) > 1 and sorted_topics[1][1] >= 2.5:
             subtopic = sorted_topics[1][0]
 
         # 2. Entity & Key Concepts Extraction
-        entities = self._extract_entities(f"{question_text} {answer_text} {explanation[:150]}")
+        combined_context = f"{question_text} {answer_text} {(explanation or '')[:150]} {(visual_clues or '')[:150]} {(audio_transcript or '')[:150]}"
+        entities = self._extract_entities(combined_context)
 
         # 3. Pedagogical Hook & Style
         hook = self._classify_hook(question_text, explanation)
+        if hook == "DIRECT_TRIVIA":
+            if visual_clues:
+                hook = "VISUAL_CLUE"
+            elif audio_transcript:
+                hook = "AUDIO_CLUE"
 
         # 4. Curiosity Quotient (4 - 10)
         curiosity_score = self._compute_curiosity_score(question_text, explanation, hook)
@@ -120,6 +138,81 @@ class AutoTagger:
             "curiosity_score": curiosity_score,
             "temporal_nature": temporal_nature
         }
+
+    async def tag_question_with_ai(
+        self,
+        question_text: str,
+        answer_text: str,
+        explanation: str = "",
+        doc_title: str = "",
+        visual_clues: str = "",
+        audio_transcript: str = "",
+        video_transcript: str = ""
+    ) -> Dict[str, Any]:
+        """
+        Feeds the canonical representation into Gemini classification step,
+        injecting visual OCR context and audio transcripts into the prompt.
+        Falls back to rule-based tagging on error or missing keys.
+        """
+        try:
+            from backend.app.services.ai.factory import get_llm_provider
+            llm = get_llm_provider()
+
+            prompt_parts = [
+                f"Question: {question_text}",
+                f"Answer: {answer_text}",
+            ]
+            if explanation:
+                prompt_parts.append(f"Explanation: {explanation}")
+            if doc_title:
+                prompt_parts.append(f"Presentation Source: {doc_title}")
+            if visual_clues:
+                prompt_parts.append(f"Visual Context & OCR: {visual_clues}")
+            if audio_transcript:
+                prompt_parts.append(f"Audio Transcript Clue: {audio_transcript}")
+            if video_transcript:
+                prompt_parts.append(f"Video Transcript Clue: {video_transcript}")
+
+            prompt = (
+                "You are an expert pedagogical quiz classifier for QShala.\n"
+                "Classify this tournament quiz question into a structured JSON response:\n"
+                + "\n".join(prompt_parts) + "\n\n"
+                "Return JSON with the following exact keys:\n"
+                "{\n"
+                '  "primary_topic": "string",\n'
+                '  "topics": ["string", ...],\n'
+                '  "subtopic": "string or null",\n'
+                '  "tags": ["key entity 1", "key entity 2"],\n'
+                '  "question_hook": "DIRECT_TRIVIA" | "STORY_NARRATIVE" | "DID_YOU_KNOW" | "LATERAL_CONNECT" | "VISUAL_CLUE",\n'
+                '  "curiosity_score": 7,\n'
+                '  "temporal_nature": "EVERGREEN" | "TIME_SENSITIVE"\n'
+                "}"
+            )
+
+            res = await llm.generate_json(prompt)
+            if res and "primary_topic" in res and "topics" in res:
+                return {
+                    "primary_topic": res.get("primary_topic", "General Knowledge"),
+                    "topics": res.get("topics", ["General Knowledge"]),
+                    "subtopic": res.get("subtopic"),
+                    "tags": res.get("tags", []),
+                    "question_hook": res.get("question_hook", "DIRECT_TRIVIA"),
+                    "curiosity_score": int(res.get("curiosity_score", 7)),
+                    "temporal_nature": res.get("temporal_nature", "EVERGREEN")
+                }
+        except Exception:
+            pass
+
+        # Clean fallback to rule-based classification
+        return self.tag_question(
+            question_text=question_text,
+            answer_text=answer_text,
+            explanation=explanation,
+            doc_title=doc_title,
+            visual_clues=visual_clues,
+            audio_transcript=audio_transcript,
+            video_transcript=video_transcript
+        )
 
     def _extract_entities(self, text: str) -> List[str]:
         """Extracts significant proper nouns, capitalized entities, and key multi-word phrases."""

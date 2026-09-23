@@ -18,6 +18,9 @@ class Document(Base):
     uploaded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     file_type = Column(String(50), nullable=False)  # pptx, ppt, pdf
     storage_path = Column(Text, nullable=False)
+    blob_url = Column(Text, nullable=True)
+    source = Column(String(50), default="MANUAL")  # MANUAL, SHAREPOINT
+    sharepoint_file_id = Column(String(255), nullable=True)
     file_size_bytes = Column(BigInteger, default=0)
     slide_count = Column(Integer, default=0)
     question_count = Column(Integer, default=0)

@@ -25,6 +25,17 @@ class QuestionBase(BaseModel):
     round_number: Optional[int] = None
     question_type: str = "SLIDE_QA"
     source_year: Optional[int] = None
+    # Multi-modal media & canonical representations
+    image_refs: List[str] = []
+    visual_clues: Optional[str] = None
+    audio_transcript: Optional[str] = None
+    video_transcript: Optional[str] = None
+    raw_media_refs: List[str] = []
+    source_slide_range: Optional[str] = None
+    # Deduplication & human review
+    duplicate_status: str = "UNIQUE"
+    duplicate_similarity: Optional[float] = None
+    duplicate_of_id: Optional[str] = None
 
 class QuestionCreate(QuestionBase):
     document_id: str
@@ -40,7 +51,13 @@ class QuestionResponse(QuestionBase):
     created_at: datetime
     document_title: Optional[str] = None
     slide_number: Optional[int] = None
+    duplicate_of_text: Optional[str] = None
+    duplicate_of_answer: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
+
+class DuplicateResolveRequest(BaseModel):
+    action: str  # "CONFIRM_DUPLICATE", "DISMISS_UNIQUE", "MERGE"
+    notes: Optional[str] = None
 
 class QuestionUpdate(BaseModel):
     tags: Optional[List[str]] = None

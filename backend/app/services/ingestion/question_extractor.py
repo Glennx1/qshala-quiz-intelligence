@@ -66,6 +66,8 @@ class QuestionExtractor:
                     ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("speaker_notes", ""))
 
                 if ans_text:
+                    q_imgs = list(current.get("image_paths") or []) + list(ans_slide.get("image_paths") or [])
+                    q_media = list(current.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
                     extracted_questions.append({
                         "slide_id": current.get("id"),
                         "answer_slide_id": ans_slide.get("id"),
@@ -79,6 +81,9 @@ class QuestionExtractor:
                         "source_year": doc_year or 2024,
                         "slide_number": current.get("slide_number"),
                         "answer_slide_number": ans_slide.get("slide_number"),
+                        "source_slide_range": f"Slide {current.get('slide_number')}-{ans_slide.get('slide_number')}",
+                        "image_refs": q_imgs,
+                        "media_items": q_media,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
                     })
                     i += 2
@@ -94,6 +99,8 @@ class QuestionExtractor:
                 if ans_text:
                     mid_text = middle_slide.get("extracted_text", "")
                     combined_exp = f"{explanation}\nClue: {mid_text}".strip() if mid_text else explanation
+                    q_imgs = list(current.get("image_paths") or []) + list(middle_slide.get("image_paths") or []) + list(ans_slide.get("image_paths") or [])
+                    q_media = list(current.get("all_media_items") or []) + list(middle_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
                     extracted_questions.append({
                         "slide_id": current.get("id"),
                         "answer_slide_id": ans_slide.get("id"),
@@ -107,6 +114,9 @@ class QuestionExtractor:
                         "source_year": doc_year or 2024,
                         "slide_number": current.get("slide_number"),
                         "answer_slide_number": ans_slide.get("slide_number"),
+                        "source_slide_range": f"Slide {current.get('slide_number')}-{ans_slide.get('slide_number')}",
+                        "image_refs": q_imgs,
+                        "media_items": q_media,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
                     })
                     i += 3
@@ -128,6 +138,8 @@ class QuestionExtractor:
 
                 # Only include if a real answer was resolved
                 if ans_text and ans_text.lower() not in ["see explanation", "answer indicated on slide", ""]:
+                    q_imgs = list(current.get("image_paths") or [])
+                    q_media = list(current.get("all_media_items") or [])
                     extracted_questions.append({
                         "slide_id": current.get("id"),
                         "answer_slide_id": None,
@@ -141,6 +153,9 @@ class QuestionExtractor:
                         "source_year": doc_year or 2024,
                         "slide_number": current.get("slide_number"),
                         "answer_slide_number": None,
+                        "source_slide_range": f"Slide {current.get('slide_number')}",
+                        "image_refs": q_imgs,
+                        "media_items": q_media,
                         "speaker_notes": notes
                     })
                 i += 1

@@ -81,11 +81,15 @@ def ensure_schema_columns():
     if engine is None:
         return
     try:
+        # Create all tables that do not exist yet (including sharepoint and job tables)
+        import backend.app.models  # noqa: F401
+        Base.metadata.create_all(bind=engine)
+
         with engine.connect() as conn:
             # Check if questions table exists
             table_check = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='questions';").fetchone() if not is_postgres else True
             if table_check:
-                new_cols = [
+                new_q_cols = [
                     ("content_hash", "VARCHAR(64)"),
                     ("topics", "TEXT"),
                     ("tags", "TEXT"),
@@ -97,9 +101,18 @@ def ensure_schema_columns():
                     ("temporal_nature", "VARCHAR(20) DEFAULT 'EVERGREEN'"),
                     ("provenance_decks", "TEXT"),
                     ("occurrence_count", "INTEGER DEFAULT 1"),
-                    ("round_number", "INTEGER")
+                    ("round_number", "INTEGER"),
+                    ("image_refs", "TEXT DEFAULT '[]'"),
+                    ("visual_clues", "TEXT"),
+                    ("audio_transcript", "TEXT"),
+                    ("video_transcript", "TEXT"),
+                    ("raw_media_refs", "TEXT DEFAULT '[]'"),
+                    ("source_slide_range", "VARCHAR(50)"),
+                    ("duplicate_status", "VARCHAR(50) DEFAULT 'UNIQUE'"),
+                    ("duplicate_similarity", "FLOAT"),
+                    ("duplicate_of_id", "VARCHAR(36)")
                 ]
-                for col_name, col_type in new_cols:
+                for col_name, col_type in new_q_cols:
                     try:
                         if is_postgres:
                             conn.exec_driver_sql(f"ALTER TABLE questions ADD COLUMN IF NOT EXISTS {col_name} {col_type};")
@@ -124,6 +137,22 @@ def ensure_schema_columns():
                     except Exception:
                         pass
 
+            # Check if documents table exists
+            doc_table_check = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='documents';").fetchone() if not is_postgres else True
+            if doc_table_check:
+                new_doc_cols = [
+                    ("blob_url", "TEXT"),
+                    ("source", "VARCHAR(50) DEFAULT 'MANUAL'"),
+                    ("sharepoint_file_id", "VARCHAR(255)")
+                ]
+                for col_name, col_type in new_doc_cols:
+                    try:
+                        if is_postgres:
+                            conn.exec_driver_sql(f"ALTER TABLE documents ADD COLUMN IF NOT EXISTS {col_name} {col_type};")
+                        else:
+                            conn.exec_driver_sql(f"ALTER TABLE documents ADD COLUMN {col_name} {col_type};")
+                    except Exception:
+                        pass
             conn.commit()
 
         # One-time backfill of content_hash and topics for legacy questions

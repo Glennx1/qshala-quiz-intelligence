@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from backend.app.config import settings
 from backend.app.database import engine, Base
-from backend.app.routers import documents, questions, quizzes, stats
+from backend.app.routers import documents, questions, quizzes, stats, jobs, sharepoint
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -80,6 +80,8 @@ app.include_router(stats.router, prefix=settings.API_V1_STR)
 app.include_router(documents.router, prefix=settings.API_V1_STR)
 app.include_router(questions.router, prefix=settings.API_V1_STR)
 app.include_router(quizzes.router, prefix=settings.API_V1_STR)
+app.include_router(jobs.router, prefix=settings.API_V1_STR)
+app.include_router(sharepoint.router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 @app.get("/api")

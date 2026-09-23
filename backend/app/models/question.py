@@ -44,6 +44,19 @@ class Question(Base):
     question_type = Column(String(50), default="SLIDE_QA")
     source_year = Column(Integer, nullable=True)
     round_number = Column(Integer, nullable=True)
+
+    # Multi-modal media & canonical representations
+    image_refs = Column(JSON, default=list)            # List of Blob URLs for images
+    visual_clues = Column(Text, nullable=True)         # OCR text & Gemini vision description
+    audio_transcript = Column(Text, nullable=True)     # Transcribed audio speech/clue
+    video_transcript = Column(Text, nullable=True)     # Transcribed video speech
+    raw_media_refs = Column(JSON, default=list)        # Original media files in Blob
+    source_slide_range = Column(String(50), nullable=True) # e.g. "Slide 4-5"
+
+    # Deduplication & Human Review
+    duplicate_status = Column(String(50), default="UNIQUE", index=True) # UNIQUE, POSSIBLE_DUPLICATE, CONFIRMED_DUPLICATE, RESOLVED
+    duplicate_similarity = Column(Float, nullable=True)
+    duplicate_of_id = Column(String(36), ForeignKey("questions.id", ondelete="SET NULL"), nullable=True)
     
     embedding = Column(get_vector_column_type(settings.EMBEDDING_DIM), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -52,3 +65,4 @@ class Question(Base):
     document = relationship("Document", back_populates="questions")
     slide = relationship("Slide", foreign_keys=[slide_id], back_populates="questions")
     answer_slide = relationship("Slide", foreign_keys=[answer_slide_id])
+    duplicate_of = relationship("Question", remote_side=[id], foreign_keys=[duplicate_of_id])

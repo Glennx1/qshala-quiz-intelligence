@@ -168,6 +168,9 @@ class IngestionPipeline:
                 "current_step": "6. Generating semantic vector embeddings"
             })
 
+            for idx, q in enumerate(enriched_questions):
+                q["_emb_idx"] = idx
+
             texts_to_embed = [
                 f"{q['primary_topic']} {' '.join(q.get('topics') or [])} {q['question_text']} {q['answer']} {q.get('explanation') or ''}"
                 for q in enriched_questions
@@ -203,12 +206,8 @@ class IngestionPipeline:
             question_models = []
             for q_data in unique_candidates:
                 # Find matching embedding
-                emb = None
-                try:
-                    orig_idx = enriched_questions.index(q_data)
-                    emb = embeddings[orig_idx] if 0 <= orig_idx < len(embeddings) else None
-                except Exception:
-                    pass
+                orig_idx = q_data.get("_emb_idx")
+                emb = embeddings[orig_idx] if orig_idx is not None and 0 <= orig_idx < len(embeddings) else None
 
                 q_obj = Question(
                     content_hash=q_data["content_hash"],
@@ -237,6 +236,14 @@ class IngestionPipeline:
                     question_type=q_data.get("question_type", "SLIDE_QA"),
                     source_year=q_data.get("source_year", doc.year),
                     round_number=q_data.get("round_number"),
+                    image_refs=q_data.get("image_refs", []),
+                    audio_transcript=q_data.get("audio_transcript"),
+                    video_transcript=q_data.get("video_transcript"),
+                    raw_media_refs=q_data.get("raw_media_refs", []),
+                    source_slide_range=q_data.get("source_slide_range"),
+                    duplicate_status=q_data.get("duplicate_status", "UNIQUE"),
+                    duplicate_similarity=q_data.get("duplicate_similarity"),
+                    duplicate_of_id=q_data.get("duplicate_of_id"),
                     embedding=emb
                 )
                 db.add(q_obj)
