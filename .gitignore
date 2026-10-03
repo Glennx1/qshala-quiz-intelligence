@@ -29,7 +29,12 @@ backend/storage/exports/*
 !backend/storage/exports/.gitkeep
 backend/storage/uploads/*
 !backend/storage/uploads/.gitkeep
+backend/storage/slides/*
+!backend/storage/slides/.gitkeep
 backend/storage/chroma/
+scratch/
+Quizzards*.pptx
+*optimized*.pptx
 
 # Environment Variables & Secrets
 .env

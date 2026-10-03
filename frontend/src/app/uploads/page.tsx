@@ -12,6 +12,7 @@ import {
 import { api } from '../../lib/api';
 import { DocumentItem } from '../../lib/types';
 import SlideViewerModal from '../../components/SlideViewerModal';
+import { optimizeDeckInBrowser } from '../../lib/deckOptimizer';
 
 export default function UploadPage() {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
@@ -80,28 +81,53 @@ export default function UploadPage() {
   }, [activeDocId]);
 
   const handleFileUpload = async (file: File) => {
-    // Vercel serverless function payload limit is 4.5 MB
-    const maxBytes = 4.5 * 1024 * 1024;
+    setUploading(true);
+    let fileToUpload = file;
+
+    // Vercel serverless function payload limit is 4.5 MB.
+    // If the file exceeds 4.4 MB, automatically compress/strip media right in the browser!
+    const maxBytes = 4.4 * 1024 * 1024;
     if (file.size > maxBytes) {
       const mbSize = (file.size / (1024 * 1024)).toFixed(1);
-      alert(`File "${file.name}" is ${mbSize} MB. The maximum supported upload size on Vercel Serverless Functions is 4.5 MB. Please upload a smaller file or compress it.`);
-      return;
+      const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+
+      if (ext === '.pptx' || ext === '.ppt') {
+        try {
+          setPipelineProgress({
+            step: `Optimizing deck media in browser (${mbSize} MB)...`,
+            percentage: 10,
+            slides: 0,
+            questions: 0,
+            status: 'PROCESSING',
+          });
+
+          fileToUpload = await optimizeDeckInBrowser(file, (msg) => {
+            setPipelineProgress((prev) => (prev ? { ...prev, step: msg } : null));
+          });
+        } catch (optErr) {
+          console.error('In-browser deck optimization error:', optErr);
+        }
+      } else {
+        alert(`File "${file.name}" is ${mbSize} MB. Non-presentation files over 4.5 MB exceed Vercel's payload limit.`);
+        setUploading(false);
+        return;
+      }
     }
 
-    setUploading(true);
     try {
-      const doc = await api.uploadDocument(file);
-      setActiveDocId(doc.id);
       setPipelineProgress({
-        step: 'Uploading',
-        percentage: 15,
+        step: 'Uploading to server...',
+        percentage: 18,
         slides: 0,
         questions: 0,
         status: 'PROCESSING',
       });
+      const doc = await api.uploadDocument(fileToUpload);
+      setActiveDocId(doc.id);
       fetchDocuments();
     } catch (err: any) {
       alert(err.message || 'Upload failed');
+      setPipelineProgress(null);
     } finally {
       setUploading(false);
     }
