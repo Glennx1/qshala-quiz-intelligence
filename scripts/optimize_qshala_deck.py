@@ -33,12 +33,23 @@ HEAVY_MEDIA_EXTS = {
     ".mp3", ".wav", ".m4a", ".aac", ".wma", ".ogg",           # Audio
 }
 
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp"}
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp", ".gif"}
 
-def optimize_pptx(input_path: str, output_path: str, max_image_mb: float = 1.0) -> dict:
+# 1x1 transparent/valid image stubs to preserve OpenXML image relationships without corrupting PPTX
+TINY_PNG_STUB = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc````\x00\x00\x00\x05\x00\x01\xa5\xf6E@\x00\x00\x00\x00IEND\xaeB`\x82"
+TINY_GIF_STUB = b"GIF89a\x01\x00\x01\x00\x81\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x08\x04\x00\x01\x04\x04\x00;"
+TINY_JPG_STUB = (
+    b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05"
+    b"\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c $.\'"
+    b" \",#\x1c\x1c(7),01444\x1f\'9=82<.342\xff\xc0\x00\x11\x08\x00\x01\x00\x01\x03\x01\"\x00\x02\x11\x01\x03\x11\x01"
+    b"\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06"
+    b"\x07\x08\t\n\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00?\x00\xf7\xfa(\xa2\x80?\xff\xd9"
+)
+
+def optimize_pptx(input_path: str, output_path: str, max_image_mb: float = 0.15) -> dict:
     """
-    Strips heavy video and audio streams from a PPTX zip container,
-    replacing them with empty stubs, and generates a lightweight copy.
+    Strips heavy video, audio, and giant image/GIF animations from a PPTX zip container,
+    replacing them with lightweight 1x1 stubs, and generates a lightweight copy (< 4.5 MB).
     """
     in_file = Path(input_path)
     out_file = Path(output_path)
@@ -72,18 +83,18 @@ def optimize_pptx(input_path: str, output_path: str, max_image_mb: float = 1.0) 
                     saved_bytes += item.file_size
                     print(f"   ✂️ Stripped video/audio: {Path(filename).name} ({item.file_size / (1024 * 1024):.1f} MB)")
                 
-                # Case 2: Extremely large image (> max_image_mb)
+                # Case 2: Extremely large image or animated GIF (> max_image_mb)
                 elif "ppt/media/" in filename and ext in IMAGE_EXTS and item.file_size > (max_image_mb * 1024 * 1024):
-                    # Keep tiny 1x1 transparent GIF/stub to avoid breaking presentation
-                    stub_png = (
-                        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
-                        b"\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00"
-                        b"\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
-                    )
-                    zout.writestr(item, stub_png)
+                    if ext in [".jpg", ".jpeg"]:
+                        stub = TINY_JPG_STUB
+                    elif ext == ".gif":
+                        stub = TINY_GIF_STUB
+                    else:
+                        stub = TINY_PNG_STUB
+                    zout.writestr(item, stub)
                     stripped_media_count += 1
-                    saved_bytes += (item.file_size - len(stub_png))
-                    print(f"   🖼️ Stripped giant image: {Path(filename).name} ({item.file_size / (1024 * 1024):.1f} MB)")
+                    saved_bytes += (item.file_size - len(stub))
+                    print(f"   🖼️ Stripped giant image/gif: {Path(filename).name} ({item.file_size / (1024 * 1024):.1f} MB)")
 
                 # Case 3: Essential XML, slides, notes, text, relationships, and normal graphics
                 else:
@@ -119,7 +130,7 @@ def main():
     parser = argparse.ArgumentParser(description="Strip video/audio media from massive QShala PPTX decks for Vercel compatibility.")
     parser.add_argument("--input", "-i", required=True, help="Path to input .pptx file")
     parser.add_argument("--output", "-o", help="Path to output .pptx file (default: input_optimized.pptx)")
-    parser.add_argument("--max-image-mb", type=float, default=1.5, help="Strip images larger than this size in MB (default: 1.5)")
+    parser.add_argument("--max-image-mb", type=float, default=0.15, help="Strip images larger than this size in MB (default: 0.15)")
 
     args = parser.parse_args()
     

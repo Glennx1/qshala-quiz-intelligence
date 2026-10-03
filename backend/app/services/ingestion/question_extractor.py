@@ -17,7 +17,7 @@ class QuestionExtractor:
     )
 
     ANSWER_REGEX = re.compile(
-        r"(?:Correct Answer|Solution|Answer|Ans)\s*[:\-]?\s*(.+?)(?:\n|$)",
+        r"(?:^|\n)\s*(?:Correct\s+Answer|Solution|Answer|Ans)\s*[:\-]\s*(.+?)(?:\n|$)",
         re.IGNORECASE
     )
 
@@ -97,7 +97,9 @@ class QuestionExtractor:
                 ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("extracted_text", ""))
 
                 if ans_text:
-                    mid_text = middle_slide.get("extracted_text", "")
+                    mid_text = middle_slide.get("extracted_text", "").strip()
+                    if mid_text.lower() in ["answer", "answers", "the answer", "solution", "solutions"]:
+                        mid_text = ""
                     combined_exp = f"{explanation}\nClue: {mid_text}".strip() if mid_text else explanation
                     q_imgs = list(current.get("image_paths") or []) + list(middle_slide.get("image_paths") or []) + list(ans_slide.get("image_paths") or [])
                     q_media = list(current.get("all_media_items") or []) + list(middle_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
@@ -132,11 +134,11 @@ class QuestionExtractor:
                 if notes:
                     ans_text, explanation = self._parse_answer_and_explanation(notes)
 
-                # Look in body text if not found in notes
-                if not ans_text:
+                # Look in body text only if explicit answer prefix exists (e.g. "Answer:" or "Ans:")
+                if not ans_text and re.search(r"(?:^|\n)\s*(?:Correct\s+Answer|Solution|Answer|Ans)\s*[:\-]", text, re.IGNORECASE):
                     ans_text, explanation = self._parse_answer_and_explanation(text)
 
-                # Only include if a real answer was resolved
+                # Only include if a real answer was resolved and not just a single number
                 if ans_text and ans_text.lower() not in ["see explanation", "answer indicated on slide", ""]:
                     q_imgs = list(current.get("image_paths") or [])
                     q_media = list(current.get("all_media_items") or [])
@@ -163,7 +165,39 @@ class QuestionExtractor:
 
             i += 1
 
-        return extracted_questions
+        # Intra-deck deduplication and consolidation:
+        # Handles tournament prelim decks where questions are shown in a "Question Run"
+        # and then repeated in the "Answer Reveal Run".
+        consolidated = []
+        seen_q: Dict[str, Dict[str, Any]] = {}
+
+        for q in extracted_questions:
+            # Normalize first 10 words for fuzzy matching
+            words = re.sub(r"[^\w\s]", "", q["question_text"].lower()).split()
+            key = " ".join(words[:10]) if words else q["question_text"]
+
+            if key in seen_q:
+                existing = seen_q[key]
+                curr_ans = (q.get("answer") or "").strip()
+                exist_ans = (existing.get("answer") or "").strip()
+                # Prioritize instance with verified answer from an answer slide
+                curr_is_better = (
+                    (bool(curr_ans) and not bool(exist_ans)) or
+                    (bool(q.get("answer_slide_number")) and not bool(existing.get("answer_slide_number"))) or
+                    (len(curr_ans) > len(exist_ans))
+                )
+                if curr_is_better:
+                    existing["answer"] = q["answer"]
+                    existing["explanation"] = q["explanation"] or existing["explanation"]
+                    existing["answer_slide_number"] = q.get("answer_slide_number")
+                    existing["source_slide_range"] = q.get("source_slide_range")
+                    if q.get("image_refs"):
+                        existing["image_refs"] = list(set((existing.get("image_refs") or []) + q["image_refs"]))
+            else:
+                seen_q[key] = q
+                consolidated.append(q)
+
+        return consolidated
 
     def _parse_question_and_options(self, text: str) -> Tuple[str, Optional[List[str]]]:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -184,7 +218,7 @@ class QuestionExtractor:
                     q_lines.append(line)
 
         question_text = " ".join(q_lines) if q_lines else lines[0]
-        question_text = re.sub(r"^(?:QUESTION\s*\d*[:\.\-]?|Q\d*[:\.\-]?|\d+[\.\)])\s*", "", question_text, flags=re.IGNORECASE)
+        question_text = re.sub(r"^(?:QUESTION\s*\d*[:\.\-]?|Q\d*[:\.\-]?|\d+[\.\*)]\s*)\s*", "", question_text, flags=re.IGNORECASE)
 
         return question_text.strip(), options if len(options) >= 2 else None
 
@@ -200,8 +234,9 @@ class QuestionExtractor:
             return ans, explanation
 
         lines = [l.strip() for l in cleaned_text.splitlines() if l.strip()]
+        # Ignore lines that are just numbers, bullet numbers, or question labels like "1.", "2.", "14.*"
+        lines = [l for l in lines if not re.match(r"^(?:Q\d*[:\.\-]?|\d+[\.\*)]\s*|QUESTION\s*\d*[:\.\-]?)$", l, flags=re.IGNORECASE)]
         if lines:
-            # First line is answer if concise (< 80 chars), remaining is explanation
             first = lines[0]
             if len(first) < 120 and not first.endswith("?"):
                 return first, " ".join(lines[1:]) if len(lines) > 1 else ""

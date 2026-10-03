@@ -199,9 +199,10 @@ class PPTXParser:
                         ext in IMAGE_EXTS
                     )
 
-                    if is_media and hasattr(rel, "target_part"):
-                        target_part = rel.target_part
-                        raw_data = getattr(target_part, "blob", None)
+                    if is_media and not getattr(rel, "is_external", False):
+                        target_part = getattr(rel, "target_part", None)
+                        if target_part:
+                            raw_data = getattr(target_part, "blob", None)
                         if raw_data:
                             part_name = Path(target_part.partname).name if hasattr(target_part, "partname") else f"rel_{rel_id}{ext}"
                             if part_name not in seen_media_names:
