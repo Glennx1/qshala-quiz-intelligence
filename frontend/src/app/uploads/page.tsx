@@ -85,8 +85,8 @@ export default function UploadPage() {
     let fileToUpload = file;
 
     // Vercel serverless function payload limit is 4.5 MB.
-    // If the file exceeds 4.4 MB, automatically compress/strip media right in the browser!
-    const maxBytes = 4.4 * 1024 * 1024;
+    // If the file exceeds 3.5 MB, automatically compress/strip media right in the browser!
+    const maxBytes = 3.5 * 1024 * 1024;
     if (file.size > maxBytes) {
       const mbSize = (file.size / (1024 * 1024)).toFixed(1);
       const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
@@ -101,9 +101,10 @@ export default function UploadPage() {
             status: 'PROCESSING',
           });
 
-          fileToUpload = await optimizeDeckInBrowser(file, (msg) => {
+          const result = await optimizeDeckInBrowser(file, (msg) => {
             setPipelineProgress((prev) => (prev ? { ...prev, step: msg } : null));
           });
+          fileToUpload = result.file;
         } catch (optErr) {
           console.error('In-browser deck optimization error:', optErr);
         }

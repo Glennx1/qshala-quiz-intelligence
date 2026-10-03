@@ -81,7 +81,12 @@ def optimize_pptx(input_path: str, output_path: str, max_image_mb: float = 0.15)
                     zout.writestr(item, b"")
                     stripped_media_count += 1
                     saved_bytes += item.file_size
-                    print(f"   ✂️ Stripped video/audio: {Path(filename).name} ({item.file_size / (1024 * 1024):.1f} MB)")
+                # Case 1b: Embedded fonts or edit history
+                elif filename.startswith("ppt/fonts/") or filename.startswith("ppt/changesInfos/"):
+                    zout.writestr(item, b"")
+                    stripped_media_count += 1
+                    saved_bytes += item.file_size
+                    print(f"   🔤 Stripped embedded font/revision: {Path(filename).name} ({item.file_size / (1024 * 1024):.1f} MB)")
                 
                 # Case 2: Extremely large image or animated GIF (> max_image_mb)
                 elif "ppt/media/" in filename and ext in IMAGE_EXTS and item.file_size > (max_image_mb * 1024 * 1024):
@@ -104,6 +109,31 @@ def optimize_pptx(input_path: str, output_path: str, max_image_mb: float = 0.15)
 
     new_size = out_file.stat().st_size
     new_mb = new_size / (1024 * 1024)
+
+    # If still above 3.5 MB (e.g. 150+ slides with dozens of small graphics),
+    # perform deep minimization by stubbing all media items in ppt/media/
+    if new_mb > 3.5:
+        print(f"   ⚠️ Output is {new_mb:.2f} MB (> 3.5 MB safe ceiling). Applying deep media minimization...")
+        temp_out = out_file.with_name(f"{out_file.stem}_deep{out_file.suffix}")
+        with zipfile.ZipFile(out_file, "r") as zin:
+            with zipfile.ZipFile(temp_out, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    filename = item.filename
+                    ext = Path(filename).suffix.lower()
+                    if filename.startswith("ppt/media/"):
+                        if ext in [".jpg", ".jpeg"]:
+                            zout.writestr(item, TINY_JPG_STUB)
+                        elif ext == ".gif":
+                            zout.writestr(item, TINY_GIF_STUB)
+                        else:
+                            zout.writestr(item, TINY_PNG_STUB)
+                    else:
+                        zout.writestr(item, zin.read(filename))
+        import shutil
+        shutil.move(temp_out, out_file)
+        new_size = out_file.stat().st_size
+        new_mb = new_size / (1024 * 1024)
+
     reduction_pct = (1.0 - (new_size / original_size)) * 100 if original_size > 0 else 0
 
     print(f"\n✅ Optimization Complete!")
@@ -113,8 +143,8 @@ def optimize_pptx(input_path: str, output_path: str, max_image_mb: float = 0.15)
     print(f"   Stripped Media Assets: {stripped_media_count}")
     print(f"   Preserved XML/Slide Assets: {preserved_files_count}")
 
-    if new_mb <= 4.5:
-        print(f"   🎉 Ready for Vercel upload! (Under 4.5 MB limit)")
+    if new_mb <= 4.0:
+        print(f"   🎉 Ready for Vercel upload! (Well under 4.5 MB limit)")
     else:
         print(f"   ℹ️ If still above 4.5 MB, use scripts/ingest_large_corpus.py for direct local ingestion.")
 

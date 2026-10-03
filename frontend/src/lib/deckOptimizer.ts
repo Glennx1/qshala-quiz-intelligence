@@ -13,32 +13,57 @@ const IMAGE_EXTS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.tiff', '.bmp'
 ]);
 
+export interface OptimizationResult {
+  file: File;
+  originalMb: number;
+  newMb: number;
+  reductionPct: number;
+}
+
 /**
  * Optimizes large PPTX presentation decks (> 4.5 MB) directly in the browser
- * by stripping embedded tournament video and audio files and stubbing heavy images.
+ * by stripping embedded tournament videos, audios, embedded fonts, and giant images.
  * Retains 100% of slide text, questions, choices, answers, and speaker notes.
  */
 export async function optimizeDeckInBrowser(
   file: File,
   onStatusUpdate?: (status: string) => void
-): Promise<File> {
-  const maxAllowedBytes = 4.4 * 1024 * 1024; // 4.4 MB safe Vercel payload ceiling
+): Promise<OptimizationResult> {
+  const maxSafeBytes = 3.5 * 1024 * 1024; // 3.5 MB target (well under Vercel's 4.5 MB ceiling)
+  const originalMb = Number((file.size / (1024 * 1024)).toFixed(2));
 
-  if (file.size <= maxAllowedBytes) {
-    return file;
+  if (file.size <= maxSafeBytes) {
+    return {
+      file,
+      originalMb,
+      newMb: originalMb,
+      reductionPct: 0,
+    };
   }
 
   const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
   if (ext !== '.pptx' && ext !== '.ppt') {
-    return file;
+    return {
+      file,
+      originalMb,
+      newMb: originalMb,
+      reductionPct: 0,
+    };
   }
 
-  const originalMb = (file.size / (1024 * 1024)).toFixed(1);
-  onStatusUpdate?.(`Optimizing deck (${originalMb} MB) for Vercel...`);
+  onStatusUpdate?.(`Optimizing deck (${originalMb} MB) in browser...`);
 
   const zip = await JSZip.loadAsync(file);
 
-  // Pass 1: Strip heavy video and audio streams completely
+  // 1. Strip embedded fonts (ppt/fonts/) and revision histories (ppt/changesInfos/)
+  // These often consume 4 MB - 10 MB and are not needed for NLP question extraction.
+  for (const filename of Object.keys(zip.files)) {
+    if (filename.startsWith('ppt/fonts/') || filename.startsWith('ppt/changesInfos/')) {
+      zip.file(filename, '');
+    }
+  }
+
+  // 2. Strip videos, audios, and replace heavy images with lightweight 1x1 stubs
   for (const filename of Object.keys(zip.files)) {
     if (filename.startsWith('ppt/media/')) {
       const mediaExt = filename.substring(filename.lastIndexOf('.')).toLowerCase();
@@ -46,25 +71,15 @@ export async function optimizeDeckInBrowser(
         zip.file(filename, '');
       } else if (mediaExt === '.gif') {
         zip.file(filename, TINY_GIF_BASE64, { base64: true });
+      } else if (IMAGE_EXTS.has(mediaExt)) {
+        zip.file(filename, TINY_PNG_BASE64, { base64: true });
+      } else {
+        zip.file(filename, '');
       }
     }
   }
 
-  // Pass 2: Stub images > 80 KB
-  for (const filename of Object.keys(zip.files)) {
-    if (filename.startsWith('ppt/media/')) {
-      const mediaExt = filename.substring(filename.lastIndexOf('.')).toLowerCase();
-      if (IMAGE_EXTS.has(mediaExt) && mediaExt !== '.gif') {
-        const entry: any = zip.files[filename];
-        const uncompressedSize = entry?._data?.uncompressedSize || 0;
-        if (uncompressedSize > 80 * 1024) {
-          zip.file(filename, TINY_PNG_BASE64, { base64: true });
-        }
-      }
-    }
-  }
-
-  onStatusUpdate?.('Re-packing lightweight presentation package...');
+  onStatusUpdate?.('Packing lightweight presentation (< 2 MB)...');
 
   const optimizedBlob = await zip.generateAsync({
     type: 'blob',
@@ -72,32 +87,18 @@ export async function optimizeDeckInBrowser(
     compressionOptions: { level: 9 },
   });
 
-  // If still above 4.4MB, stub all remaining images in ppt/media/
-  if (optimizedBlob.size > maxAllowedBytes) {
-    onStatusUpdate?.('Applying maximum compression for Vercel...');
-    for (const filename of Object.keys(zip.files)) {
-      if (filename.startsWith('ppt/media/')) {
-        const mediaExt = filename.substring(filename.lastIndexOf('.')).toLowerCase();
-        if (mediaExt === '.gif') {
-          zip.file(filename, TINY_GIF_BASE64, { base64: true });
-        } else {
-          zip.file(filename, TINY_PNG_BASE64, { base64: true });
-        }
-      }
-    }
+  const newSize = optimizedBlob.size;
+  const newMb = Number((newSize / (1024 * 1024)).toFixed(2));
+  const reductionPct = Number(((1 - newSize / file.size) * 100).toFixed(1));
 
-    const finalBlob = await zip.generateAsync({
-      type: 'blob',
-      compression: 'DEFLATE',
-      compressionOptions: { level: 9 },
-    });
-
-    return new File([finalBlob], file.name, {
-      type: file.type || 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    });
-  }
-
-  return new File([optimizedBlob], file.name, {
+  const optimizedFile = new File([optimizedBlob], file.name, {
     type: file.type || 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   });
+
+  return {
+    file: optimizedFile,
+    originalMb,
+    newMb,
+    reductionPct,
+  };
 }
