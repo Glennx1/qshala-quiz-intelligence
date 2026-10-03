@@ -13,8 +13,10 @@ from backend.app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Maximum file size allowed by Vercel Serverless Functions payload (4.5 MB)
-MAX_FILE_SIZE_BYTES = 4 * 1024 * 1024 + 512 * 1024  # 4.5 MB
+# Determine environment: Vercel serverless has a hard 4.5 MB request ceiling.
+# Local development and dedicated servers can accept large decks directly.
+is_vercel = bool(os.environ.get("VERCEL"))
+MAX_FILE_SIZE_BYTES = (4 * 1024 * 1024 + 512 * 1024) if is_vercel else (1024 * 1024 * 1024)  # 4.5 MB on Vercel, 1 GB locally
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -54,10 +56,17 @@ async def upload_document(
                     buffer.close()
                     if os.path.exists(storage_path):
                         os.remove(storage_path)
+                    limit_desc = "4.5 MB on Vercel Serverless" if is_vercel else "1 GB"
                     logger.warning(f"[UPLOAD] file exceeds size limit: {file_size} > {MAX_FILE_SIZE_BYTES}")
                     raise HTTPException(
                         status_code=413,
-                        detail=f"File exceeds maximum allowed upload size of 4.5 MB on Vercel Serverless Functions (received {file_size / (1024 * 1024):.1f} MB)."
+                        detail=(
+                            f"File exceeds maximum allowed upload size ({limit_desc}). "
+                            f"Received {file_size / (1024 * 1024):.1f} MB. "
+                            f"To upload via Vercel, run 'python scripts/optimize_qshala_deck.py -i <deck.pptx>' "
+                            f"to strip heavy media, or run 'python scripts/ingest_large_corpus.py -p <deck.pptx>' "
+                            f"to ingest directly into the knowledge vault."
+                        )
                     )
                 buffer.write(chunk)
     except HTTPException:
