@@ -80,10 +80,14 @@ export default function QuestionCard({
           <span className="text-[12px] font-medium text-slate-500">
             {question.difficulty}
           </span>
-          <span className="text-slate-300">•</span>
-          <span className="text-[12px] text-slate-500 font-medium">
-            Grades {question.grade_min}–{question.grade_max}
-          </span>
+          {question.topic && (
+            <>
+              <span className="text-slate-300">•</span>
+              <span className="text-[12px] text-slate-500 font-medium">
+                {question.topic}
+              </span>
+            </>
+          )}
         </div>
 
         {/* Status Indicator & Approval */}

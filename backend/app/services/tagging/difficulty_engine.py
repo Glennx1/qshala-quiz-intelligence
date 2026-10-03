@@ -84,19 +84,19 @@ class DifficultyEngine:
 
         pdi = max(0.08, min(0.96, round(raw_pdi, 2)))
 
-        # Categorical mapping with overlapping grade ranges
+        # Categorical mapping based purely on Pedagogical Difficulty Index (PDI)
         if pdi < 0.35:
             category = "Easy"
-            grade_min, grade_max = 1, 5
-            audiences = ["primary"]
+            grade_min, grade_max = 1, 12
+            audiences = ["general", "primary", "middle_school", "high_school", "adult"]
         elif pdi <= 0.65:
             category = "Medium"
-            grade_min, grade_max = 4, 9
-            audiences = ["primary", "middle_school", "high_school"]
+            grade_min, grade_max = 1, 12
+            audiences = ["general", "primary", "middle_school", "high_school", "adult"]
         else:
             category = "Hard"
-            grade_min, grade_max = 8, 12
-            audiences = ["high_school", "college", "adult"]
+            grade_min, grade_max = 1, 12
+            audiences = ["general", "middle_school", "high_school", "college", "adult"]
 
         return {
             "difficulty": category,

@@ -245,6 +245,7 @@ export const api = {
   generateQuiz: async (payload: {
     topic: string;
     subtopic?: string;
+    quiz_format?: string;
     audience_type?: string;
     grades?: number[];
     age_range?: string;

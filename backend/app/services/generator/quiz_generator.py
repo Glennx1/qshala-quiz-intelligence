@@ -63,41 +63,21 @@ class QuizGenerator:
         # Step 1: Clean Retrieval Query (do not contaminate vector search with prompt boilerplate)
         clean_query = f"{req.topic} {req.subtopic or ''}".strip()
 
-        # Step 2: Audience & Difficulty Distribution Resolution
-        audience_map = {
-            "primary": "Primary School",
-            "middle_school": "Middle School",
-            "high_school": "High School",
-            "college": "College / University",
-            "adult": "Adults",
-            "general": "General Audience"
+        # Step 2: Quiz Format & Difficulty Resolution
+        format_titles = {
+            "TOURNAMENT_PRELIMS": "Tournament Prelims",
+            "STAGE_FINALS": "Stage Finals",
+            "CLASSROOM_WARMUP": "Classroom Warmup (QShots)",
+            "THEMATIC_SPECIAL": "Thematic Deep-Dive",
+            "GENERAL_CHAMPIONSHIP": "General Championship"
         }
-        aud_type = (req.audience_type or "primary").lower()
-        audience_label = audience_map.get(aud_type, aud_type.replace("_", " ").title())
+        q_format = getattr(req, "quiz_format", None) or "TOURNAMENT_PRELIMS"
+        format_label = format_titles.get(q_format, "Quiz")
+        quiz_title = f"{req.topic} – {format_label}"
 
-        # Resolve grade range
-        if aud_type in ["college", "adult", "general"]:
-            grade_min = None
-            grade_max = None
-            grades_list = []
-        elif req.grades and len(req.grades) > 0:
-            grade_min = min(req.grades)
-            grade_max = max(req.grades)
-            grades_list = sorted(req.grades)
-        else:
-            grade_min = req.grade_min or 3
-            grade_max = req.grade_max or 5
-            grades_list = list(range(grade_min, grade_max + 1))
-
-        # Title construction
-        if aud_type == "college":
-            quiz_title = f"{req.topic} Quiz (College / University)"
-        elif aud_type == "adult":
-            quiz_title = f"{req.topic} Quiz (Adults)"
-        elif grade_min is not None and grade_max is not None:
-            quiz_title = f"{req.topic} Quiz (Grades {grade_min}–{grade_max})"
-        else:
-            quiz_title = f"{req.topic} Quiz ({audience_label})"
+        grade_min = getattr(req, "grade_min", None)
+        grade_max = getattr(req, "grade_max", None)
+        audience_label = "General Audience"
 
         # Resolve difficulty distribution
         dist = req.difficulty_distribution or {}
@@ -139,6 +119,7 @@ class QuizGenerator:
             title=quiz_title,
             topic=req.topic,
             subtopic=req.subtopic,
+            quiz_format=q_format,
             audience_type=req.audience_type,
             grades=req.grades or [],
             age_range=req.age_range,
@@ -167,8 +148,8 @@ class QuizGenerator:
             query=clean_query,
             topic=req.topic,
             tags=req.tags,
-            grade_min=grade_min,
-            grade_max=grade_max,
+            grade_min=None,
+            grade_max=None,
             difficulty=req.difficulty,
             limit=max(req.question_count * 4, 30)
         )
@@ -251,11 +232,18 @@ class QuizGenerator:
                 "Format: QShala Question Slide + Next Slide Answer with Explanation (NO multiple choice options, options must be null)."
             )
 
+            format_behavior_prompts = {
+                "TOURNAMENT_PRELIMS": "Tournament Prelims: Crisp, authoritative questions with single-answer clarity for paper/screen scoring.",
+                "STAGE_FINALS": "Stage Finals: Dramatic, multi-layered clues with escalating intellectual tension, suitable for live pounce/bounce rounds.",
+                "CLASSROOM_WARMUP": "Classroom Warmup (QShots): Curiosity-sparking trivia loaded with 'Did You Know?' nuggets and discussion hooks.",
+                "THEMATIC_SPECIAL": "Thematic Deep-Dive: Specialized questions exploring surprising facets and connections within the theme.",
+                "GENERAL_CHAMPIONSHIP": "General Mixed Bag: Dynamic multi-genre questions with diverse trivia angles."
+            }
+            format_behavior = format_behavior_prompts.get(q_format, "High-standard QShala trivia format.")
+
             system_instruction = (
                 "You are the Lead Quiz Master at QShala. Your mission is to craft captivating, curiosity-inducing "
-                f"quiz questions calibrated for {audience_label}"
-                + (f" (Grades {grade_min}–{grade_max})" if grade_min else "")
-                + ".\n"
+                f"quiz questions designed for {format_label} ({format_behavior}).\n"
                 f"{format_rule}\n"
                 "Slide 1 (Question Slide): An engaging, curiosity-driven question or narrative clue.\n"
                 "Slide 2 (Answer Slide): The clear, unambiguous answer, followed by a rich educational explanation and backstory.\n"
@@ -263,14 +251,13 @@ class QuizGenerator:
                 "You must return a valid JSON object matching the requested schema."
             )
 
-            grade_clause = f"Grades {grade_min}–{grade_max}" if grade_min else audience_label
             personality_guide = f"- {PERSONALITY_PROMPTS[req.personality]}\n" if req.personality and req.personality in PERSONALITY_PROMPTS else ""
             tag_clause = f"- Target Concept Tags: {', '.join(req.tags)}\n" if req.tags else ""
             user_prompt = f"""
 Requirements:
 - Topic: {req.topic}
-{tag_clause}- Target Audience: {audience_label} ({grade_clause})
-{personality_guide}- Format: {format_rule}
+- Quiz Format: {format_label} ({format_behavior})
+{tag_clause}{personality_guide}- Format: {format_rule}
 - Difficulty Preset: {req.difficulty}
 - Question Count: {req.question_count}
 - Exact Difficulty Distribution:

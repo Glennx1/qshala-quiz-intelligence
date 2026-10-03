@@ -16,52 +16,59 @@ import {
 import { api } from '../lib/api';
 import { TopicItem, TopicSummary, TagItem } from '../lib/types';
 
-type AudienceType = 'primary' | 'middle_school' | 'high_school' | 'college' | 'adult';
+import { QuizFormat } from '../lib/types';
+
 type DifficultyPreset = 'Balanced' | 'Easy-heavy' | 'Hard-heavy' | 'Custom';
 
-interface AudienceOption {
-  id: AudienceType;
-  label: string;
+interface QuizFormatOption {
+  id: QuizFormat;
+  title: string;
+  badge: string;
   sublabel: string;
-  availableGrades: number[];
-  defaultGrades: number[];
+  defaultCount: number;
+  icon: string;
 }
 
-const AUDIENCE_OPTIONS: AudienceOption[] = [
+const QUIZ_FORMAT_OPTIONS: QuizFormatOption[] = [
   {
-    id: 'primary',
-    label: 'Primary School',
-    sublabel: 'Grades 1–5 (Ages 6–11)',
-    availableGrades: [1, 2, 3, 4, 5],
-    defaultGrades: [3, 4, 5],
+    id: 'TOURNAMENT_PRELIMS',
+    title: 'Tournament Prelims',
+    badge: 'Competitive Round',
+    sublabel: 'Crisp written/screen questions with single-answer clarity for paper scoring.',
+    defaultCount: 20,
+    icon: '🏆',
   },
   {
-    id: 'middle_school',
-    label: 'Middle School',
-    sublabel: 'Grades 6–8 (Ages 11–14)',
-    availableGrades: [6, 7, 8],
-    defaultGrades: [6, 7, 8],
+    id: 'STAGE_FINALS',
+    title: 'Stage Finals',
+    badge: 'Live Event',
+    sublabel: 'Multi-round buzzer & clue format with escalating difficulty ramp.',
+    defaultCount: 25,
+    icon: '⚡',
   },
   {
-    id: 'high_school',
-    label: 'High School',
-    sublabel: 'Grades 9–12 (Ages 14–18)',
-    availableGrades: [9, 10, 11, 12],
-    defaultGrades: [11, 12],
+    id: 'CLASSROOM_WARMUP',
+    title: 'Classroom Warmup (QShots)',
+    badge: '10–15 Mins',
+    sublabel: 'Curiosity-sparking trivia loaded with "Did You Know?" nuggets to ignite discussion.',
+    defaultCount: 10,
+    icon: '💡',
   },
   {
-    id: 'college',
-    label: 'College / University',
-    sublabel: 'Undergraduate & Higher Ed',
-    availableGrades: [],
-    defaultGrades: [],
+    id: 'THEMATIC_SPECIAL',
+    title: 'Thematic Deep-Dive',
+    badge: 'Focused Subject',
+    sublabel: 'Specialized deep exploration into specific subjects, concepts, or themes.',
+    defaultCount: 15,
+    icon: '🎯',
   },
   {
-    id: 'adult',
-    label: 'Adults',
-    sublabel: 'Adult Trivia & Corporate',
-    availableGrades: [],
-    defaultGrades: [],
+    id: 'GENERAL_CHAMPIONSHIP',
+    title: 'General Mixed Bag',
+    badge: 'Multi-Genre',
+    sublabel: 'Classic multi-genre quiz spanning Science, History, Pop Culture, Geography, and Sports.',
+    defaultCount: 20,
+    icon: '🌍',
   },
 ];
 
@@ -108,10 +115,9 @@ export default function QuickGenerateCard() {
   const [topicSummary, setTopicSummary] = useState<TopicSummary | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Audience & Grades
-  const [audienceType, setAudienceType] = useState<AudienceType>('primary');
-  const [selectedGrades, setSelectedGrades] = useState<number[]>([3, 4, 5]);
-  const [questionCount, setQuestionCount] = useState<number>(10);
+  // Quiz Format & Question Count
+  const [quizFormat, setQuizFormat] = useState<QuizFormat>('TOURNAMENT_PRELIMS');
+  const [questionCount, setQuestionCount] = useState<number>(20);
 
   // Tags & Live Compilation State
   const [vaultTags, setVaultTags] = useState<TagItem[]>([]);
@@ -207,25 +213,15 @@ export default function QuickGenerateCard() {
     setShowTopicDropdown(false);
   };
 
-  const currentAudience = AUDIENCE_OPTIONS.find((a) => a.id === audienceType) || AUDIENCE_OPTIONS[0];
+  const currentFormat = QUIZ_FORMAT_OPTIONS.find((f) => f.id === quizFormat) || QUIZ_FORMAT_OPTIONS[0];
   const totalAllocated = easyCount + mediumCount + hardCount;
   const isDistributionValid = totalAllocated === questionCount;
 
-  const handleAudienceChange = (newAudienceId: AudienceType) => {
-    setAudienceType(newAudienceId);
-    const targetAudience = AUDIENCE_OPTIONS.find((a) => a.id === newAudienceId);
-    if (targetAudience) {
-      setSelectedGrades(targetAudience.defaultGrades);
-    }
-  };
-
-  const toggleGrade = (g: number) => {
-    if (selectedGrades.includes(g)) {
-      if (selectedGrades.length > 1) {
-        setSelectedGrades(selectedGrades.filter((item) => item !== g));
-      }
-    } else {
-      setSelectedGrades([...selectedGrades, g].sort((a, b) => a - b));
+  const handleFormatChange = (newFormatId: QuizFormat) => {
+    setQuizFormat(newFormatId);
+    const targetFormat = QUIZ_FORMAT_OPTIONS.find((f) => f.id === newFormatId);
+    if (targetFormat) {
+      handleQuestionCountChange(targetFormat.defaultCount);
     }
   };
 
@@ -283,21 +279,14 @@ export default function QuickGenerateCard() {
     setError(null);
 
     try {
-      const hasGrades = currentAudience.availableGrades.length > 0 && selectedGrades.length > 0;
-      const minG = hasGrades ? Math.min(...selectedGrades) : undefined;
-      const maxG = hasGrades ? Math.max(...selectedGrades) : undefined;
-      const gradeSuffix = minG && maxG ? ` (Grades ${minG}–${maxG})` : ` (${currentAudience.label})`;
       const effectiveTopic = topic.trim() || (selectedTags.length > 0 ? selectedTags.join(', ') : 'General Knowledge');
       const tagSuffix = selectedTags.length > 0 ? ` [Tags: ${selectedTags.join(', ')}]` : '';
-      const promptSummary = `Create a ${questionCount}-question quiz on ${effectiveTopic}${tagSuffix} for ${currentAudience.label}${gradeSuffix} with distribution: ${easyCount} Easy, ${mediumCount} Medium, ${hardCount} Hard.`;
+      const promptSummary = `Create a ${questionCount}-question ${currentFormat.title} quiz on ${effectiveTopic}${tagSuffix} with distribution: ${easyCount} Easy, ${mediumCount} Medium, ${hardCount} Hard.`;
 
       const quiz = await api.generateQuiz({
         topic: effectiveTopic,
         subtopic: subtopic.trim() || undefined,
-        audience_type: audienceType,
-        grades: hasGrades ? selectedGrades : undefined,
-        grade_min: minG,
-        grade_max: maxG,
+        quiz_format: quizFormat,
         difficulty: difficultyPreset,
         difficulty_distribution: {
           easy: easyCount,
@@ -499,10 +488,10 @@ export default function QuickGenerateCard() {
               <div className="flex items-center justify-between font-semibold text-blue-900">
                 <span className="flex items-center gap-1.5">
                   <Database className="h-3.5 w-3.5 text-blue-600" />
-                  {topicSummary.total_questions} Questions Available in Total
+                  {topicSummary.total_questions} Questions Available in Vault
                 </span>
                 <span className="text-[11px] text-blue-600 font-medium">
-                  Grades {topicSummary.grade_min}–{topicSummary.grade_max}
+                  {topicSummary.subtopics?.length || 0} Subtopics Indexed
                 </span>
               </div>
               <div className="flex items-center gap-3 text-slate-600">
@@ -514,92 +503,78 @@ export default function QuickGenerateCard() {
           )}
         </div>
 
-        {/* Section 2: Audience Category */}
+        {/* Section 2: Quiz Format / Event Type */}
         <div className="space-y-2">
-          <label className="text-[13px] font-semibold text-slate-800">
-            Target Audience
-          </label>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-            {AUDIENCE_OPTIONS.map((aud) => (
-              <button
-                key={aud.id}
-                type="button"
-                onClick={() => handleAudienceChange(aud.id)}
-                className={`flex flex-col items-start p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
-                  audienceType === aud.id
-                    ? 'border-blue-600 bg-blue-50/40 text-blue-900 shadow-xs'
-                    : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50/50'
-                }`}
-              >
-                <span className="text-[12.5px] font-semibold">{aud.label}</span>
-                <span className="text-[10.5px] text-slate-400 font-normal mt-0.5 leading-tight">
-                  {aud.sublabel}
-                </span>
-              </button>
-            ))}
+          <div className="flex items-center justify-between">
+            <label className="text-[13px] font-semibold text-slate-800">
+              Quiz Format / Event Type
+            </label>
+            <span className="text-[12px] text-slate-400 font-normal">
+              Select how this quiz will be played
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            {QUIZ_FORMAT_OPTIONS.map((fmt) => {
+              const isSelected = quizFormat === fmt.id;
+              return (
+                <button
+                  key={fmt.id}
+                  type="button"
+                  onClick={() => handleFormatChange(fmt.id)}
+                  className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all cursor-pointer relative group ${
+                    isSelected
+                      ? 'border-blue-600 bg-blue-50/40 text-blue-950 shadow-xs ring-1 ring-blue-600'
+                      : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50/50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full mb-1">
+                    <span className="text-[18px]">{fmt.icon}</span>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                      isSelected
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-slate-100 text-slate-500'
+                    }`}>
+                      {fmt.badge}
+                    </span>
+                  </div>
+
+                  <span className="text-[13px] font-bold text-slate-900 leading-snug">
+                    {fmt.title}
+                  </span>
+                  
+                  <span className="text-[11px] text-slate-500 font-normal mt-1 leading-tight line-clamp-2">
+                    {fmt.sublabel}
+                  </span>
+
+                  <div className="mt-2 text-[10.5px] font-semibold text-slate-400">
+                    Default: {fmt.defaultCount} Questions
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {/* Section 4: Grade Selector (for school audiences) */}
-        {currentAudience.availableGrades.length > 0 && (
-          <div className="space-y-2 rounded-lg border border-slate-100 bg-slate-50/60 p-3">
-            <div className="flex items-center justify-between">
-              <label className="text-[12.5px] font-semibold text-slate-700">
-                School Grade Band
-              </label>
-              <div className="flex gap-1.5 text-[11px]">
-                <button
-                  type="button"
-                  onClick={() => setSelectedGrades(currentAudience.availableGrades)}
-                  className="text-blue-600 hover:underline cursor-pointer font-medium"
-                >
-                  All {currentAudience.label}
-                </button>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2 pt-1">
-              {currentAudience.availableGrades.map((g) => {
-                const isSelected = selectedGrades.includes(g);
-                return (
-                  <button
-                    key={g}
-                    type="button"
-                    onClick={() => toggleGrade(g)}
-                    className={`h-8 w-11 rounded-md text-[12.5px] font-semibold transition-colors cursor-pointer ${
-                      isSelected
-                        ? 'bg-blue-600 text-white shadow-xs'
-                        : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    Gr {g}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-
-        {/* Section 5: Question Count & Format */}
+        {/* Section 3: Question Count & Format */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-2">
             <label className="text-[13px] font-semibold text-slate-800">
               Question Count
             </label>
-            <div className="flex gap-2">
-              {[5, 10, 15, 20].map((cnt) => (
+            <div className="flex gap-1.5">
+              {[5, 10, 15, 20, 25, 30].map((cnt) => (
                 <button
                   key={cnt}
                   type="button"
                   onClick={() => handleQuestionCountChange(cnt)}
-                  className={`flex-1 py-1.5 rounded-md text-[13px] font-semibold transition-colors cursor-pointer ${
+                  className={`flex-1 py-1.5 rounded-md text-[12.5px] font-semibold transition-colors cursor-pointer ${
                     questionCount === cnt
                       ? 'bg-blue-600 text-white shadow-xs'
                       : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                   }`}
                 >
-                  {cnt} Qs
+                  {cnt}
                 </button>
               ))}
             </div>

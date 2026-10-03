@@ -223,10 +223,12 @@ export default function QuizReviewStudioPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3 text-[13px] text-slate-500 font-normal">
-          <span>
-            {quiz.grade_min && quiz.grade_max
-              ? `Grades ${quiz.grade_min}–${quiz.grade_max}`
-              : (quiz.audience_type || 'General').replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
+          <span className="inline-flex items-center gap-1 font-semibold text-slate-700">
+            {quiz.quiz_format === 'STAGE_FINALS' ? '⚡ Stage Finals' :
+             quiz.quiz_format === 'CLASSROOM_WARMUP' ? '💡 Classroom Warmup (QShots)' :
+             quiz.quiz_format === 'THEMATIC_SPECIAL' ? '🎯 Thematic Deep-Dive' :
+             quiz.quiz_format === 'GENERAL_CHAMPIONSHIP' ? '🌍 General Mixed Bag' :
+             '🏆 Tournament Prelims'}
           </span>
           <span className="text-slate-300">•</span>
           <span>{quiz.question_count} Questions (Slide Pairs)</span>

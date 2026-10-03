@@ -10,7 +10,7 @@ export default function GenerateQuizPage() {
           Create Quiz
         </h1>
         <p className="mt-1 text-[14px] text-slate-500 font-normal leading-relaxed">
-          Create fresh, age-calibrated quizzes grounded in historical QShala presentations.
+          Create tournament-ready, high-engagement quizzes grounded in historical QShala presentations.
         </p>
       </div>
 

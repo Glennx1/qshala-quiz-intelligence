@@ -37,7 +37,6 @@ function KnowledgeBaseContent() {
   const [subtopic, setSubtopic] = useState('');
   const [tagFilter, setTagFilter] = useState('');
   const [difficulty, setDifficulty] = useState('');
-  const [gradeMin, setGradeMin] = useState<number | ''>('');
   const [sortBy, setSortBy] = useState('created_at');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
 
@@ -86,7 +85,6 @@ function KnowledgeBaseContent() {
         subtopic: subtopic || undefined,
         tag: tagFilter.trim() || undefined,
         difficulty: difficulty || undefined,
-        grade_min: gradeMin !== '' ? Number(gradeMin) : undefined,
         duplicate_status: activeTab === 'duplicates' ? 'POSSIBLE_DUPLICATE' : undefined,
         sort_by: sortBy,
         sort_order: sortOrder,
@@ -102,7 +100,7 @@ function KnowledgeBaseContent() {
 
   useEffect(() => {
     fetchQuestions();
-  }, [activeTab, topic, subtopic, tagFilter, difficulty, gradeMin, sortBy, sortOrder]);
+  }, [activeTab, topic, subtopic, tagFilter, difficulty, sortBy, sortOrder]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -261,19 +259,6 @@ function KnowledgeBaseContent() {
             <option value="Hard">Hard</option>
           </select>
 
-          {/* Grades */}
-          <select
-            value={gradeMin}
-            onChange={(e) => setGradeMin(e.target.value === '' ? '' : Number(e.target.value))}
-            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[13px] font-normal text-slate-700 focus:border-blue-500 focus:outline-none cursor-pointer"
-          >
-            <option value="">Grade Filter</option>
-            <option value="1">Grades 1+</option>
-            <option value="3">Grades 3+</option>
-            <option value="6">Grades 6+</option>
-            <option value="9">Grades 9+</option>
-          </select>
-
           {/* Tag Filter */}
           <div className="relative">
             <Tag className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
@@ -320,7 +305,7 @@ function KnowledgeBaseContent() {
             </button>
           </div>
 
-          {(query || topic || subtopic || tagFilter || difficulty || gradeMin) && (
+          {(query || topic || subtopic || tagFilter || difficulty) && (
             <button
               type="button"
               onClick={() => {
@@ -329,7 +314,6 @@ function KnowledgeBaseContent() {
                 setSubtopic('');
                 setTagFilter('');
                 setDifficulty('');
-                setGradeMin('');
               }}
               className="text-[13px] text-blue-600 hover:underline cursor-pointer font-medium"
             >
@@ -353,7 +337,7 @@ function KnowledgeBaseContent() {
                 <tr className="border-b border-slate-100 bg-slate-50/60 font-semibold text-[12px] uppercase tracking-wider text-slate-600">
                   <th className="py-3 px-4 w-5/12">Question & Clues</th>
                   <th className="py-3 px-4">Topics</th>
-                  <th className="py-3 px-4">Audience / Grade</th>
+                  <th className="py-3 px-4">Format / Hook</th>
                   <th className="py-3 px-4">Difficulty & Depth</th>
                   <th className="py-3 px-4">Origin Presentation</th>
                   <th className="py-3 px-4 text-right">Actions</th>
@@ -479,13 +463,13 @@ function KnowledgeBaseContent() {
                         </div>
                       </td>
 
-                      {/* Audience */}
+                      {/* Format / Hook */}
                       <td className="py-3.5 px-4 text-slate-600 align-top">
-                        <div className="font-semibold text-[13px] text-slate-800">
-                          Grades {q.grade_min}–{q.grade_max}
+                        <div className="font-semibold text-[12.5px] text-slate-800">
+                          {q.question_hook ? q.question_hook.replace(/_/g, ' ') : 'DIRECT TRIVIA'}
                         </div>
                         <div className="text-[11px] text-slate-400 font-normal">
-                          Ages {q.grade_min + 5}–{q.grade_max + 6}
+                          {q.question_type || 'Slide Q&A'}
                         </div>
                       </td>
 

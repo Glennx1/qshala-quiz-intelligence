@@ -67,7 +67,7 @@ export default function QuizzesLibraryPage() {
               <tr className="border-b border-slate-100 bg-slate-50/60 font-semibold text-[12px] uppercase tracking-wider text-slate-600">
                 <th className="py-3 px-4">Quiz Title</th>
                 <th className="py-3 px-4">Topic</th>
-                <th className="py-3 px-4">Grades</th>
+                <th className="py-3 px-4">Format</th>
                 <th className="py-3 px-4">Questions</th>
                 <th className="py-3 px-4">Difficulty</th>
                 <th className="py-3 px-4">Created</th>
@@ -87,7 +87,13 @@ export default function QuizzesLibraryPage() {
                   </td>
                   <td className="py-3.5 px-4 text-slate-600">{quiz.topic}</td>
                   <td className="py-3.5 px-4 text-slate-600">
-                    Grades {quiz.grade_min}–{quiz.grade_max}
+                    <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11.5px] font-semibold text-slate-700">
+                      {quiz.quiz_format === 'STAGE_FINALS' ? '⚡ Stage Finals' :
+                       quiz.quiz_format === 'CLASSROOM_WARMUP' ? '💡 Classroom Warmup' :
+                       quiz.quiz_format === 'THEMATIC_SPECIAL' ? '🎯 Thematic' :
+                       quiz.quiz_format === 'GENERAL_CHAMPIONSHIP' ? '🌍 General Mixed Bag' :
+                       '🏆 Tournament Prelims'}
+                    </span>
                   </td>
                   <td className="py-3.5 px-4 text-slate-600 font-medium">
                     {quiz.question_count} Qs

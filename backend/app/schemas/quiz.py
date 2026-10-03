@@ -5,7 +5,8 @@ from pydantic import BaseModel, Field, ConfigDict
 class QuizGenerateRequest(BaseModel):
     topic: str = Field(..., example="Australian History")
     subtopic: Optional[str] = None
-    audience_type: str = Field(default="primary", example="primary")  # primary, middle_school, high_school, college, adult, general
+    quiz_format: Optional[str] = Field(default="TOURNAMENT_PRELIMS", example="TOURNAMENT_PRELIMS")  # TOURNAMENT_PRELIMS, STAGE_FINALS, CLASSROOM_WARMUP, THEMATIC_SPECIAL, GENERAL_CHAMPIONSHIP
+    audience_type: Optional[str] = Field(default=None, example="general")
     grades: Optional[List[int]] = Field(default=None)
     age_range: Optional[str] = None
     grade_min: Optional[int] = Field(default=None, ge=1, le=12)
@@ -76,7 +77,8 @@ class QuizResponse(BaseModel):
     title: str
     topic: str
     subtopic: Optional[str] = None
-    audience_type: Optional[str] = "primary"
+    quiz_format: Optional[str] = "TOURNAMENT_PRELIMS"
+    audience_type: Optional[str] = None
     grades: Optional[List[int]] = None
     age_range: Optional[str] = None
     grade_min: Optional[int] = None

@@ -14,11 +14,12 @@ class Quiz(Base):
     title = Column(String(255), nullable=False)
     topic = Column(String(100), nullable=False, index=True)
     subtopic = Column(String(100), nullable=True)
-    audience_type = Column(String(50), default="primary")  # primary, middle_school, high_school, college, adult, general
+    quiz_format = Column(String(50), default="TOURNAMENT_PRELIMS")  # TOURNAMENT_PRELIMS, STAGE_FINALS, CLASSROOM_WARMUP, THEMATIC_SPECIAL, GENERAL_CHAMPIONSHIP
+    audience_type = Column(String(50), nullable=True, default=None)  # Deprecated in favor of quiz_format
     grades = Column(JSON, default=list)  # list of ints, e.g. [3, 4, 5]
     age_range = Column(String(50), nullable=True)
-    grade_min = Column(Integer, default=3)
-    grade_max = Column(Integer, default=5)
+    grade_min = Column(Integer, nullable=True, default=None)
+    grade_max = Column(Integer, nullable=True, default=None)
     difficulty = Column(String(50), default="Balanced")  # Summary or preset name
     difficulty_distribution = Column(JSON, default=dict)  # {"easy": 5, "medium": 10, "hard": 5}
     question_count = Column(Integer, default=10)

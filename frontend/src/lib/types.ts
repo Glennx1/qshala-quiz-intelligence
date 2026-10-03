@@ -183,11 +183,19 @@ export interface GeneratedQuestion {
   retrieval_sources: RetrievalSource[];
 }
 
+export type QuizFormat =
+  | 'TOURNAMENT_PRELIMS'
+  | 'STAGE_FINALS'
+  | 'CLASSROOM_WARMUP'
+  | 'THEMATIC_SPECIAL'
+  | 'GENERAL_CHAMPIONSHIP';
+
 export interface Quiz {
   id: string;
   title: string;
   topic: string;
   subtopic?: string | null;
+  quiz_format?: QuizFormat | string;
   audience_type?: string;
   grades?: number[];
   age_range?: string | null;
