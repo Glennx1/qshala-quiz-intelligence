@@ -265,6 +265,7 @@ async def search_questions(
     grade_min: Optional[int] = Query(None),
     grade_max: Optional[int] = Query(None),
     difficulty: Optional[str] = Query(None),
+    duplicate_status: Optional[str] = Query(None),
     document_id: Optional[str] = Query(None),
     document_title: Optional[str] = Query(None),
     sort_by: Optional[str] = Query("created_at"),
@@ -310,7 +311,7 @@ async def search_questions(
         # If any document matches the query string by title, prioritize and include its questions
         if doc_ids:
             deck_questions = db.query(Question, Document, Slide).\
-                join(Document, Question.document_id == Document.id).\
+                outerjoin(Document, Question.document_id == Document.id).\
                 outerjoin(Slide, Question.slide_id == Slide.id).\
                 filter(Question.document_id.in_(doc_ids)).limit(limit_int).all()
             for q, doc, slide in deck_questions:
@@ -326,7 +327,7 @@ async def search_questions(
 
     # Direct query with rich metadata filters
     q_builder = db.query(Question, Document, Slide).\
-        join(Document, Question.document_id == Document.id).\
+        outerjoin(Document, Question.document_id == Document.id).\
         outerjoin(Slide, Question.slide_id == Slide.id)
 
     if dup_status_str:
@@ -378,7 +379,7 @@ def list_duplicate_candidates(
     Lists all questions flagged with duplicate_status == 'POSSIBLE_DUPLICATE' for human review.
     """
     items = db.query(Question, Document, Slide).\
-        join(Document, Question.document_id == Document.id).\
+        outerjoin(Document, Question.document_id == Document.id).\
         outerjoin(Slide, Question.slide_id == Slide.id).\
         filter(Question.duplicate_status == "POSSIBLE_DUPLICATE").\
         order_by(desc(Question.duplicate_similarity)).\
@@ -389,7 +390,7 @@ def list_duplicate_candidates(
 @router.get("/{question_id}", response_model=QuestionResponse)
 def get_question(question_id: str, db: Session = Depends(get_db)):
     item = db.query(Question, Document, Slide).\
-        join(Document, Question.document_id == Document.id).\
+        outerjoin(Document, Question.document_id == Document.id).\
         outerjoin(Slide, Question.slide_id == Slide.id).\
         filter(Question.id == question_id).first()
 
@@ -412,7 +413,7 @@ def resolve_question_duplicate(
     - MERGE: updates occurrence count and merges source deck references.
     """
     item = db.query(Question, Document, Slide).\
-        join(Document, Question.document_id == Document.id).\
+        outerjoin(Document, Question.document_id == Document.id).\
         outerjoin(Slide, Question.slide_id == Slide.id).\
         filter(Question.id == question_id).first()
 
@@ -452,7 +453,7 @@ def update_question(
     Provides full curation control to teachers and quizmasters.
     """
     item = db.query(Question, Document, Slide).\
-        join(Document, Question.document_id == Document.id).\
+        outerjoin(Document, Question.document_id == Document.id).\
         outerjoin(Slide, Question.slide_id == Slide.id).\
         filter(Question.id == question_id).first()
 
@@ -517,7 +518,7 @@ def add_question_tag(
     Directly append a new tag to a question.
     """
     item = db.query(Question, Document, Slide).\
-        join(Document, Question.document_id == Document.id).\
+        outerjoin(Document, Question.document_id == Document.id).\
         outerjoin(Slide, Question.slide_id == Slide.id).\
         filter(Question.id == question_id).first()
 
@@ -545,7 +546,7 @@ def delete_question_tag(
     Delete a specific tag from a question.
     """
     item = db.query(Question, Document, Slide).\
-        join(Document, Question.document_id == Document.id).\
+        outerjoin(Document, Question.document_id == Document.id).\
         outerjoin(Slide, Question.slide_id == Slide.id).\
         filter(Question.id == question_id).first()
 

@@ -111,11 +111,23 @@ def test_pptx_export():
     assert len(pptx_bytes) > 5000, "PPTX file appears too small or corrupt"
     print("[PASS] QShala Branded PPTX export generated successfully!")
 
+def test_search_questions_api():
+    print("\n--- Testing Search Questions API ---")
+    db = SessionLocal()
+    from backend.app.routers.questions import search_questions
+    results = asyncio.run(search_questions(db=db))
+    assert len(results) > 0, "Expected questions in vault"
+    assert results[0].question_text is not None
+    results_dups = asyncio.run(search_questions(duplicate_status="POSSIBLE_DUPLICATE", db=db))
+    assert isinstance(results_dups, list)
+    print(f"[PASS] Search Questions API returned {len(results)} questions!")
+
 if __name__ == "__main__":
     print("=== RUNNING VAULT & COMPILATION TEST SUITE ===")
     test_auto_tagger()
     test_difficulty_engine()
     test_deduplicator()
     test_topics_api()
+    test_search_questions_api()
     test_pptx_export()
     print("\n=== ALL TEST SUITE CHECKS COMPLETED AND VERIFIED! ===")
