@@ -1,13 +1,16 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import {
   UploadCloud,
   FileText,
   Trash2,
   CheckCircle2,
+  AlertCircle,
   Loader2,
   ArrowRight,
+  X,
 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { DocumentItem } from '../../lib/types';
@@ -200,24 +203,67 @@ export default function UploadPage() {
 
       {/* Real-time Ingestion Progress */}
       {pipelineProgress && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-4 animate-in fade-in">
+        <div className={`rounded-xl border p-6 shadow-sm space-y-4 animate-in fade-in transition-all ${
+          pipelineProgress.status === 'COMPLETED' || pipelineProgress.percentage >= 100
+            ? 'border-emerald-200 bg-emerald-50/25'
+            : pipelineProgress.status === 'FAILED'
+            ? 'border-rose-200 bg-rose-50/25'
+            : 'border-slate-200 bg-white'
+        }`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+              {pipelineProgress.status === 'COMPLETED' || pipelineProgress.percentage >= 100 ? (
+                <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+              ) : pipelineProgress.status === 'FAILED' ? (
+                <AlertCircle className="h-5 w-5 text-rose-600 shrink-0" />
+              ) : (
+                <Loader2 className="h-5 w-5 animate-spin text-blue-600 shrink-0" />
+              )}
               <div>
-                <h4 className="text-[13px] font-semibold text-slate-900">Processing Material</h4>
+                <h4 className="text-[13px] font-semibold text-slate-900">
+                  {pipelineProgress.status === 'COMPLETED' || pipelineProgress.percentage >= 100
+                    ? 'Ingestion Complete'
+                    : pipelineProgress.status === 'FAILED'
+                    ? 'Ingestion Failed'
+                    : 'Processing Material'}
+                </h4>
                 <p className="text-[12px] text-slate-500 font-normal">{pipelineProgress.step}</p>
               </div>
             </div>
 
-            <span className="text-[14px] font-bold text-blue-600">
-              {pipelineProgress.percentage}%
-            </span>
+            <div className="flex items-center gap-3">
+              <span className={`text-[14px] font-bold ${
+                pipelineProgress.status === 'COMPLETED' || pipelineProgress.percentage >= 100
+                  ? 'text-emerald-600'
+                  : pipelineProgress.status === 'FAILED'
+                  ? 'text-rose-600'
+                  : 'text-blue-600'
+              }`}>
+                {pipelineProgress.percentage}%
+              </span>
+
+              {(pipelineProgress.status === 'COMPLETED' || pipelineProgress.percentage >= 100 || pipelineProgress.status === 'FAILED') && (
+                <button
+                  type="button"
+                  onClick={() => setPipelineProgress(null)}
+                  className="rounded-lg p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                  title="Dismiss notification"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
             <div
-              className="h-full bg-blue-600 transition-all duration-300"
+              className={`h-full transition-all duration-300 ${
+                pipelineProgress.status === 'COMPLETED' || pipelineProgress.percentage >= 100
+                  ? 'bg-emerald-600'
+                  : pipelineProgress.status === 'FAILED'
+                  ? 'bg-rose-600'
+                  : 'bg-blue-600'
+              }`}
               style={{ width: `${pipelineProgress.percentage}%` }}
             />
           </div>
@@ -225,6 +271,7 @@ export default function UploadPage() {
           {/* 5 Clean Steps */}
           <div className="grid grid-cols-5 gap-2 pt-2 text-center text-xs">
             {cleanSteps.map((step, idx) => {
+              const isFinished = pipelineProgress.status === 'COMPLETED' || pipelineProgress.percentage >= 100;
               const isPast = pipelineProgress.percentage >= ((idx + 1) / 5) * 100;
               const isCurrent =
                 pipelineProgress.percentage >= (idx / 5) * 100 && !isPast;
@@ -233,7 +280,7 @@ export default function UploadPage() {
                 <div key={step} className="space-y-1">
                   <div
                     className={`h-1 rounded-full ${
-                      isPast
+                      isFinished || isPast
                         ? 'bg-emerald-500'
                         : isCurrent
                         ? 'bg-blue-600'
@@ -242,7 +289,9 @@ export default function UploadPage() {
                   />
                   <span
                     className={`text-[12px] ${
-                      isCurrent
+                      isFinished
+                        ? 'text-emerald-700 font-medium'
+                        : isCurrent
                         ? 'font-bold text-blue-600'
                         : isPast
                         ? 'text-slate-700 font-medium'
@@ -255,6 +304,33 @@ export default function UploadPage() {
               );
             })}
           </div>
+
+          {/* Action links upon completion */}
+          {(pipelineProgress.status === 'COMPLETED' || pipelineProgress.percentage >= 100) && (
+            <div className="flex items-center justify-between pt-2 border-t border-emerald-100">
+              <span className="text-[12px] text-emerald-700 font-medium">
+                {pipelineProgress.questions > 0
+                  ? `${pipelineProgress.questions} questions extracted & indexed into Knowledge Base`
+                  : 'Document processed successfully'}
+              </span>
+              <div className="flex items-center gap-2">
+                <Link
+                  href="/knowledge-base"
+                  className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-blue-700 transition-colors shadow-xs"
+                >
+                  <span>View Questions</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setPipelineProgress(null)}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12px] font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
