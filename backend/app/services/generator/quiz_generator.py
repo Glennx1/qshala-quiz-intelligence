@@ -345,7 +345,7 @@ Please return a JSON object with this exact structure:
                 target_grade_max=grade_max,
                 target_difficulty=assigned_diff,
                 evidence_context=evidence_context,
-                audience_type=aud_type
+                audience_type=req.audience_type or "general"
             )
 
             gen_q = GeneratedQuestion(

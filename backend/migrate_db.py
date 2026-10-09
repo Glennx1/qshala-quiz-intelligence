@@ -30,6 +30,7 @@ def add_columns(table_name, columns):
 
 # 1. Quizzes columns
 add_columns("quizzes", [
+    ("quiz_format", "TEXT DEFAULT 'TOURNAMENT_PRELIMS'"),
     ("audience_type", "TEXT DEFAULT 'primary'"),
     ("grades", "TEXT DEFAULT '[]'"),
     ("age_range", "TEXT"),
