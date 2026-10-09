@@ -28,6 +28,24 @@ export function getApiBase(): string {
   return 'http://localhost:8000/api/v1';
 }
 
+export function resolveMediaUrl(url: string | null | undefined): string {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:')) {
+    return url;
+  }
+  const cleanPath = url.startsWith('/') ? url : `/${url}`;
+  const apiBase = getApiBase();
+  if (apiBase.startsWith('http')) {
+    try {
+      const origin = new URL(apiBase).origin;
+      return `${origin}${cleanPath}`;
+    } catch {
+      return cleanPath;
+    }
+  }
+  return cleanPath;
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const errorText = await res.text();

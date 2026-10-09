@@ -14,6 +14,7 @@ import {
   Maximize2
 } from 'lucide-react';
 import { HistoricalQuestion } from '../lib/types';
+import { resolveMediaUrl } from '../lib/api';
 
 interface MediaViewerModalProps {
   question: HistoricalQuestion | null;
@@ -23,6 +24,26 @@ interface MediaViewerModalProps {
 export default function MediaViewerModal({ question, onClose }: MediaViewerModalProps) {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
+  const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
+  const [fallbackUrls, setFallbackUrls] = useState<Record<string, string>>({});
+
+  const getImageSrc = (rawUrl: string) => {
+    if (!rawUrl) return '';
+    if (fallbackUrls[rawUrl]) {
+      return fallbackUrls[rawUrl];
+    }
+    return resolveMediaUrl(rawUrl);
+  };
+
+  const handleImageError = (rawUrl: string) => {
+    const current = getImageSrc(rawUrl);
+    if (current.includes('/static/') && !current.includes('/api/v1/static/')) {
+      const altUrl = current.replace('/static/', '/api/v1/static/');
+      setFallbackUrls((prev) => ({ ...prev, [rawUrl]: altUrl }));
+    } else {
+      setImageErrors((prev) => ({ ...prev, [rawUrl]: true }));
+    }
+  };
 
   if (!question) return null;
 
@@ -121,12 +142,26 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
 
               {/* Main Image Display */}
               <div className="relative rounded-xl border border-slate-200 bg-slate-900/5 overflow-hidden flex items-center justify-center min-h-[260px] max-h-[420px]">
-                <img
-                  src={images[activeImageIndex]}
-                  alt={`Slide media ${activeImageIndex + 1}`}
-                  className="max-h-[400px] w-auto max-w-full object-contain cursor-zoom-in"
-                  onClick={() => setFullscreenImage(images[activeImageIndex])}
-                />
+                {imageErrors[images[activeImageIndex]] ? (
+                  <div className="flex flex-col items-center justify-center p-8 text-center text-slate-500 min-h-[220px]">
+                    <ImageIcon className="h-10 w-10 text-slate-400 mb-2 stroke-1" />
+                    <span className="text-[13px] font-semibold text-slate-700">Slide Visual Reference</span>
+                    <span className="text-[11px] text-slate-400 mt-0.5 font-mono">
+                      {images[activeImageIndex].split('/').pop()}
+                    </span>
+                    <span className="text-[11.5px] text-slate-500 mt-2 bg-slate-100 rounded-md px-2.5 py-1">
+                      {question.source_slide_range ? `From Slides ${question.source_slide_range}` : 'Extracted Question Slide'}
+                    </span>
+                  </div>
+                ) : (
+                  <img
+                    src={getImageSrc(images[activeImageIndex])}
+                    alt={`Slide media ${activeImageIndex + 1}`}
+                    className="max-h-[400px] w-auto max-w-full object-contain cursor-zoom-in"
+                    onError={() => handleImageError(images[activeImageIndex])}
+                    onClick={() => setFullscreenImage(getImageSrc(images[activeImageIndex]))}
+                  />
+                )}
 
                 {images.length > 1 && (
                   <>
@@ -147,31 +182,48 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
                   </>
                 )}
 
-                <button
-                  type="button"
-                  onClick={() => setFullscreenImage(images[activeImageIndex])}
-                  className="absolute bottom-2 right-2 rounded-lg bg-black/60 text-white p-1.5 hover:bg-black/80 transition-colors"
-                  title="Expand Fullscreen"
-                >
-                  <Maximize2 className="h-4 w-4" />
-                </button>
+                {!imageErrors[images[activeImageIndex]] && (
+                  <button
+                    type="button"
+                    onClick={() => setFullscreenImage(getImageSrc(images[activeImageIndex]))}
+                    className="absolute bottom-2 right-2 rounded-lg bg-black/60 text-white p-1.5 hover:bg-black/80 transition-colors cursor-pointer"
+                    title="Expand Fullscreen"
+                  >
+                    <Maximize2 className="h-4 w-4" />
+                  </button>
+                )}
               </div>
 
               {/* Thumbnails row if multiple images */}
               {images.length > 1 && (
                 <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                  {images.map((img, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => setActiveImageIndex(idx)}
-                      className={`relative shrink-0 rounded-lg overflow-hidden border-2 h-16 w-20 transition-all ${
-                        activeImageIndex === idx ? 'border-blue-600 ring-2 ring-blue-400' : 'border-slate-200 opacity-70 hover:opacity-100'
-                      }`}
-                    >
-                      <img src={img} alt={`thumb ${idx}`} className="h-full w-full object-cover" />
-                    </button>
-                  ))}
+                  {images.map((img, idx) => {
+                    const isErr = imageErrors[img];
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setActiveImageIndex(idx)}
+                        className={`relative shrink-0 rounded-lg overflow-hidden border-2 h-16 w-20 transition-all cursor-pointer ${
+                          activeImageIndex === idx ? 'border-blue-600 ring-2 ring-blue-400' : 'border-slate-200 opacity-70 hover:opacity-100'
+                        }`}
+                      >
+                        {isErr ? (
+                          <div className="flex flex-col items-center justify-center h-full w-full bg-slate-100 text-slate-400 text-[10px]">
+                            <ImageIcon className="h-4 w-4 mb-0.5" />
+                            <span>Img {idx + 1}</span>
+                          </div>
+                        ) : (
+                          <img
+                            src={getImageSrc(img)}
+                            alt={`thumb ${idx}`}
+                            className="h-full w-full object-cover"
+                            onError={() => handleImageError(img)}
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -208,7 +260,7 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
               {audioRef && (
                 <div className="pt-1">
                   <audio controls className="w-full h-10 rounded-lg">
-                    <source src={audioRef} />
+                    <source src={resolveMediaUrl(audioRef)} />
                     Your browser does not support audio playback.
                   </audio>
                 </div>

@@ -18,6 +18,12 @@
       }
     },
     {
+      "source": "/static/:path*",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
       "source": "/(.*)",
       "destination": {
         "service": "frontend"

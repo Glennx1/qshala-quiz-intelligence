@@ -88,8 +88,9 @@ export default function UploadPage() {
     let fileToUpload = file;
 
     // Vercel serverless function payload limit is 4.5 MB.
-    // If the file exceeds 3.5 MB, automatically compress/strip media right in the browser!
-    const maxBytes = 3.5 * 1024 * 1024;
+    // In cloud environments or when files are very large, optimize heavy videos while preserving question images!
+    const isLocalhost = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    const maxBytes = isLocalhost ? 200 * 1024 * 1024 : 4.5 * 1024 * 1024;
     if (file.size > maxBytes) {
       const mbSize = (file.size / (1024 * 1024)).toFixed(1);
       const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();

@@ -72,8 +72,9 @@ app.add_middleware(
 )
 
 # Mount static file directory for extracted slide assets
-if os.path.exists(settings.STORAGE_DIR):
-    app.mount("/static", StaticFiles(directory=str(settings.STORAGE_DIR)), name="static")
+settings.STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(settings.STORAGE_DIR)), name="static")
+app.mount(f"{settings.API_V1_STR}/static", StaticFiles(directory=str(settings.STORAGE_DIR)), name="api_v1_static")
 
 # Mount API routers
 app.include_router(stats.router, prefix=settings.API_V1_STR)
