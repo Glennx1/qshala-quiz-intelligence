@@ -18,12 +18,14 @@ import {
   Video,
   Image as ImageIcon,
   Copy,
-  X
+  X,
+  FileSpreadsheet
 } from 'lucide-react';
 import { api } from '../../lib/api';
-import { HistoricalQuestion, TopicItem } from '../../lib/types';
+import { HistoricalQuestion, TopicItem, DocumentItem } from '../../lib/types';
 import SlideViewerModal from '../../components/SlideViewerModal';
 import TagManagerModal from '../../components/TagManagerModal';
+import MediaViewerModal from '../../components/MediaViewerModal';
 
 function KnowledgeBaseContent() {
   const searchParams = useSearchParams();
@@ -37,24 +39,30 @@ function KnowledgeBaseContent() {
   const [subtopic, setSubtopic] = useState('');
   const [tagFilter, setTagFilter] = useState('');
   const [difficulty, setDifficulty] = useState('');
+  const [selectedDeckId, setSelectedDeckId] = useState<string>('');
+  const [gradeMin, setGradeMin] = useState<number | ''>('');
   const [sortBy, setSortBy] = useState('created_at');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
 
   const [topicsList, setTopicsList] = useState<TopicItem[]>([]);
+  const [documentsList, setDocumentsList] = useState<DocumentItem[]>([]);
   const [availableSubtopics, setAvailableSubtopics] = useState<string[]>([]);
   const [questions, setQuestions] = useState<HistoricalQuestion[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSlide, setSelectedSlide] = useState<any>(null);
   const [selectedQuestionForTags, setSelectedQuestionForTags] = useState<HistoricalQuestion | null>(null);
+  const [selectedQuestionForMedia, setSelectedQuestionForMedia] = useState<HistoricalQuestion | null>(null);
   const [selectedDuplicateForReview, setSelectedDuplicateForReview] = useState<HistoricalQuestion | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
 
-  // Fetch topics list and duplicate count on mount
+  // Fetch topics list, documents list, and duplicate count on mount
   useEffect(() => {
     const loadMetadata = async () => {
       try {
         const list = await api.getTopics();
         setTopicsList(list);
+        const docs = await api.listDocuments();
+        setDocumentsList(docs);
         const dups = await api.getDuplicateCandidates();
         setDuplicateCount(dups.length);
       } catch (err) {
@@ -85,6 +93,8 @@ function KnowledgeBaseContent() {
         subtopic: subtopic || undefined,
         tag: tagFilter.trim() || undefined,
         difficulty: difficulty || undefined,
+        document_id: selectedDeckId || undefined,
+        grade_min: gradeMin !== '' ? Number(gradeMin) : undefined,
         duplicate_status: activeTab === 'duplicates' ? 'POSSIBLE_DUPLICATE' : undefined,
         sort_by: sortBy,
         sort_order: sortOrder,
@@ -100,7 +110,7 @@ function KnowledgeBaseContent() {
 
   useEffect(() => {
     fetchQuestions();
-  }, [activeTab, topic, subtopic, tagFilter, difficulty, sortBy, sortOrder]);
+  }, [activeTab, topic, subtopic, tagFilter, difficulty, selectedDeckId, gradeMin, sortBy, sortOrder]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -194,7 +204,7 @@ function KnowledgeBaseContent() {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by keywords, entities, concepts..."
+              placeholder="Search questions, answers, topics, or presentation deck name..."
               className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-10 pr-4 text-[14px] font-normal text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
@@ -213,6 +223,21 @@ function KnowledgeBaseContent() {
             <Filter className="h-3.5 w-3.5" />
             <span>Filters:</span>
           </div>
+
+          {/* Presentation Deck Filter */}
+          <select
+            value={selectedDeckId}
+            onChange={(e) => setSelectedDeckId(e.target.value)}
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[13px] font-normal text-slate-700 focus:border-blue-500 focus:outline-none cursor-pointer max-w-[210px] truncate"
+            title="Filter by Presentation Deck"
+          >
+            <option value="">All Presentations / Decks ({documentsList.length})</option>
+            {documentsList.map((doc) => (
+              <option key={doc.id} value={doc.id}>
+                {doc.title || doc.filename}
+              </option>
+            ))}
+          </select>
 
           {/* Dynamic Topics Dropdown */}
           <select
@@ -305,7 +330,7 @@ function KnowledgeBaseContent() {
             </button>
           </div>
 
-          {(query || topic || subtopic || tagFilter || difficulty) && (
+          {(query || topic || subtopic || tagFilter || difficulty || gradeMin || selectedDeckId) && (
             <button
               type="button"
               onClick={() => {
@@ -314,6 +339,8 @@ function KnowledgeBaseContent() {
                 setSubtopic('');
                 setTagFilter('');
                 setDifficulty('');
+                setGradeMin('');
+                setSelectedDeckId('');
               }}
               className="text-[13px] text-blue-600 hover:underline cursor-pointer font-medium"
             >
@@ -380,31 +407,70 @@ function KnowledgeBaseContent() {
                           Answer: <span className="font-semibold text-slate-800">{q.answer}</span>
                         </div>
 
-                        {/* Multimodal Badges: Images, Audio, Video */}
+                        {/* Multimodal Badges & Media Preview Trigger */}
                         <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                          {((q.image_refs && q.image_refs.length > 0) || q.visual_clues || q.audio_transcript || q.video_transcript || (q.raw_media_refs && q.raw_media_refs.length > 0)) && (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedQuestionForMedia(q)}
+                              className="inline-flex items-center gap-1.5 rounded-md bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 text-[11px] font-bold text-blue-700 transition-colors cursor-pointer shadow-2xs"
+                              title="Click to view slide images, audio, video & transcripts in a popup"
+                            >
+                              <ImageIcon className="h-3 w-3 text-blue-600" />
+                              <span>View Media</span>
+                              {q.image_refs && q.image_refs.length > 0 && (
+                                <span className="rounded-full bg-blue-200/80 text-blue-800 text-[10px] px-1 py-0.2 font-mono">
+                                  {q.image_refs.length}
+                                </span>
+                              )}
+                              {q.audio_transcript && <Volume2 className="h-2.5 w-2.5 text-teal-600" />}
+                              {q.video_transcript && <Video className="h-2.5 w-2.5 text-violet-600" />}
+                            </button>
+                          )}
+
                           {q.image_refs && q.image_refs.length > 0 && (
-                            <span className="inline-flex items-center gap-1 rounded bg-sky-50 border border-sky-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-sky-700">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedQuestionForMedia(q)}
+                              className="inline-flex items-center gap-1 rounded bg-sky-50 hover:bg-sky-100 border border-sky-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-sky-700 cursor-pointer"
+                              title="Click to preview slide images"
+                            >
                               <ImageIcon className="h-2.5 w-2.5" />
                               {q.image_refs.length} Images
-                            </span>
+                            </button>
                           )}
                           {q.visual_clues && (
-                            <span className="inline-flex items-center gap-1 rounded bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-indigo-800 max-w-[200px] truncate" title={q.visual_clues}>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedQuestionForMedia(q)}
+                              className="inline-flex items-center gap-1 rounded bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-indigo-800 max-w-[200px] truncate cursor-pointer"
+                              title={q.visual_clues}
+                            >
                               <span className="text-[10px] font-bold">OCR</span>
                               <span className="truncate">{q.visual_clues}</span>
-                            </span>
+                            </button>
                           )}
                           {q.audio_transcript && (
-                            <span className="inline-flex items-center gap-1 rounded bg-teal-50 border border-teal-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-teal-800 max-w-[200px] truncate" title={q.audio_transcript}>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedQuestionForMedia(q)}
+                              className="inline-flex items-center gap-1 rounded bg-teal-50 hover:bg-teal-100 border border-teal-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-teal-800 max-w-[200px] truncate cursor-pointer"
+                              title={q.audio_transcript}
+                            >
                               <Volume2 className="h-2.5 w-2.5 flex-shrink-0" />
                               <span className="truncate">{q.audio_transcript}</span>
-                            </span>
+                            </button>
                           )}
                           {q.video_transcript && (
-                            <span className="inline-flex items-center gap-1 rounded bg-violet-50 border border-violet-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-violet-800 max-w-[200px] truncate" title={q.video_transcript}>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedQuestionForMedia(q)}
+                              className="inline-flex items-center gap-1 rounded bg-violet-50 hover:bg-violet-100 border border-violet-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-violet-800 max-w-[200px] truncate cursor-pointer"
+                              title={q.video_transcript}
+                            >
                               <Video className="h-2.5 w-2.5 flex-shrink-0" />
                               <span className="truncate">{q.video_transcript}</span>
-                            </span>
+                            </button>
                           )}
                           {q.source_slide_range && (
                             <span className="rounded bg-slate-100 border border-slate-200 px-1.5 py-0.5 text-[10.5px] font-medium text-slate-600">
@@ -498,14 +564,26 @@ function KnowledgeBaseContent() {
                         </div>
                       </td>
 
-                      {/* Source */}
+                      {/* Source Presentation Deck */}
                       <td className="py-3.5 px-4 text-slate-500 text-[12px] align-top">
-                        <div className="truncate max-w-[150px] font-medium text-slate-700">
-                          {q.document_title || 'Archive'}
-                        </div>
-                        <div className="text-[11px] text-slate-400">
-                          Slide {q.slide_number || 1}
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedDeckId(selectedDeckId === q.document_id ? '' : q.document_id)}
+                          className="text-left group/deck hover:text-blue-600 cursor-pointer block"
+                          title={`Click to filter questions from: ${q.document_title || 'this presentation'}`}
+                        >
+                          <div className={`font-semibold truncate max-w-[170px] ${selectedDeckId === q.document_id ? 'text-blue-600 underline' : 'text-slate-800 group-hover/deck:text-blue-600'}`}>
+                            {q.document_title || 'Archive Deck'}
+                          </div>
+                          <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5">
+                            <span>{q.source_slide_range || (q.slide_number ? `Slide ${q.slide_number}` : 'Deck')}</span>
+                            {selectedDeckId === q.document_id && (
+                              <span className="rounded bg-blue-100 text-blue-700 font-bold text-[9.5px] px-1 py-0.2">
+                                Filtered
+                              </span>
+                            )}
+                          </div>
+                        </button>
                       </td>
 
                       <td className="py-3.5 px-4 text-right align-top">
@@ -695,6 +773,13 @@ function KnowledgeBaseContent() {
           question={selectedQuestionForTags}
           onSaved={handleQuestionTagsSaved}
           availableTopics={topicsList.map((t) => t.topic)}
+        />
+      )}
+
+      {selectedQuestionForMedia && (
+        <MediaViewerModal
+          question={selectedQuestionForMedia}
+          onClose={() => setSelectedQuestionForMedia(null)}
         />
       )}
     </div>

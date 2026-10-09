@@ -3,10 +3,10 @@ from typing import Dict, Any, List, Tuple
 
 class SlideClassifier:
     """
-    Context-aware two-pass slide classifier for QShala presentation decks.
-    Pass 1: Computes individual category confidence scores.
-    Pass 2: Uses sequence context (e.g. Question -> Answer patterns, Section markers)
-            to eliminate false positives and catch implicit answer slides.
+    Context-aware two-pass slide classifier and deck layout analyzer for QShala presentation decks.
+    Pass 1: Computes category confidence scores (Questions, Answers, Transitions, Rules, AV Tests).
+    Pass 2: Detects deck-level layout (Two-Section, Interleaved, Notes-Based) and uses sequence context
+            to handle dramatic-pause transition slides, eliminate previews, and bridge multi-slide reveals.
     """
 
     QUESTION_INDICATORS = [
@@ -25,14 +25,92 @@ class SlideClassifier:
         r"\b(it is|the answer is|this was)\b",
     ]
 
+    ANSWER_TRANSITION_REGEX = re.compile(
+        r"^\s*(answer|answers|ans|solution|solutions|the\s+answer|let['’]?s\s+see\s+the\s+answer)\s*[\.\:\-]?\s*$",
+        re.IGNORECASE
+    )
+
+    TWO_SECTION_DIVIDERS = [
+        r"\b(please\s+hand\s+in\s+your\s+sheets|answers\s+follow|let['’]?s\s+discuss\s+(the\s+)?answers|preliminary\s+round\s+answers|prelim\s+answers|time\s+for\s+(the\s+)?answers|now\s+for\s+(the\s+)?answers)\b",
+        r"^\s*(answers|solutions)\s*$"
+    ]
+
     SECTION_INDICATORS = [
-        r"\b(round\s*\d+|section\s*\d+|part\s*\d+|theme\s*\d+|finals|prelims|tie\s*breaker)\b",
-        r"\b(answers\s+follow|hand\s+in\s+your\s+sheets|discuss\s+(?:the\s+)?answers|intermission|break|announcement|qshots)\b",
+        r"\b(round\s*\d+|section\s*\d+|part\s*\d+|theme\s*\d+|finals|prelims|tie\s*breaker|topicator|potpourri|rapid\s*fire|list\s*it|buzzer)\b",
+        r"\b(intermission|break)\b",
     ]
 
     TITLE_INDICATORS = [
-        r"\b(welcome|rules|scores|scoreboard|guidelines|quiz master|qshala|instructions|thank you)\b",
+        r"\b(welcome|guidelines|quiz master|qshala|instructions|thank you|prizes|prize|structure of the quiz)\b",
     ]
+
+    RULES_INDICATORS = [
+        r"\b(rules|instructions for prelims|marking scheme|scoring system|\+20 for direct|\+10 for a pass)\b",
+    ]
+
+    AV_TEST_INDICATORS = [
+        r"\b(av test|audio video test|sound check|mic check)\b",
+    ]
+
+    TEAM_INTRO_INDICATORS = [
+        r"\b(presenting the finalists|finalists|team \d+|meet the teams)\b",
+    ]
+
+    ANNOUNCEMENT_INDICATORS = [
+        r"\b(social media|follow @|qshots|hand in your sheets)\b",
+        r"^\s*announcement\s*[\:\-]?\s*$"
+    ]
+
+    def detect_deck_layout(self, slides: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Analyzes deck layout architecture:
+        - TWO_SECTION: First half has questions-only (written prelim round),
+          followed by an explicit divider ("ANSWERS FOLLOW", "LET'S DISCUSS THE ANSWERS"),
+          followed by questions with answers.
+        - INTERLEAVED: Questions and answers paired per round throughout (finals/live quiz).
+        - NOTES_BASED: Question on slide, answer in speaker notes.
+        """
+        n = len(slides)
+        if n < 6:
+            return {"layout_type": "INTERLEAVED", "answers_section_start": None}
+
+        # Search for two-section divider between slide index 4 and n - 3
+        divider_idx = None
+        for i in range(4, min(n - 2, int(n * 0.85))):
+            s = slides[i]
+            title = (s.get("title") or "").strip().lower()
+            text = (s.get("extracted_text") or "").strip().lower()
+            combined = f"{title} {text}"
+
+            for pat in self.TWO_SECTION_DIVIDERS:
+                if re.search(pat, combined, re.IGNORECASE):
+                    divider_idx = i
+                    break
+            if divider_idx is not None:
+                break
+
+        if divider_idx is not None:
+            # Check if there are questions before divider and after divider
+            pre_questions = sum(1 for s in slides[:divider_idx] if re.search(r"^\s*\d+[\.\)]|\?", (s.get("extracted_text") or "") + (s.get("title") or "")))
+            post_questions = sum(1 for s in slides[divider_idx:] if re.search(r"^\s*\d+[\.\)]|\?", (s.get("extracted_text") or "") + (s.get("title") or "")))
+
+            if pre_questions >= 2 and post_questions >= 2:
+                return {
+                    "layout_type": "TWO_SECTION",
+                    "answers_section_start": divider_idx,
+                    "preview_range": (0, divider_idx)
+                }
+
+        # Check for notes-based deck
+        notes_with_answers = sum(
+            1 for s in slides
+            if s.get("speaker_notes") and len(s.get("speaker_notes", "").strip()) > 10
+            and re.search(r"\b(ans|answer|correct|solution|http)\b", s.get("speaker_notes", ""), re.IGNORECASE)
+        )
+        if notes_with_answers >= max(5, int(n * 0.35)):
+            return {"layout_type": "NOTES_BASED", "answers_section_start": None}
+
+        return {"layout_type": "INTERLEAVED", "answers_section_start": None}
 
     def score_slide(self, slide_data: Dict[str, Any]) -> Dict[str, float]:
         """Pass 1: Scores an individual slide across categories."""
@@ -49,17 +127,40 @@ class SlideClassifier:
             "SECTION_MARKER": 0.0,
             "SCOREBOARD": 0.0,
             "RULES": 0.0,
+            "AV_TEST": 0.0,
+            "TEAM_INTRO": 0.0,
+            "ANNOUNCEMENT": 0.0,
+            "ANSWER_TRANSITION": 0.0,
             "QUESTION": 0.0,
             "ANSWER": 0.0,
             "CONTENT": 0.3
         }
+
+        # Dramatic pause answer divider (e.g. Slide with just "ANSWER" or "ANSWERS")
+        combined_short = (title if not text else f"{title} {text}").strip()
+        if self.ANSWER_TRANSITION_REGEX.match(combined_short) or self.ANSWER_TRANSITION_REGEX.match(text) or self.ANSWER_TRANSITION_REGEX.match(title):
+            scores["ANSWER_TRANSITION"] = 0.98
+            return scores
 
         # Slide 1 is almost always TITLE
         slide_num = slide_data.get("slide_number", 1)
         if slide_num == 1:
             scores["TITLE"] += 0.7
 
-        # Section markers (Round 1, Round 2)
+        # AV Test check
+        if any(re.search(pat, full_text) for pat in self.AV_TEST_INDICATORS):
+            scores["AV_TEST"] += 0.90
+
+        # Team / Finalists check
+        if any(re.search(pat, full_text) for pat in self.TEAM_INTRO_INDICATORS):
+            scores["TEAM_INTRO"] += 0.85
+
+        # Announcements / Social Media (only if not an explicit question)
+        if any(re.search(pat, full_text) for pat in self.ANNOUNCEMENT_INDICATORS):
+            if "?" not in full_text and not re.search(r"^[0-9]+[\.\)]\s+", text_lower):
+                scores["ANNOUNCEMENT"] += 0.80
+
+        # Section markers (Round 1, Round 2, Potpourri)
         if any(re.search(pat, title_lower) for pat in self.SECTION_INDICATORS):
             scores["SECTION_MARKER"] += 0.85
         elif any(re.search(pat, text_lower) for pat in self.SECTION_INDICATORS) and word_count < 10:
@@ -68,7 +169,7 @@ class SlideClassifier:
         # Scoreboards & Rules
         if any(re.search(pat, full_text) for pat in [r"scoreboard", r"scores", r"leaderboard", r"points"]):
             scores["SCOREBOARD"] += 0.85
-        if any(re.search(pat, full_text) for pat in [r"rules", r"guidelines", r"instructions", r"marking scheme"]):
+        if any(re.search(pat, full_text) for pat in self.RULES_INDICATORS):
             scores["RULES"] += 0.85
 
         # Title indicators
@@ -87,9 +188,10 @@ class SlideClassifier:
         if q_hits >= 2:
             scores["QUESTION"] += 0.80
         elif q_hits == 1:
-            # Require text not to be purely rhetorical
             if "?" in full_text or re.search(r"\b(q\d+|question|name the|identify)\b", full_text):
                 scores["QUESTION"] += 0.60
+            elif re.search(r"^[0-9]+[\.\)]\s+", text_lower) or re.search(r"^[0-9]+[\.\)]\s*$", title_lower):
+                scores["QUESTION"] += 0.65
             else:
                 scores["QUESTION"] += 0.35
 
@@ -104,17 +206,29 @@ class SlideClassifier:
     def classify_deck(self, slides: List[Dict[str, Any]]) -> List[str]:
         """
         Pass 2: Contextual sequence classification across all slides in a deck.
-        Corrects ambiguous slides based on preceding/following neighbors.
+        Corrects ambiguous slides based on layout and preceding/following neighbors.
         """
         if not slides:
             return []
 
-        # Pass 1: Raw scoring
+        # Step 1: Detect layout
+        layout_info = self.detect_deck_layout(slides)
+        layout_type = layout_info["layout_type"]
+        answers_start = layout_info.get("answers_section_start")
+
+        # Step 2: Pass 1 raw scoring
         scored_slides = [self.score_slide(s) for s in slides]
         classified_types = [max(sc.items(), key=lambda x: x[1])[0] for sc in scored_slides]
 
-        # Pass 2: Sequential context adjustments
         n = len(slides)
+
+        # Step 3: Handle Two-Section decks (skip question previews before answers start)
+        if layout_type == "TWO_SECTION" and answers_start is not None:
+            for i in range(answers_start):
+                if classified_types[i] == "QUESTION":
+                    classified_types[i] = "QUESTION_PREVIEW"
+
+        # Step 4: Contextual neighbor adjustments
         for i in range(n):
             current_type = classified_types[i]
             prev_type = classified_types[i - 1] if i > 0 else None
@@ -122,31 +236,21 @@ class SlideClassifier:
             s_text = (slides[i].get("extracted_text") or "").strip()
             s_text_lower = s_text.lower()
 
-            # Pattern 1: Interstitial "ANSWER" prompt slide
-            # In tournament decks, quizmasters insert a slide with literally just the word "ANSWER"
-            # before revealing the actual answer on the subsequent slide.
-            is_answer_prompt = (
-                s_text_lower in ["answer", "answers", "the answer", "solution", "solutions", "the answer is"]
-                or (len(s_text.split()) <= 2 and "answer" in s_text_lower and "?" not in s_text)
-            )
+            # Pattern: If previous slide was an ANSWER_TRANSITION (e.g. "ANSWER"),
+            # the current slide is the actual answer reveal slide!
+            if prev_type == "ANSWER_TRANSITION":
+                if current_type in ["CONTENT", "TITLE", "QUESTION"] and scored_slides[i]["SECTION_MARKER"] < 0.6:
+                    classified_types[i] = "ANSWER"
 
-            if is_answer_prompt:
-                classified_types[i] = "SECTION_MARKER"
-                # Promote the NEXT slide to ANSWER if it exists
-                if i + 1 < n:
-                    classified_types[i + 1] = "ANSWER"
-                continue
-
-            # Pattern 2: If previous slide was a QUESTION, and current slide is CONTENT or ambiguous,
-            # it is very likely an ANSWER slide (especially if short or has image).
-            if prev_type == "QUESTION":
+            # Pattern: If previous slide was a QUESTION, and current slide is CONTENT or ambiguous,
+            # promote to ANSWER if not a section marker / scoreboard
+            elif prev_type == "QUESTION":
                 if current_type in ["CONTENT", "TITLE"]:
-                    # If it's not a section marker or scoreboard, promote to ANSWER
-                    if scored_slides[i]["SECTION_MARKER"] < 0.5 and scored_slides[i]["SCOREBOARD"] < 0.5:
+                    if scored_slides[i]["SECTION_MARKER"] < 0.5 and scored_slides[i]["SCOREBOARD"] < 0.5 and current_type != "ANSWER_TRANSITION":
                         classified_types[i] = "ANSWER"
 
-            # Pattern 3: If a slide was marked ANSWER but precedes a QUESTION and has question marks, recheck
-            if current_type == "ANSWER" and "?" in s_text:
+            # Pattern: If slide was marked ANSWER but precedes a QUESTION and has question marks, recheck
+            if current_type == "ANSWER" and "?" in (slides[i].get("extracted_text") or ""):
                 if scored_slides[i]["QUESTION"] >= 0.5:
                     classified_types[i] = "QUESTION"
 

@@ -131,18 +131,29 @@ class IngestionPipeline:
             enriched_questions = []
             for q in raw_questions:
                 # 1. Multi-topic and entity tagging
+                is_multimodal = bool(
+                    q.get("image_refs") or
+                    q.get("media_items") or
+                    q.get("audio_transcript") or
+                    q.get("video_transcript") or
+                    q.get("raw_media_refs")
+                )
                 tags_data = self.auto_tagger.tag_question(
                     question_text=q["question_text"],
                     answer_text=q["answer"],
                     explanation=q.get("explanation", ""),
-                    doc_title=doc.title
+                    doc_title=doc.title,
+                    visual_clues=q.get("visual_clues", ""),
+                    audio_transcript=q.get("audio_transcript", ""),
+                    video_transcript=q.get("video_transcript", "")
                 )
-                # 2. Difficulty & Grade evaluation
+                # 2. Difficulty & Grade evaluation (multimodal questions set to 'Unrated')
                 diff_data = self.difficulty_engine.evaluate(
                     question_text=q["question_text"],
                     answer_text=q["answer"],
                     explanation=q.get("explanation", ""),
-                    notes=q.get("speaker_notes", "")
+                    notes=q.get("speaker_notes", ""),
+                    is_multimodal=is_multimodal
                 )
 
                 q.update({

@@ -108,6 +108,8 @@ export const api = {
     grade_min?: number;
     grade_max?: number;
     difficulty?: string;
+    document_id?: string;
+    document_title?: string;
     duplicate_status?: string;
     sort_by?: string;
     sort_order?: 'asc' | 'desc';
@@ -122,6 +124,8 @@ export const api = {
     if (params.grade_min) searchParams.append('grade_min', params.grade_min.toString());
     if (params.grade_max) searchParams.append('grade_max', params.grade_max.toString());
     if (params.difficulty) searchParams.append('difficulty', params.difficulty);
+    if (params.document_id) searchParams.append('document_id', params.document_id);
+    if (params.document_title) searchParams.append('document_title', params.document_title);
     if (params.duplicate_status) searchParams.append('duplicate_status', params.duplicate_status);
     if (params.sort_by) searchParams.append('sort_by', params.sort_by);
     if (params.sort_order) searchParams.append('sort_order', params.sort_order);

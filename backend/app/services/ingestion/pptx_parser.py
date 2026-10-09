@@ -186,6 +186,8 @@ class PPTXParser:
             # 2. Extract embedded audio & video from slide.part.rels
             try:
                 for rel_id, rel in slide.part.rels.items():
+                    if getattr(rel, "is_external", False):
+                        continue
                     rel_type = (rel.reltype or "").lower()
                     target_ref = getattr(rel, "target_ref", "") or ""
                     ext = Path(target_ref).suffix.lower()
@@ -199,10 +201,14 @@ class PPTXParser:
                         ext in IMAGE_EXTS
                     )
 
-                    if is_media and not getattr(rel, "is_external", False):
-                        target_part = getattr(rel, "target_part", None)
-                        if target_part:
+                    if is_media:
+                        try:
+                            if not hasattr(rel, "target_part"):
+                                continue
+                            target_part = rel.target_part
                             raw_data = getattr(target_part, "blob", None)
+                        except Exception:
+                            continue
                         if raw_data:
                             part_name = Path(target_part.partname).name if hasattr(target_part, "partname") else f"rel_{rel_id}{ext}"
                             if part_name not in seen_media_names:

@@ -401,12 +401,20 @@ class JobQueueService:
                 video_transcript=q.get("video_transcript", "")
             )
 
-            # 2. Difficulty & Grade evaluation
+            # 2. Difficulty & Grade evaluation (multimodal questions set to 'Unrated')
+            is_multimodal = bool(
+                q.get("image_refs") or
+                q.get("raw_media_refs") or
+                q.get("audio_transcript") or
+                q.get("video_transcript") or
+                q.get("visual_clues")
+            )
             diff_data = self.difficulty_engine.evaluate(
                 question_text=q["question_text"],
                 answer_text=q["answer"],
                 explanation=q.get("explanation", ""),
-                notes=q.get("speaker_notes", "")
+                notes=q.get("speaker_notes", ""),
+                is_multimodal=is_multimodal
             )
 
             q.update({

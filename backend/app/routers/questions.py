@@ -265,7 +265,8 @@ async def search_questions(
     grade_min: Optional[int] = Query(None),
     grade_max: Optional[int] = Query(None),
     difficulty: Optional[str] = Query(None),
-    duplicate_status: Optional[str] = Query(None),
+    document_id: Optional[str] = Query(None),
+    document_title: Optional[str] = Query(None),
     sort_by: Optional[str] = Query("created_at"),
     sort_order: Optional[str] = Query("desc"),
     limit: int = Query(50, ge=1, le=200),
@@ -279,6 +280,8 @@ async def search_questions(
     tag_str = tag if isinstance(tag, str) and tag.strip() else None
     diff_str = difficulty if isinstance(difficulty, str) and difficulty.strip() else None
     dup_status_str = duplicate_status if isinstance(duplicate_status, str) and duplicate_status.strip() else None
+    doc_id_str = document_id if isinstance(document_id, str) and document_id.strip() else None
+    doc_title_str = document_title if isinstance(document_title, str) and document_title.strip() else None
     grade_min_val = grade_min if isinstance(grade_min, int) else None
     grade_max_val = grade_max if isinstance(grade_max, int) else None
     sort_by_str = sort_by if isinstance(sort_by, str) else "created_at"
@@ -287,7 +290,11 @@ async def search_questions(
     offset_int = offset if isinstance(offset, int) else 0
 
     if query_str:
-        # Perform semantic/hybrid search
+        # 1. Check if query matches a deck / document title directly
+        doc_matches = db.query(Document).filter(Document.title.ilike(f"%{query_str}%")).all()
+        doc_ids = [d.id for d in doc_matches]
+
+        # 2. Perform semantic/hybrid search
         retriever = HybridRetriever(db)
         results = await retriever.search(
             query=query_str,
@@ -298,9 +305,24 @@ async def search_questions(
             limit=limit_int
         )
         output = []
+        seen_q_ids = set()
+
+        # If any document matches the query string by title, prioritize and include its questions
+        if doc_ids:
+            deck_questions = db.query(Question, Document, Slide).\
+                join(Document, Question.document_id == Document.id).\
+                outerjoin(Slide, Question.slide_id == Slide.id).\
+                filter(Question.document_id.in_(doc_ids)).limit(limit_int).all()
+            for q, doc, slide in deck_questions:
+                if q.id not in seen_q_ids:
+                    seen_q_ids.add(q.id)
+                    output.append(to_question_response(q, doc, slide))
+
         for r in results:
-            output.append(to_question_response(r["question"], r["document"], r["slide"]))
-        return output
+            if r["question"].id not in seen_q_ids:
+                seen_q_ids.add(r["question"].id)
+                output.append(to_question_response(r["question"], r["document"], r["slide"]))
+        return output[:limit_int]
 
     # Direct query with rich metadata filters
     q_builder = db.query(Question, Document, Slide).\
@@ -309,6 +331,10 @@ async def search_questions(
 
     if dup_status_str:
         q_builder = q_builder.filter(Question.duplicate_status == dup_status_str)
+    if doc_id_str:
+        q_builder = q_builder.filter(Question.document_id == doc_id_str)
+    if doc_title_str:
+        q_builder = q_builder.filter(Document.title.ilike(f"%{doc_title_str}%"))
     if topic_str:
         q_builder = q_builder.filter(
             or_(

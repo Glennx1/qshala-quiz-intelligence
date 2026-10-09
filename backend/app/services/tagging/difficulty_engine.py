@@ -48,14 +48,64 @@ class DifficultyEngine:
                 pass
         return self.DEFAULT_ANCHORS
 
-    def evaluate(self, question_text: str, answer_text: str, explanation: str = "", notes: str = "") -> Dict[str, Any]:
+    ADVANCED_CONCEPTS_PATTERNS = [
+        r"\b(tariff|deepfake|inflation|gdp|treaty|parliament|constitution|dividend|derivative|merger|acquisition)\b",
+        r"\b(quantum|relativity|thermodynamics|algorithm|encryption|cryptography|protocol|jurisdiction)\b",
+        r"\b(ecosystem|biodiversity|photosynthesis|geopolitical|sovereignty|monopoly|oligopoly)\b"
+    ]
+
+    ELEMENTARY_CONCEPTS_PATTERNS = [
+        r"\b(color|animal|fruit|vegetable|flower|bird|fish|planet|sun|moon|star|ocean|mountain)\b",
+        r"\b(dog|cat|lion|tiger|elephant|cow|horse|apple|banana|mango|water|tree)\b"
+    ]
+
+    def evaluate(
+        self,
+        question_text: str,
+        answer_text: str,
+        explanation: str = "",
+        notes: str = "",
+        is_multimodal: bool = False
+    ) -> Dict[str, Any]:
         """
         Computes the continuous difficulty score (0.00 - 1.00), Bloom's level,
-        calibrated grade range with overlap, and target audience suitabilities.
+        calibrated grade range (1-4, 5-8, 9-12, Adult), and target audience suitabilities.
+        For multimodal questions (image/audio/video), difficulty is set to 'Unrated'
+        to avoid unreliable guessing, while calibrating grade range directly.
         """
         q_clean = question_text.strip()
         ans_clean = answer_text.strip()
         exp_clean = explanation.strip()
+
+        # Multimodal Policy: Avoid guessing difficulty on image/audio/video trivia
+        if is_multimodal:
+            combined_text = f"{q_clean} {ans_clean} {exp_clean}".lower()
+            if any(re.search(pat, combined_text) for pat in self.ADVANCED_CONCEPTS_PATTERNS):
+                grade_min, grade_max = 9, 12
+                audiences = ["high_school", "college", "adult"]
+            elif any(re.search(pat, combined_text) for pat in self.ELEMENTARY_CONCEPTS_PATTERNS):
+                grade_min, grade_max = 1, 4
+                audiences = ["primary"]
+            else:
+                grade_min, grade_max = 5, 8
+                audiences = ["middle_school", "high_school"]
+
+            return {
+                "difficulty": "Unrated",
+                "difficulty_score": 0.0,
+                "cognitive_level": "Multimodal / Visual Observation",
+                "grade_min": grade_min,
+                "grade_max": grade_max,
+                "audience_suitability": audiences,
+                "is_unrated": True,
+                "breakdown": {
+                    "cognitive_depth": 0.0,
+                    "entity_obscurity": 0.0,
+                    "specificity": 0.0,
+                    "readability": 0.0,
+                    "scaffolding_help": 0.0
+                }
+            }
 
         # 1. Cognitive Depth (Bloom's Taxonomy / Multi-step deduction)
         cognitive_level, c_score = self._compute_cognitive_depth(q_clean, exp_clean)
@@ -84,19 +134,19 @@ class DifficultyEngine:
 
         pdi = max(0.08, min(0.96, round(raw_pdi, 2)))
 
-        # Categorical mapping based purely on Pedagogical Difficulty Index (PDI)
+        # Categorical mapping with calibrated standard grade bands (1-4, 5-8, 9-12)
         if pdi < 0.35:
             category = "Easy"
-            grade_min, grade_max = 1, 12
-            audiences = ["general", "primary", "middle_school", "high_school", "adult"]
+            grade_min, grade_max = 1, 4
+            audiences = ["primary"]
         elif pdi <= 0.65:
             category = "Medium"
-            grade_min, grade_max = 1, 12
-            audiences = ["general", "primary", "middle_school", "high_school", "adult"]
+            grade_min, grade_max = 5, 8
+            audiences = ["middle_school", "high_school"]
         else:
             category = "Hard"
-            grade_min, grade_max = 1, 12
-            audiences = ["general", "middle_school", "high_school", "college", "adult"]
+            grade_min, grade_max = 9, 12
+            audiences = ["high_school", "college", "adult"]
 
         return {
             "difficulty": category,

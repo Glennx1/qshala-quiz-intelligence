@@ -41,6 +41,11 @@ class QuestionExtractor:
             text = current.get("extracted_text", "")
             notes = current.get("speaker_notes", "")
 
+            # Skip non-question and preview slides
+            if slide_type in ["TITLE", "RULES", "AV_TEST", "TEAM_INTRO", "SCOREBOARD", "ANNOUNCEMENT", "QUESTION_PREVIEW", "ANSWER_TRANSITION"]:
+                i += 1
+                continue
+
             # Check if this slide is a Section / Round Marker
             if slide_type == "SECTION_MARKER" or re.search(r"\bround\s*\d+", title, re.IGNORECASE):
                 round_match = self.ROUND_REGEX.search(f"{title} {text}")
@@ -55,6 +60,98 @@ class QuestionExtractor:
                 i += 1
                 continue
 
+            # Pattern A2: Question -> ANSWER_TRANSITION (e.g. "ANSWER") -> Answer Reveal Slide
+            if slide_type == "QUESTION" and i + 2 < n and slides[i+1].get("slide_type") == "ANSWER_TRANSITION":
+                trans_slide = slides[i+1]
+                ans_slide = slides[i+2]
+                q_text, options = self._parse_question_and_options(text)
+                ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("extracted_text", ""))
+
+                if not ans_text and ans_slide.get("title") and ans_slide.get("title") != "NO_TITLE":
+                    ans_text = ans_slide.get("title")
+
+                if not ans_text and ans_slide.get("speaker_notes"):
+                    ans_text, exp_n = self._parse_answer_and_explanation(ans_slide.get("speaker_notes", ""))
+                    if exp_n:
+                        explanation = f"{explanation}\n{exp_n}".strip()
+
+                if ans_text and not (ans_text.startswith("http://") or ans_text.startswith("https://")):
+                    # Check if next slide (i+3) is an explanation or context slide
+                    exp_slide = None
+                    advance_steps = 3
+                    if i + 3 < n:
+                        s3 = slides[i+3]
+                        s3_text = (s3.get("extracted_text") or "").strip()
+                        s3_title = (s3.get("title") or "").strip().lower()
+                        if any(w in s3_title or w in s3_text.lower() for w in ["explanation", "trivia", "did you know", "context"]):
+                            exp_slide = s3
+                            explanation = f"{explanation}\n{s3_text}".strip()
+                            advance_steps = 4
+
+                    q_imgs = list(current.get("image_paths") or []) + list(trans_slide.get("image_paths") or []) + list(ans_slide.get("image_paths") or [])
+                    q_media = list(current.get("all_media_items") or []) + list(trans_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
+                    if exp_slide:
+                        q_imgs.extend(exp_slide.get("image_paths") or [])
+                        q_media.extend(exp_slide.get("all_media_items") or [])
+
+                    extracted_questions.append({
+                        "slide_id": current.get("id"),
+                        "answer_slide_id": ans_slide.get("id"),
+                        "question_text": q_text,
+                        "answer": ans_text,
+                        "options": options,
+                        "explanation": explanation or ans_slide.get("extracted_text", ""),
+                        "subtopic": current_subtopic,
+                        "round_number": current_round_num,
+                        "question_type": "MULTIPLE_CHOICE" if options else "SLIDE_QA",
+                        "source_year": doc_year or 2024,
+                        "slide_number": current.get("slide_number"),
+                        "answer_slide_number": ans_slide.get("slide_number"),
+                        "source_slide_range": f"Slide {current.get('slide_number')}–{ans_slide.get('slide_number')}",
+                        "image_refs": q_imgs,
+                        "media_items": q_media,
+                        "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
+                    })
+                    i += advance_steps
+                    continue
+
+            # Pattern C2: Question -> Clue Slide -> ANSWER_TRANSITION -> Answer Reveal Slide
+            if slide_type == "QUESTION" and i + 3 < n and slides[i+2].get("slide_type") == "ANSWER_TRANSITION":
+                clue_slide = slides[i+1]
+                trans_slide = slides[i+2]
+                ans_slide = slides[i+3]
+                q_text, options = self._parse_question_and_options(text)
+                ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("extracted_text", ""))
+
+                if not ans_text and ans_slide.get("title") and ans_slide.get("title") != "NO_TITLE":
+                    ans_text = ans_slide.get("title")
+
+                if ans_text and not (ans_text.startswith("http://") or ans_text.startswith("https://")):
+                    clue_text = clue_slide.get("extracted_text", "")
+                    combined_exp = f"{explanation}\nClue: {clue_text}".strip() if clue_text else explanation
+                    q_imgs = list(current.get("image_paths") or []) + list(clue_slide.get("image_paths") or []) + list(ans_slide.get("image_paths") or [])
+                    q_media = list(current.get("all_media_items") or []) + list(clue_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
+                    extracted_questions.append({
+                        "slide_id": current.get("id"),
+                        "answer_slide_id": ans_slide.get("id"),
+                        "question_text": q_text,
+                        "answer": ans_text,
+                        "options": options,
+                        "explanation": combined_exp,
+                        "subtopic": current_subtopic,
+                        "round_number": current_round_num,
+                        "question_type": "MULTIPLE_CHOICE" if options else "SLIDE_QA",
+                        "source_year": doc_year or 2024,
+                        "slide_number": current.get("slide_number"),
+                        "answer_slide_number": ans_slide.get("slide_number"),
+                        "source_slide_range": f"Slide {current.get('slide_number')}–{ans_slide.get('slide_number')}",
+                        "image_refs": q_imgs,
+                        "media_items": q_media,
+                        "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
+                    })
+                    i += 4
+                    continue
+
             # Pattern A: Question on Slide i, Answer on Slide i + 1
             if slide_type == "QUESTION" and i + 1 < n and slides[i+1].get("slide_type") == "ANSWER":
                 ans_slide = slides[i+1]
@@ -65,7 +162,7 @@ class QuestionExtractor:
                 if not ans_text and ans_slide.get("speaker_notes"):
                     ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("speaker_notes", ""))
 
-                if ans_text:
+                if ans_text and not (ans_text.startswith("http://") or ans_text.startswith("https://")):
                     q_imgs = list(current.get("image_paths") or []) + list(ans_slide.get("image_paths") or [])
                     q_media = list(current.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
                     extracted_questions.append({
@@ -81,7 +178,7 @@ class QuestionExtractor:
                         "source_year": doc_year or 2024,
                         "slide_number": current.get("slide_number"),
                         "answer_slide_number": ans_slide.get("slide_number"),
-                        "source_slide_range": f"Slide {current.get('slide_number')}-{ans_slide.get('slide_number')}",
+                        "source_slide_range": f"Slide {current.get('slide_number')}–{ans_slide.get('slide_number')}",
                         "image_refs": q_imgs,
                         "media_items": q_media,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
@@ -96,7 +193,7 @@ class QuestionExtractor:
                 q_text, options = self._parse_question_and_options(text)
                 ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("extracted_text", ""))
 
-                if ans_text:
+                if ans_text and not (ans_text.startswith("http://") or ans_text.startswith("https://")):
                     mid_text = middle_slide.get("extracted_text", "").strip()
                     if mid_text.lower() in ["answer", "answers", "the answer", "solution", "solutions"]:
                         mid_text = ""
@@ -116,7 +213,7 @@ class QuestionExtractor:
                         "source_year": doc_year or 2024,
                         "slide_number": current.get("slide_number"),
                         "answer_slide_number": ans_slide.get("slide_number"),
-                        "source_slide_range": f"Slide {current.get('slide_number')}-{ans_slide.get('slide_number')}",
+                        "source_slide_range": f"Slide {current.get('slide_number')}–{ans_slide.get('slide_number')}",
                         "image_refs": q_imgs,
                         "media_items": q_media,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
@@ -130,16 +227,16 @@ class QuestionExtractor:
                 ans_text = ""
                 explanation = ""
 
-                # Look in notes first
-                if notes:
+                # Look in notes first (ensure notes is not just a URL)
+                if notes and not (notes.strip().startswith("http://") or notes.strip().startswith("https://")):
                     ans_text, explanation = self._parse_answer_and_explanation(notes)
 
                 # Look in body text only if explicit answer prefix exists (e.g. "Answer:" or "Ans:")
                 if not ans_text and re.search(r"(?:^|\n)\s*(?:Correct\s+Answer|Solution|Answer|Ans)\s*[:\-]", text, re.IGNORECASE):
                     ans_text, explanation = self._parse_answer_and_explanation(text)
 
-                # Only include if a real answer was resolved and not just a single number
-                if ans_text and ans_text.lower() not in ["see explanation", "answer indicated on slide", ""]:
+                # Only include if a real answer was resolved and not an HTTP link
+                if ans_text and ans_text.lower() not in ["see explanation", "answer indicated on slide", ""] and not (ans_text.startswith("http://") or ans_text.startswith("https://")):
                     q_imgs = list(current.get("image_paths") or [])
                     q_media = list(current.get("all_media_items") or [])
                     extracted_questions.append({
