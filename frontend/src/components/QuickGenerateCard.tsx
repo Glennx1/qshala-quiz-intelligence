@@ -20,57 +20,7 @@ import { QuizFormat } from '../lib/types';
 
 type DifficultyPreset = 'Balanced' | 'Easy-heavy' | 'Hard-heavy' | 'Custom';
 
-interface QuizFormatOption {
-  id: QuizFormat;
-  title: string;
-  badge: string;
-  sublabel: string;
-  defaultCount: number;
-  icon: string;
-}
 
-const QUIZ_FORMAT_OPTIONS: QuizFormatOption[] = [
-  {
-    id: 'TOURNAMENT_PRELIMS',
-    title: 'Tournament Prelims',
-    badge: 'Competitive Round',
-    sublabel: 'Crisp written/screen questions with single-answer clarity for paper scoring.',
-    defaultCount: 20,
-    icon: '🏆',
-  },
-  {
-    id: 'STAGE_FINALS',
-    title: 'Stage Finals',
-    badge: 'Live Event',
-    sublabel: 'Multi-round buzzer & clue format with escalating difficulty ramp.',
-    defaultCount: 25,
-    icon: '⚡',
-  },
-  {
-    id: 'CLASSROOM_WARMUP',
-    title: 'Classroom Warmup (QShots)',
-    badge: '10–15 Mins',
-    sublabel: 'Curiosity-sparking trivia loaded with "Did You Know?" nuggets to ignite discussion.',
-    defaultCount: 10,
-    icon: '💡',
-  },
-  {
-    id: 'THEMATIC_SPECIAL',
-    title: 'Thematic Deep-Dive',
-    badge: 'Focused Subject',
-    sublabel: 'Specialized deep exploration into specific subjects, concepts, or themes.',
-    defaultCount: 15,
-    icon: '🎯',
-  },
-  {
-    id: 'GENERAL_CHAMPIONSHIP',
-    title: 'General Mixed Bag',
-    badge: 'Multi-Genre',
-    sublabel: 'Classic multi-genre quiz spanning Science, History, Pop Culture, Geography, and Sports.',
-    defaultCount: 20,
-    icon: '🌍',
-  },
-];
 
 function getDistributionForPreset(preset: DifficultyPreset, count: number): { easy: number; medium: number; hard: number } {
   if (preset === 'Easy-heavy') {
@@ -115,8 +65,8 @@ export default function QuickGenerateCard() {
   const [topicSummary, setTopicSummary] = useState<TopicSummary | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Quiz Format & Question Count
-  const [quizFormat, setQuizFormat] = useState<QuizFormat>('TOURNAMENT_PRELIMS');
+  // Default Quiz Format & Question Count
+  const quizFormat: QuizFormat = 'TOURNAMENT_PRELIMS';
   const [questionCount, setQuestionCount] = useState<number>(20);
 
   // Tags & Live Compilation State
@@ -213,17 +163,8 @@ export default function QuickGenerateCard() {
     setShowTopicDropdown(false);
   };
 
-  const currentFormat = QUIZ_FORMAT_OPTIONS.find((f) => f.id === quizFormat) || QUIZ_FORMAT_OPTIONS[0];
   const totalAllocated = easyCount + mediumCount + hardCount;
   const isDistributionValid = totalAllocated === questionCount;
-
-  const handleFormatChange = (newFormatId: QuizFormat) => {
-    setQuizFormat(newFormatId);
-    const targetFormat = QUIZ_FORMAT_OPTIONS.find((f) => f.id === newFormatId);
-    if (targetFormat) {
-      handleQuestionCountChange(targetFormat.defaultCount);
-    }
-  };
 
   const handleQuestionCountChange = (newCount: number) => {
     setQuestionCount(newCount);
@@ -281,7 +222,7 @@ export default function QuickGenerateCard() {
     try {
       const effectiveTopic = topic.trim() || (selectedTags.length > 0 ? selectedTags.join(', ') : 'General Knowledge');
       const tagSuffix = selectedTags.length > 0 ? ` [Tags: ${selectedTags.join(', ')}]` : '';
-      const promptSummary = `Create a ${questionCount}-question ${currentFormat.title} quiz on ${effectiveTopic}${tagSuffix} with distribution: ${easyCount} Easy, ${mediumCount} Medium, ${hardCount} Hard.`;
+      const promptSummary = `Create a ${questionCount}-question quiz on ${effectiveTopic}${tagSuffix} with distribution: ${easyCount} Easy, ${mediumCount} Medium, ${hardCount} Hard.`;
 
       const quiz = await api.generateQuiz({
         topic: effectiveTopic,
@@ -503,60 +444,7 @@ export default function QuickGenerateCard() {
           )}
         </div>
 
-        {/* Section 2: Quiz Format / Event Type */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-[13px] font-semibold text-slate-800">
-              Quiz Format / Event Type
-            </label>
-            <span className="text-[12px] text-slate-400 font-normal">
-              Select how this quiz will be played
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-            {QUIZ_FORMAT_OPTIONS.map((fmt) => {
-              const isSelected = quizFormat === fmt.id;
-              return (
-                <button
-                  key={fmt.id}
-                  type="button"
-                  onClick={() => handleFormatChange(fmt.id)}
-                  className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all cursor-pointer relative group ${
-                    isSelected
-                      ? 'border-blue-600 bg-blue-50/40 text-blue-950 shadow-xs ring-1 ring-blue-600'
-                      : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50/50'
-                  }`}
-                >
-                  <div className="flex items-center justify-between w-full mb-1">
-                    <span className="text-[18px]">{fmt.icon}</span>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                      isSelected
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-slate-100 text-slate-500'
-                    }`}>
-                      {fmt.badge}
-                    </span>
-                  </div>
-
-                  <span className="text-[13px] font-bold text-slate-900 leading-snug">
-                    {fmt.title}
-                  </span>
-                  
-                  <span className="text-[11px] text-slate-500 font-normal mt-1 leading-tight line-clamp-2">
-                    {fmt.sublabel}
-                  </span>
-
-                  <div className="mt-2 text-[10.5px] font-semibold text-slate-400">
-                    Default: {fmt.defaultCount} Questions
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Section 3: Question Count & Format */}
+        {/* Section 2: Question Count & Format */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-2">
             <label className="text-[13px] font-semibold text-slate-800">
@@ -611,7 +499,7 @@ export default function QuickGenerateCard() {
           </div>
         </div>
 
-        {/* Section 6: Difficulty Distribution */}
+        {/* Section 3: Difficulty Distribution */}
         <div className="space-y-3 rounded-lg border border-slate-200/80 bg-white p-4">
           <div className="flex items-center justify-between">
             <label className="text-[13px] font-semibold text-slate-800">
