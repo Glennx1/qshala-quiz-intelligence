@@ -100,6 +100,73 @@ export const api = {
     return handleResponse<DocumentItem>(res);
   },
 
+  uploadDocumentChunked: async (
+    file: File,
+    onProgress?: (percentage: number, currentChunk: number, totalChunks: number) => void,
+    title?: string,
+    year?: number,
+    chunkSize: number = 3 * 1024 * 1024 // 3 MB per slice (comfortably under Vercel's 4.5 MB payload limit)
+  ): Promise<DocumentItem> => {
+    const uploadId =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `upl_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const totalChunks = Math.ceil(file.size / chunkSize);
+
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      const start = chunkIndex * chunkSize;
+      const end = Math.min(start + chunkSize, file.size);
+      const chunkBlob = file.slice(start, end);
+
+      const formData = new FormData();
+      formData.append('chunk', chunkBlob, file.name);
+      formData.append('upload_id', uploadId);
+      formData.append('chunk_index', chunkIndex.toString());
+      formData.append('total_chunks', totalChunks.toString());
+      formData.append('filename', file.name);
+      if (title) formData.append('title', title);
+      if (year) formData.append('year', year.toString());
+
+      // Attempt upload with up to 3 retries against intermittent network fluctuations
+      let res: Response | null = null;
+      let lastError: any = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          res = await fetch(`${getApiBase()}/documents/upload-chunk`, {
+            method: 'POST',
+            body: formData,
+          });
+          if (res.ok) break;
+          const errText = await res.text();
+          lastError = new Error(errText || `HTTP ${res.status}`);
+        } catch (netErr) {
+          lastError = netErr;
+        }
+        await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+      }
+
+      if (!res || !res.ok) {
+        throw lastError || new Error(`Failed to upload chunk ${chunkIndex + 1} after 3 attempts`);
+      }
+
+      const data = await res.json();
+
+      if (onProgress) {
+        const pct = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+        onProgress(pct, chunkIndex + 1, totalChunks);
+      }
+
+      if (chunkIndex === totalChunks - 1) {
+        if (data.document) {
+          return data.document as DocumentItem;
+        }
+        return data as DocumentItem;
+      }
+    }
+
+    throw new Error('Upload completed without receiving document acknowledgment');
+  },
+
   deleteDocument: async (id: string): Promise<{ message: string }> => {
     const res = await fetch(`${getApiBase()}/documents/${id}`, {
       method: 'DELETE',

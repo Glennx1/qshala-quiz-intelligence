@@ -122,6 +122,122 @@ async def upload_document(
 
     return doc
 
+@router.post("/upload-chunk")
+async def upload_document_chunk(
+    background_tasks: BackgroundTasks,
+    chunk: UploadFile = File(...),
+    upload_id: str = Form(...),
+    chunk_index: int = Form(...),
+    total_chunks: int = Form(...),
+    filename: str = Form(...),
+    title: Optional[str] = Form(None),
+    year: Optional[int] = Form(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Receives an individual sliced chunk of a presentation file (< 4 MB).
+    Bypasses Vercel's 4.5 MB serverless function payload limit entirely.
+    When all chunks are received, stitches the complete file together and starts ingestion.
+    """
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in [".pptx", ".ppt", ".pdf"]:
+        logger.warning(f"[UPLOAD-CHUNK] rejected unsupported extension: {ext}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file format '{ext}'. Only PDF and PowerPoint (PPT, PPTX) files are supported."
+        )
+
+    chunk_dir = settings.STORAGE_DIR / "tmp_chunks" / upload_id
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+    chunk_path = chunk_dir / f"chunk_{chunk_index:05d}.part"
+
+    # Stream chunk to disk
+    with open(chunk_path, "wb") as f:
+        while content := await chunk.read(64 * 1024):
+            f.write(content)
+
+    parts = list(chunk_dir.glob("chunk_*.part"))
+    if len(parts) < total_chunks:
+        return {
+            "status": "CHUNK_RECEIVED",
+            "chunk_index": chunk_index,
+            "total_chunks": total_chunks,
+            "progress_percentage": round(((len(parts)) / total_chunks) * 100)
+        }
+
+    # All chunks received! Stitch them together
+    doc_id = str(uuid.uuid4())
+    save_filename = f"{doc_id}{ext}"
+    settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    storage_path = str(settings.UPLOAD_DIR / save_filename)
+
+    file_size = 0
+    with open(storage_path, "wb") as outfile:
+        for part_file in sorted(chunk_dir.glob("chunk_*.part")):
+            with open(part_file, "rb") as infile:
+                shutil.copyfileobj(infile, outfile)
+            file_size += os.path.getsize(part_file)
+
+    # Clean up chunk directory
+    try:
+        shutil.rmtree(chunk_dir)
+    except Exception as e:
+        logger.warning(f"[UPLOAD-CHUNK] failed to remove temporary chunk directory {chunk_dir}: {e}")
+
+    clean_title = title or os.path.splitext(filename)[0].replace("_", " ").title()
+
+    try:
+        doc = Document(
+            id=doc_id,
+            filename=filename,
+            title=clean_title,
+            year=year or 2024,
+            file_type=ext.replace(".", ""),
+            storage_path=storage_path,
+            file_size_bytes=file_size,
+            processing_status="PROCESSING"
+        )
+        db.add(doc)
+        db.commit()
+        db.refresh(doc)
+    except Exception as e:
+        logger.exception(f"[UPLOAD-CHUNK] database record creation failed: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Database error while registering document.")
+
+    logger.info(f"[UPLOAD-CHUNK] file reassembled successfully: doc_id={doc_id}, size={file_size} bytes")
+
+    INGESTION_STATUS_REGISTRY[doc_id] = {
+        "document_id": doc_id,
+        "status": "PROCESSING",
+        "progress_percentage": 5,
+        "current_step": "1. Extracting content",
+        "slides_processed": 0,
+        "questions_extracted": 0,
+        "error": None
+    }
+
+    pipeline = IngestionPipeline()
+    background_tasks.add_task(pipeline.run, doc_id)
+
+    return {
+        "status": "COMPLETED",
+        "document": {
+            "id": doc.id,
+            "filename": doc.filename,
+            "title": doc.title,
+            "year": doc.year,
+            "file_type": doc.file_type,
+            "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
+            "storage_path": doc.storage_path,
+            "file_size_bytes": doc.file_size_bytes,
+            "slide_count": doc.slide_count,
+            "question_count": doc.question_count,
+            "processing_status": doc.processing_status,
+            "processing_error": doc.processing_error
+        }
+    }
+
 @router.get("", response_model=List[DocumentResponse])
 def list_documents(db: Session = Depends(get_db)):
     return db.query(Document).order_by(Document.created_at.desc()).all()
