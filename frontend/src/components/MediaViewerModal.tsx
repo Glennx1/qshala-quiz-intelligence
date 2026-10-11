@@ -47,14 +47,25 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
 
   if (!question) return null;
 
-  const images = question.image_refs || [];
+  const questionImages = question.question_images && question.question_images.length > 0
+    ? question.question_images
+    : (question.image_refs || []);
+  const answerImages = question.answer_images || [];
+  const images = questionImages.concat(answerImages.filter(x => !questionImages.includes(x)));
   const hasImages = images.length > 0;
-  const hasAudio = Boolean(question.audio_transcript || (question.raw_media_refs && question.raw_media_refs.some(r => r.endsWith('.mp3') || r.endsWith('.wav'))));
+
+  const questionAudioList = question.question_audio && question.question_audio.length > 0
+    ? question.question_audio
+    : (question.audio_refs || []);
+  const answerAudioList = question.answer_audio || [];
+  const rawAudioList = (question.raw_media_refs || []).filter(r => r.endsWith('.mp3') || r.endsWith('.wav') || r.endsWith('.m4a') || r.endsWith('.aac') || r.includes('audio'));
+  const allAudios = Array.from(new Set([...questionAudioList, ...answerAudioList, ...rawAudioList]));
+
+  const hasAudio = Boolean(allAudios.length > 0 || question.audio_transcript);
   const hasVideo = Boolean(question.video_transcript || (question.raw_media_refs && question.raw_media_refs.some(r => r.endsWith('.mp4'))));
   const hasVisualClues = Boolean(question.visual_clues);
 
-  // Find audio/video media URLs from raw_media_refs if available
-  const audioRef = (question.raw_media_refs || []).find(r => r.endsWith('.mp3') || r.endsWith('.wav') || r.includes('audio'));
+  // Find video media URL from raw_media_refs if available
   const videoRef = (question.raw_media_refs || []).find(r => r.endsWith('.mp4') || r.includes('video'));
 
   return (
@@ -248,21 +259,78 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
               <div className="flex items-center justify-between">
                 <span className="text-[12px] font-bold text-teal-900 uppercase tracking-wider flex items-center gap-1.5">
                   <Volume2 className="h-4 w-4 text-teal-600" />
-                  Embedded Audio Clue
+                  Embedded Audio ({allAudios.length} {allAudios.length === 1 ? 'Track' : 'Tracks'})
                 </span>
-                {audioRef && (
+                {allAudios.length > 0 && (
                   <span className="text-[11px] font-mono text-teal-700 bg-teal-100/60 px-2 py-0.5 rounded">
-                    Audio Part Detected
+                    Audio Clips Detected
                   </span>
                 )}
               </div>
 
-              {audioRef && (
-                <div className="pt-1">
-                  <audio controls className="w-full h-10 rounded-lg">
-                    <source src={resolveMediaUrl(audioRef)} />
-                    Your browser does not support audio playback.
-                  </audio>
+              {/* Question Audio Clues */}
+              {questionAudioList.length > 0 && (
+                <div className="space-y-2 pt-1">
+                  <div className="text-[11px] font-bold text-teal-800 uppercase tracking-wider">
+                    Question Audio Clues
+                  </div>
+                  {questionAudioList.map((aUrl, idx) => (
+                    <div key={`q-aud-${idx}`} className="flex flex-col sm:flex-row sm:items-center gap-2 p-2 rounded-lg bg-white border border-teal-200">
+                      <span className="text-[11.5px] font-semibold text-teal-900 shrink-0">
+                        Clue #{idx + 1}
+                      </span>
+                      <audio
+                        controls
+                        src={getImageSrc(aUrl)}
+                        onError={() => handleImageError(aUrl)}
+                        className="w-full h-8 text-xs accent-teal-600"
+                        preload="metadata"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Answer Reveal Audio */}
+              {answerAudioList.length > 0 && (
+                <div className="space-y-2 pt-1">
+                  <div className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
+                    Answer Reveal Audio
+                  </div>
+                  {answerAudioList.map((aUrl, idx) => (
+                    <div key={`ans-aud-${idx}`} className="flex flex-col sm:flex-row sm:items-center gap-2 p-2 rounded-lg bg-emerald-50 border border-emerald-200">
+                      <span className="text-[11.5px] font-semibold text-emerald-900 shrink-0">
+                        Reveal #{idx + 1}
+                      </span>
+                      <audio
+                        controls
+                        src={getImageSrc(aUrl)}
+                        onError={() => handleImageError(aUrl)}
+                        className="w-full h-8 text-xs accent-emerald-600"
+                        preload="metadata"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Other detected raw audio */}
+              {questionAudioList.length === 0 && answerAudioList.length === 0 && rawAudioList.length > 0 && (
+                <div className="space-y-2 pt-1">
+                  {rawAudioList.map((aUrl, idx) => (
+                    <div key={`raw-aud-${idx}`} className="flex flex-col sm:flex-row sm:items-center gap-2 p-2 rounded-lg bg-white border border-teal-200">
+                      <span className="text-[11.5px] font-semibold text-teal-900 shrink-0">
+                        Track #{idx + 1}
+                      </span>
+                      <audio
+                        controls
+                        src={getImageSrc(aUrl)}
+                        onError={() => handleImageError(aUrl)}
+                        className="w-full h-8 text-xs accent-teal-600"
+                        preload="metadata"
+                      />
+                    </div>
+                  ))}
                 </div>
               )}
 

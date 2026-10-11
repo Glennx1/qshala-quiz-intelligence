@@ -52,6 +52,9 @@ class GeneratedQuestionResponse(BaseModel):
     image_refs: List[str] = []
     question_images: List[str] = []
     answer_images: List[str] = []
+    audio_refs: List[str] = []
+    question_audio: List[str] = []
+    answer_audio: List[str] = []
     visual_clues: Optional[str] = None
     validation_status: str
     validation_details: Optional[Dict[str, Any]] = None
@@ -72,6 +75,9 @@ class GeneratedQuestionUpdate(BaseModel):
     image_refs: Optional[List[str]] = None
     question_images: Optional[List[str]] = None
     answer_images: Optional[List[str]] = None
+    audio_refs: Optional[List[str]] = None
+    question_audio: Optional[List[str]] = None
+    answer_audio: Optional[List[str]] = None
     visual_clues: Optional[str] = None
     is_approved: Optional[bool] = None
     order_index: Optional[int] = None

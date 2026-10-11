@@ -319,6 +319,9 @@ class PPTXParser:
 
             combined_text = "\n\n".join(unique_chunks)
 
+            audio_paths = [a["rel_url"] for a in audio_items if a.get("rel_url")]
+            video_paths = [v["rel_url"] for v in video_items if v.get("rel_url")]
+
             slides_data.append({
                 "slide_number": slide_idx,
                 "title": title or (unique_chunks[0] if unique_chunks else f"Slide {slide_idx}"),
@@ -326,6 +329,10 @@ class PPTXParser:
                 "speaker_notes": speaker_notes,
                 "image_paths": image_paths,
                 "has_images": len(image_paths) > 0,
+                "audio_paths": audio_paths,
+                "has_audio": len(audio_paths) > 0,
+                "video_paths": video_paths,
+                "has_video": len(video_paths) > 0,
                 "audio_items": audio_items,
                 "video_items": video_items,
                 "all_media_items": all_media_items,

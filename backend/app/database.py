@@ -105,6 +105,9 @@ def ensure_schema_columns():
                     ("image_refs", "TEXT DEFAULT '[]'"),
                     ("question_images", "TEXT DEFAULT '[]'"),
                     ("answer_images", "TEXT DEFAULT '[]'"),
+                    ("audio_refs", "TEXT DEFAULT '[]'"),
+                    ("question_audio", "TEXT DEFAULT '[]'"),
+                    ("answer_audio", "TEXT DEFAULT '[]'"),
                     ("visual_clues", "TEXT"),
                     ("audio_transcript", "TEXT"),
                     ("video_transcript", "TEXT"),
@@ -130,6 +133,9 @@ def ensure_schema_columns():
                     ("image_refs", "TEXT DEFAULT '[]'"),
                     ("question_images", "TEXT DEFAULT '[]'"),
                     ("answer_images", "TEXT DEFAULT '[]'"),
+                    ("audio_refs", "TEXT DEFAULT '[]'"),
+                    ("question_audio", "TEXT DEFAULT '[]'"),
+                    ("answer_audio", "TEXT DEFAULT '[]'"),
                     ("visual_clues", "TEXT")
                 ]
                 for col_name, col_type in gen_q_cols:

@@ -73,6 +73,9 @@ class QuizExporter:
                     "question_images": getattr(q, "question_images", []) or [],
                     "answer_images": getattr(q, "answer_images", []) or [],
                     "visual_clues": getattr(q, "visual_clues", None),
+                    "audio_refs": getattr(q, "audio_refs", []) or [],
+                    "question_audio": getattr(q, "question_audio", []) or [],
+                    "answer_audio": getattr(q, "answer_audio", []) or [],
                     "validation_status": q.validation_status,
                     "sources": [
                         {
@@ -244,11 +247,15 @@ class QuizExporter:
             bg_q.fill.fore_color.rgb = c_slate_900
             bg_q.line.fill.background()
 
+            # Check audio clue
+            q_aud = getattr(q, "question_audio", None) or getattr(q, "audio_refs", None) or []
+            audio_tag = "   •   🎧 AUDIO CLUE" if q_aud else ""
+
             # Top bar badge
             tb_q_badge = s_q.shapes.add_textbox(Inches(0.8), Inches(0.55), Inches(8.4), Inches(0.5))
             tf_q_badge = tb_q_badge.text_frame
             p_badge = tf_q_badge.paragraphs[0]
-            p_badge.text = f"QUESTION {idx} OF {total_q}   •   {q.difficulty.upper()}"
+            p_badge.text = f"QUESTION {idx} OF {total_q}   •   {q.difficulty.upper()}{audio_tag}"
             p_badge.font.size = Pt(12)
             p_badge.font.bold = True
             p_badge.font.color.rgb = diff_color
@@ -308,6 +315,12 @@ class QuizExporter:
             p_q_foot.text = f"QShala Tournament  •  {quiz.topic}"
             p_q_foot.font.size = Pt(10)
             p_q_foot.font.color.rgb = c_slate_500
+
+            # Speaker notes for question slide (Audio clue instruction)
+            if q_aud:
+                notes_q_slide = s_q.notes_slide
+                tf_q_notes = notes_q_slide.notes_text_frame
+                tf_q_notes.text = f"🎧 AUDIO CLUE ATTACHED: {q_aud[0]}\nPlay audio clue to participants before taking answers."
 
             # -----------------------------------------------------------------
             # ANSWER SLIDE (Crisp Light Canvas with Emerald Accent)
@@ -438,9 +451,12 @@ class QuizExporter:
             p_a_foot.font.color.rgb = c_slate_500
 
             # Speaker notes for presenter
+            ans_aud = getattr(q, "answer_audio", None) or []
+            ans_aud_note = f"\n🎧 REVEAL AUDIO: {ans_aud[0]}" if ans_aud else ""
+
             notes_slide = s_a.notes_slide
             tf_notes = notes_slide.notes_text_frame
-            tf_notes.text = f"Question: {q.question_text}\nAnswer: {q.answer}\nSource: {src_doc} (Slide {src_slide})\nNotes: {q.explanation or ''}{personality_note}"
+            tf_notes.text = f"Question: {q.question_text}\nAnswer: {q.answer}\nSource: {src_doc} (Slide {src_slide})\nNotes: {q.explanation or ''}{personality_note}{ans_aud_note}"
 
         # ---------------------------------------------------------------------
         # SLIDE FINAL: Summary / Concluding Slide

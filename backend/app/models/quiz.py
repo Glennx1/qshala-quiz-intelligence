@@ -57,6 +57,9 @@ class GeneratedQuestion(Base):
     image_refs = Column(JSON, default=list)            # All image URLs
     question_images = Column(JSON, default=list)       # Clue / Question slide images
     answer_images = Column(JSON, default=list)         # Reveal / Answer slide images
+    audio_refs = Column(JSON, default=list)            # All audio URLs
+    question_audio = Column(JSON, default=list)        # Clue / Question slide audio clips
+    answer_audio = Column(JSON, default=list)          # Reveal / Answer slide audio clips
     visual_clues = Column(Text, nullable=True)         # OCR & visual description
     
     # Validation fields

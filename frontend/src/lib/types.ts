@@ -65,6 +65,9 @@ export interface HistoricalQuestion {
   question_images?: string[];
   answer_images?: string[];
   visual_clues?: string | null;
+  audio_refs?: string[];
+  question_audio?: string[];
+  answer_audio?: string[];
   audio_transcript?: string | null;
   video_transcript?: string | null;
   raw_media_refs?: string[];
@@ -181,6 +184,9 @@ export interface GeneratedQuestion {
   question_images?: string[];
   answer_images?: string[];
   visual_clues?: string | null;
+  audio_refs?: string[];
+  question_audio?: string[];
+  answer_audio?: string[];
   validation_status: 'PASSED' | 'WARNING' | 'FAILED';
   validation_details?: ValidationDetails;
   duplicate_score: number;

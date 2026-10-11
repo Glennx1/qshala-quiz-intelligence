@@ -16,6 +16,8 @@ import {
   X,
   ZoomIn,
   Eye,
+  Volume2,
+  Headphones,
 } from 'lucide-react';
 import { GeneratedQuestion, RetrievalSource } from '../lib/types';
 import { resolveMediaUrl } from '../lib/api';
@@ -108,6 +110,16 @@ export default function QuestionCard({
               <span className="text-slate-300">•</span>
               <span className="text-[12px] text-slate-500 font-medium">
                 {question.topic}
+              </span>
+            </>
+          )}
+          {((question.question_audio && question.question_audio.length > 0) ||
+            (question.audio_refs && question.audio_refs.length > 0)) && (
+            <>
+              <span className="text-slate-300">•</span>
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-700 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded">
+                <Volume2 className="h-3 w-3 text-teal-600" />
+                Audio Clue
               </span>
             </>
           )}
@@ -212,6 +224,37 @@ export default function QuestionCard({
               </div>
             </div>
           )}
+
+          {/* Audio Clues Player */}
+          {((question.question_audio && question.question_audio.length > 0) ||
+            (question.audio_refs && question.audio_refs.length > 0)) && (
+            <div className="mt-3 pt-2.5 border-t border-slate-200/60">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-teal-700 block mb-2 flex items-center gap-1.5">
+                <Volume2 className="h-3.5 w-3.5 text-teal-600" />
+                Audio Clues & Sound Snippets
+              </span>
+              <div className="space-y-2">
+                {(question.question_audio && question.question_audio.length > 0
+                  ? question.question_audio
+                  : question.audio_refs || []
+                ).map((audioUrl, i) => (
+                  <div key={i} className="flex flex-col sm:flex-row sm:items-center gap-2.5 p-2 rounded-lg bg-teal-50/70 border border-teal-200/80">
+                    <div className="flex items-center gap-1.5 text-[12px] font-semibold text-teal-900 shrink-0">
+                      <Headphones className="h-3.5 w-3.5 text-teal-600" />
+                      <span>Audio Clue {i + 1}</span>
+                    </div>
+                    <audio
+                      controls
+                      src={getImageSrc(audioUrl)}
+                      onError={() => handleImgError(audioUrl)}
+                      className="w-full h-8 text-xs accent-teal-600"
+                      preload="none"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Options List (Legacy format support) */}
@@ -311,6 +354,33 @@ export default function QuestionCard({
                       <ZoomIn className="h-4 w-4 text-white drop-shadow" />
                     </div>
                   </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Answer Reveal Audio Player */}
+          {question.answer_audio && question.answer_audio.length > 0 && (
+            <div className="mt-2.5 pt-2 border-t border-emerald-100/80">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 block mb-2 flex items-center gap-1.5">
+                <Volume2 className="h-3.5 w-3.5 text-emerald-600" />
+                Answer Reveal Audio
+              </span>
+              <div className="space-y-2">
+                {question.answer_audio.map((audioUrl, i) => (
+                  <div key={i} className="flex flex-col sm:flex-row sm:items-center gap-2.5 p-2 rounded-lg bg-emerald-100/50 border border-emerald-200">
+                    <div className="flex items-center gap-1.5 text-[12px] font-semibold text-emerald-900 shrink-0">
+                      <Headphones className="h-3.5 w-3.5 text-emerald-600" />
+                      <span>Reveal Audio {i + 1}</span>
+                    </div>
+                    <audio
+                      controls
+                      src={getImageSrc(audioUrl)}
+                      onError={() => handleImgError(audioUrl)}
+                      className="w-full h-8 text-xs accent-emerald-600"
+                      preload="none"
+                    />
+                  </div>
                 ))}
               </div>
             </div>

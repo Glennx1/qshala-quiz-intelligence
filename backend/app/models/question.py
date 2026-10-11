@@ -49,6 +49,9 @@ class Question(Base):
     image_refs = Column(JSON, default=list)            # List of Blob URLs for images (all images)
     question_images = Column(JSON, default=list)       # Specific clue/question images
     answer_images = Column(JSON, default=list)         # Specific reveal/answer images
+    audio_refs = Column(JSON, default=list)            # All audio URLs
+    question_audio = Column(JSON, default=list)        # Specific clue/question audio clips
+    answer_audio = Column(JSON, default=list)          # Specific reveal/answer audio clips
     visual_clues = Column(Text, nullable=True)         # OCR text & Gemini vision description
     audio_transcript = Column(Text, nullable=True)     # Transcribed audio speech/clue
     video_transcript = Column(Text, nullable=True)     # Transcribed video speech

@@ -167,6 +167,8 @@ class IngestionPipeline:
                 is_multimodal = bool(
                     q.get("image_refs") or
                     q.get("question_images") or
+                    q.get("audio_refs") or
+                    q.get("question_audio") or
                     q.get("media_items") or
                     q.get("audio_transcript") or
                     q.get("video_transcript") or
@@ -285,6 +287,9 @@ class IngestionPipeline:
                     image_refs=q_data.get("image_refs", []),
                     question_images=q_data.get("question_images", []),
                     answer_images=q_data.get("answer_images", []),
+                    audio_refs=q_data.get("audio_refs", []),
+                    question_audio=q_data.get("question_audio", []),
+                    answer_audio=q_data.get("answer_audio", []),
                     visual_clues=q_data.get("visual_clues"),
                     audio_transcript=q_data.get("audio_transcript"),
                     video_transcript=q_data.get("video_transcript"),

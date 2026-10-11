@@ -166,6 +166,11 @@ class QuestionExtractor:
                     q_imgs = list(current.get("image_paths") or [])
                     ans_imgs = list(ans_slide.get("image_paths") or [])
                     all_imgs = list(dict.fromkeys(q_imgs + ans_imgs))
+
+                    q_audio = list(current.get("audio_paths") or [a["rel_url"] for a in current.get("audio_items", []) if a.get("rel_url")])
+                    ans_audio = list(ans_slide.get("audio_paths") or [a["rel_url"] for a in ans_slide.get("audio_items", []) if a.get("rel_url")])
+                    all_audio = list(dict.fromkeys(q_audio + ans_audio))
+
                     q_media = list(current.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
                     extracted_questions.append({
                         "slide_id": current.get("id"),
@@ -184,6 +189,9 @@ class QuestionExtractor:
                         "image_refs": all_imgs,
                         "question_images": q_imgs,
                         "answer_images": ans_imgs,
+                        "audio_refs": all_audio,
+                        "question_audio": q_audio,
+                        "answer_audio": ans_audio,
                         "media_items": q_media,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
                     })
@@ -205,6 +213,11 @@ class QuestionExtractor:
                     q_imgs = list(current.get("image_paths") or []) + list(middle_slide.get("image_paths") or [])
                     ans_imgs = list(ans_slide.get("image_paths") or [])
                     all_imgs = list(dict.fromkeys(q_imgs + ans_imgs))
+
+                    q_audio = list(current.get("audio_paths") or [a["rel_url"] for a in current.get("audio_items", []) if a.get("rel_url")]) + list(middle_slide.get("audio_paths") or [a["rel_url"] for a in middle_slide.get("audio_items", []) if a.get("rel_url")])
+                    ans_audio = list(ans_slide.get("audio_paths") or [a["rel_url"] for a in ans_slide.get("audio_items", []) if a.get("rel_url")])
+                    all_audio = list(dict.fromkeys(q_audio + ans_audio))
+
                     q_media = list(current.get("all_media_items") or []) + list(middle_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
                     extracted_questions.append({
                         "slide_id": current.get("id"),
@@ -223,6 +236,9 @@ class QuestionExtractor:
                         "image_refs": all_imgs,
                         "question_images": q_imgs,
                         "answer_images": ans_imgs,
+                        "audio_refs": all_audio,
+                        "question_audio": q_audio,
+                        "answer_audio": ans_audio,
                         "media_items": q_media,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
                     })
@@ -248,6 +264,9 @@ class QuestionExtractor:
                     q_imgs = list(current.get("image_paths") or [])
                     ans_imgs = []
                     all_imgs = q_imgs
+                    q_audio = list(current.get("audio_paths") or [a["rel_url"] for a in current.get("audio_items", []) if a.get("rel_url")])
+                    ans_audio = []
+                    all_audio = q_audio
                     q_media = list(current.get("all_media_items") or [])
                     extracted_questions.append({
                         "slide_id": current.get("id"),
@@ -266,6 +285,9 @@ class QuestionExtractor:
                         "image_refs": all_imgs,
                         "question_images": q_imgs,
                         "answer_images": ans_imgs,
+                        "audio_refs": all_audio,
+                        "question_audio": q_audio,
+                        "answer_audio": ans_audio,
                         "media_items": q_media,
                         "speaker_notes": notes
                     })
@@ -308,6 +330,14 @@ class QuestionExtractor:
                     existing["answer_images"] = list(dict.fromkeys((existing.get("answer_images") or []) + q["answer_images"]))
                 if q.get("image_refs"):
                     existing["image_refs"] = list(dict.fromkeys((existing.get("image_refs") or []) + q["image_refs"]))
+
+                # Merge audio lists while maintaining role segregation
+                if q.get("question_audio"):
+                    existing["question_audio"] = list(dict.fromkeys((existing.get("question_audio") or []) + q["question_audio"]))
+                if q.get("answer_audio"):
+                    existing["answer_audio"] = list(dict.fromkeys((existing.get("answer_audio") or []) + q["answer_audio"]))
+                if q.get("audio_refs"):
+                    existing["audio_refs"] = list(dict.fromkeys((existing.get("audio_refs") or []) + q["audio_refs"]))
             else:
                 seen_q[key] = q
                 consolidated.append(q)

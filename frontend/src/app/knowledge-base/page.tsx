@@ -463,9 +463,30 @@ function KnowledgeBaseContent() {
                           </div>
                         )}
 
+                        {/* Audio Clue Inline Player (if question has audio) */}
+                        {((q.question_audio && q.question_audio.length > 0) || (q.audio_refs && q.audio_refs.length > 0)) && (
+                          <div className="mt-2 flex items-center gap-2 p-1.5 rounded-lg bg-teal-50/80 border border-teal-200/80 max-w-sm">
+                            <Volume2 className="h-4 w-4 text-teal-600 shrink-0 ml-1" />
+                            <audio
+                              controls
+                              src={getImageSrc((q.question_audio && q.question_audio.length > 0 ? q.question_audio : q.audio_refs || [])[0])}
+                              onError={() => handleImgError((q.question_audio && q.question_audio.length > 0 ? q.question_audio : q.audio_refs || [])[0])}
+                              className="w-full h-7 text-xs accent-teal-600"
+                              preload="none"
+                            />
+                          </div>
+                        )}
+
                         {/* Multimodal Badges: Images, Audio, Video */}
                         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                          {((q.image_refs && q.image_refs.length > 0) || q.visual_clues || q.audio_transcript || q.video_transcript || (q.raw_media_refs && q.raw_media_refs.length > 0)) && (
+                          {((q.image_refs && q.image_refs.length > 0) ||
+                            (q.question_audio && q.question_audio.length > 0) ||
+                            (q.answer_audio && q.answer_audio.length > 0) ||
+                            (q.audio_refs && q.audio_refs.length > 0) ||
+                            q.visual_clues ||
+                            q.audio_transcript ||
+                            q.video_transcript ||
+                            (q.raw_media_refs && q.raw_media_refs.length > 0)) && (
                             <button
                               type="button"
                               onClick={() => setSelectedQuestionForMedia(q)}
@@ -479,8 +500,33 @@ function KnowledgeBaseContent() {
                                   {q.image_refs.length}
                                 </span>
                               )}
-                              {q.audio_transcript && <Volume2 className="h-2.5 w-2.5 text-teal-600" />}
+                              {((q.question_audio && q.question_audio.length > 0) || (q.audio_refs && q.audio_refs.length > 0) || q.audio_transcript) && (
+                                <Volume2 className="h-2.5 w-2.5 text-teal-600" />
+                              )}
                               {q.video_transcript && <Video className="h-2.5 w-2.5 text-violet-600" />}
+                            </button>
+                          )}
+
+                          {((q.question_audio && q.question_audio.length > 0) || (q.audio_refs && q.audio_refs.length > 0)) && (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedQuestionForMedia(q)}
+                              className="inline-flex items-center gap-1 rounded bg-teal-50 hover:bg-teal-100 border border-teal-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-teal-700 cursor-pointer"
+                              title="Click to play audio clue"
+                            >
+                              <Volume2 className="h-2.5 w-2.5" />
+                              Audio Clue
+                            </button>
+                          )}
+                          {q.answer_audio && q.answer_audio.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedQuestionForMedia(q)}
+                              className="inline-flex items-center gap-1 rounded bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-700 cursor-pointer"
+                              title="Click to play answer reveal audio"
+                            >
+                              <Volume2 className="h-2.5 w-2.5" />
+                              Reveal Audio
                             </button>
                           )}
 

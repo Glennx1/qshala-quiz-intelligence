@@ -69,6 +69,7 @@ class HybridRetriever:
         subtopic: Optional[str] = None,
         tags: Optional[List[str]] = None,
         has_visual: Optional[bool] = None,
+        has_audio: Optional[bool] = None,
         exclude_ids: Optional[List[str]] = None,
         limit: int = 10
     ) -> List[Dict[str, Any]]:
@@ -106,6 +107,18 @@ class HybridRetriever:
         elif has_visual is False:
             query_builder = query_builder.filter(
                 or_(Question.visual_clues.is_(None), Question.visual_clues == "")
+            )
+
+        if has_audio is True:
+            query_builder = query_builder.filter(
+                or_(
+                    and_(Question.audio_refs.isnot(None), Question.audio_refs != "[]"),
+                    and_(Question.question_audio.isnot(None), Question.question_audio != "[]")
+                )
+            )
+        elif has_audio is False:
+            query_builder = query_builder.filter(
+                or_(Question.audio_refs.is_(None), Question.audio_refs == "[]")
             )
 
         if grade_min is not None and grade_max is not None:

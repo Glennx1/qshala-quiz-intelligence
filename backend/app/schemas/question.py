@@ -29,6 +29,9 @@ class QuestionBase(BaseModel):
     image_refs: List[str] = []
     question_images: List[str] = []
     answer_images: List[str] = []
+    audio_refs: List[str] = []
+    question_audio: List[str] = []
+    answer_audio: List[str] = []
     visual_clues: Optional[str] = None
     audio_transcript: Optional[str] = None
     video_transcript: Optional[str] = None
