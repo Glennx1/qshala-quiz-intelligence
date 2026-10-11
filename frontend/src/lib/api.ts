@@ -415,4 +415,46 @@ export const api = {
   exportQuizUrl: (quizId: string, format: 'json' | 'csv' | 'pptx'): string => {
     return `${getApiBase()}/quizzes/${quizId}/export?format=${format}`;
   },
+
+  exportQuizDirect: async (quiz: Quiz, format: 'json' | 'csv' | 'pptx' = 'pptx'): Promise<Blob> => {
+    // 1. Try GET /quizzes/{id}/export first
+    try {
+      const getRes = await fetch(`${getApiBase()}/quizzes/${quiz.id}/export?format=${format}`);
+      if (getRes.ok) {
+        return await getRes.blob();
+      }
+    } catch {
+      // Fallback to POST
+    }
+
+    // 2. Fallback to POST /quizzes/export with full quiz payload
+    const postRes = await fetch(`${getApiBase()}/quizzes/export?format=${format}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(quiz),
+    });
+    if (!postRes.ok) {
+      throw new Error(`Export request failed (${postRes.status}): ${postRes.statusText}`);
+    }
+    return await postRes.blob();
+  },
 };
+
+export async function downloadQuizFile(quiz: Quiz, format: 'json' | 'csv' | 'pptx' = 'pptx'): Promise<void> {
+  const blob = await api.exportQuizDirect(quiz, format);
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const ext = format === 'pptx' ? 'pptx' : format;
+  const cleanTitle = (quiz.title || 'qshala_quiz')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+  a.download = `${cleanTitle || 'qshala_quiz'}.${ext}`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => window.URL.revokeObjectURL(url), 5000);
+}
+

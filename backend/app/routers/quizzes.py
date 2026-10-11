@@ -1,5 +1,5 @@
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from typing import List, Optional, Dict, Any
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, Body
 from sqlalchemy.orm import Session
 from backend.app.database import get_db
 from backend.app.models.quiz import Quiz, GeneratedQuestion
@@ -125,3 +125,33 @@ def export_quiz(
             media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
             headers={"Content-Disposition": f"attachment; filename=qshala_quiz_{quiz.id[:8]}.pptx"}
         )
+
+@router.post("/export")
+def export_quiz_payload(
+    payload: Dict[str, Any] = Body(...),
+    format: str = Query("pptx", pattern="^(json|csv|pptx)$")
+):
+    quiz_id = payload.get("id", "custom")
+    clean_id = str(quiz_id)[:8] if quiz_id else "custom"
+    if format == "json":
+        json_content = QuizExporter.to_json(payload)
+        return Response(
+            content=json_content,
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename=quiz_{clean_id}.json"}
+        )
+    elif format == "csv":
+        csv_content = QuizExporter.to_csv(payload)
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=quiz_{clean_id}.csv"}
+        )
+    elif format == "pptx":
+        pptx_bytes = QuizExporter.to_pptx(payload)
+        return Response(
+            content=pptx_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            headers={"Content-Disposition": f"attachment; filename=qshala_quiz_{clean_id}.pptx"}
+        )
+

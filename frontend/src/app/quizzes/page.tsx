@@ -11,7 +11,7 @@ import {
   Loader2,
   Trash2,
 } from 'lucide-react';
-import { api } from '../../lib/api';
+import { api, downloadQuizFile } from '../../lib/api';
 import { Quiz } from '../../lib/types';
 import { getLocalQuizzes, deleteLocalQuiz, mergeQuizzes, saveLocalQuiz } from '../../lib/quizStorage';
 
@@ -56,6 +56,16 @@ export default function QuizzesLibraryPage() {
       setQuizzes((prev) => prev.filter((q) => q.id !== quizId));
     } catch (err) {
       console.error('Failed to delete quiz:', err);
+    }
+  };
+
+  const handleDownloadQuiz = async (quiz: Quiz, format: 'json' | 'csv' | 'pptx', e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await downloadQuizFile(quiz, format);
+    } catch (err) {
+      console.warn('Direct export failed, navigating to export URL:', err);
+      window.location.href = api.exportQuizUrl(quiz.id, format);
     }
   };
 
@@ -135,30 +145,30 @@ export default function QuizzesLibraryPage() {
                   </td>
                   <td className="py-3.5 px-4 text-right">
                     <div className="inline-flex items-center gap-2 opacity-90 group-hover:opacity-100 transition-opacity">
-                      <a
-                        href={api.exportQuizUrl(quiz.id, 'json')}
-                        download
-                        className="rounded p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                      <button
+                        type="button"
+                        onClick={(e) => handleDownloadQuiz(quiz, 'json', e)}
+                        className="rounded p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
                         title="Download JSON"
                       >
                         <FileJson className="h-3.5 w-3.5" />
-                      </a>
-                      <a
-                        href={api.exportQuizUrl(quiz.id, 'csv')}
-                        download
-                        className="rounded p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleDownloadQuiz(quiz, 'csv', e)}
+                        className="rounded p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
                         title="Download CSV"
                       >
                         <FileSpreadsheet className="h-3.5 w-3.5" />
-                      </a>
-                      <a
-                        href={api.exportQuizUrl(quiz.id, 'pptx')}
-                        download
-                        className="rounded p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleDownloadQuiz(quiz, 'pptx', e)}
+                        className="rounded p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
                         title="Download QShala Master PPTX"
                       >
                         <Presentation className="h-3.5 w-3.5" />
-                      </a>
+                      </button>
                       <Link
                         href={`/quizzes/${quiz.id}`}
                         className="inline-flex items-center gap-1 font-semibold text-[12px] text-blue-600 hover:text-blue-700 pl-2"

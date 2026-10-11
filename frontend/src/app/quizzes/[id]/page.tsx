@@ -17,7 +17,7 @@ import {
   Sparkles,
   Tag,
 } from 'lucide-react';
-import { api, resolveMediaUrl, getFallbackMediaUrl } from '../../../lib/api';
+import { api, resolveMediaUrl, getFallbackMediaUrl, downloadQuizFile } from '../../../lib/api';
 import { Quiz, GeneratedQuestion, RetrievalSource } from '../../../lib/types';
 import { getLocalQuiz, saveLocalQuiz } from '../../../lib/quizStorage';
 import QuestionCard from '../../../components/QuestionCard';
@@ -35,6 +35,7 @@ export default function QuizReviewStudioPage() {
   const [isPresenting, setIsPresenting] = useState(false);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [imgFallbackUrls, setImgFallbackUrls] = useState<Record<string, string>>({});
+  const [isExporting, setIsExporting] = useState<string | null>(null);
 
   const getImageSrc = (rawUrl: string | null | undefined) => {
     if (!rawUrl) return '';
@@ -160,6 +161,19 @@ export default function QuizReviewStudioPage() {
     });
   };
 
+  const handleDownload = async (format: 'pptx' | 'json' | 'csv') => {
+    if (!quiz) return;
+    try {
+      setIsExporting(format);
+      await downloadQuizFile(quiz, format);
+    } catch (err: any) {
+      console.warn('Direct blob export error, falling back to export link:', err);
+      window.location.href = api.exportQuizUrl(quiz.id, format);
+    } finally {
+      setIsExporting(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
@@ -226,32 +240,37 @@ export default function QuizReviewStudioPage() {
             </button>
           )}
 
-          <a
-            href={api.exportQuizUrl(quiz.id, 'pptx')}
-            download
-            className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-blue-700 transition-colors shadow-sm"
+          <button
+            onClick={() => handleDownload('pptx')}
+            disabled={!!isExporting}
+            className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-60 cursor-pointer"
+            title="Download authentic QShala tournament presentation deck"
           >
-            <Presentation className="h-3.5 w-3.5" />
-            <span>Download PPTX</span>
-          </a>
+            {isExporting === 'pptx' ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Presentation className="h-3.5 w-3.5" />
+            )}
+            <span>{isExporting === 'pptx' ? 'Exporting PPTX...' : 'Download PPTX'}</span>
+          </button>
 
-          <a
-            href={api.exportQuizUrl(quiz.id, 'json')}
-            download
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm"
+          <button
+            onClick={() => handleDownload('json')}
+            disabled={!!isExporting}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-60 cursor-pointer"
           >
             <FileJson className="h-3.5 w-3.5 text-slate-500" />
             <span>JSON</span>
-          </a>
+          </button>
 
-          <a
-            href={api.exportQuizUrl(quiz.id, 'csv')}
-            download
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm"
+          <button
+            onClick={() => handleDownload('csv')}
+            disabled={!!isExporting}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-60 cursor-pointer"
           >
             <FileSpreadsheet className="h-3.5 w-3.5 text-slate-500" />
             <span>CSV</span>
-          </a>
+          </button>
 
           <button
             onClick={() => window.print()}
