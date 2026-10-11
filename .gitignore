@@ -45,14 +45,8 @@ Quizzards*.pptx
 *.wmv
 *.mkv
 *.webm
-# Allow lightweight quiz clue videos (< 10 MB) to be served directly via Next.js Edge CDN on Vercel
-!frontend/public/static/slides/**/media4.mp4
-!frontend/public/static/slides/**/media6.mp4
-!frontend/public/static/slides/**/media7.mp4
-!frontend/public/static/slides/**/media8.mp4
-!frontend/public/static/slides/**/media10.mp4
-!frontend/public/static/slides/**/media12.mp4
-!frontend/public/static/slides/**/media15.mp4
+# Allow web-optimized quiz clue videos to be served directly via Next.js Edge CDN on Vercel
+!frontend/public/static/slides/**/media*.mp4
 
 # Environment Variables & Secrets
 .env
