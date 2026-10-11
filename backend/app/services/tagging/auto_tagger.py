@@ -54,7 +54,8 @@ class AutoTagger:
         doc_title: str = "",
         visual_clues: str = "",
         audio_transcript: str = "",
-        video_transcript: str = ""
+        video_transcript: str = "",
+        subtopic: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Extracts primary topic, multi-topic array, named entity tags,
@@ -106,16 +107,18 @@ class AutoTagger:
             primary_topic = "General Knowledge"
             multi_topics = ["General Knowledge"]
 
-        # Subtopic heuristic
-        subtopic = None
-        if len(sorted_topics) > 1 and sorted_topics[1][1] >= 2.5:
-            subtopic = sorted_topics[1][0]
+        # Subtopic resolution
+        resolved_subtopic = subtopic
+        if not resolved_subtopic and len(sorted_topics) > 1 and sorted_topics[1][1] >= 2.5:
+            resolved_subtopic = sorted_topics[1][0]
 
-        # 2. Entity & Key Concepts Extraction
-        combined_context = f"{question_text} {answer_text} {(explanation or '')[:150]} {(visual_clues or '')[:150]} {(audio_transcript or '')[:150]}"
+        # 2. Entity & Key Concepts Extraction (separated with periods so tokens don't collide)
+        combined_context = f"{question_text}. {answer_text}. {(explanation or '')[:150]}. {(visual_clues or '')[:150]}. {(audio_transcript or '')[:150]}."
         entities = self._extract_entities(combined_context)
         disallowed = {"storyteller", "story teller", "storytelling", "curiosity storyteller", "curiosity_storyteller", "story"}
         clean_tags = [t for t in entities if t.lower() not in disallowed]
+        if resolved_subtopic and resolved_subtopic not in clean_tags and len(clean_tags) < 6:
+            clean_tags.insert(0, resolved_subtopic)
 
         # 3. Pedagogical Hook & Style
         hook = self._classify_hook(question_text, explanation)
@@ -134,7 +137,7 @@ class AutoTagger:
         return {
             "primary_topic": primary_topic,
             "topics": multi_topics,
-            "subtopic": subtopic,
+            "subtopic": resolved_subtopic,
             "tags": clean_tags,
             "question_hook": hook,
             "curiosity_score": curiosity_score,

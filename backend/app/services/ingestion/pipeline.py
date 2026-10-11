@@ -135,7 +135,7 @@ class IngestionPipeline:
                 # 0. Multimodal Visual Clues Inspection
                 visual_clues_list = []
                 # Inspect question images first (and clue images)
-                target_imgs = list(q.get("question_images") or [])
+                target_imgs = list(q.get("question_images") or q.get("image_refs") or [])
                 for rel_img_path in target_imgs:
                     disk_path = None
                     if rel_img_path.startswith("/static/slides/"):
@@ -182,7 +182,8 @@ class IngestionPipeline:
                     doc_title=doc.title,
                     visual_clues=visual_clues_str or q.get("visual_clues", "") or "",
                     audio_transcript=q.get("audio_transcript", ""),
-                    video_transcript=q.get("video_transcript", "")
+                    video_transcript=q.get("video_transcript", ""),
+                    subtopic=q.get("subtopic")
                 )
                 # 2. Difficulty & Grade evaluation (multimodal questions set to 'Unrated')
                 diff_data = self.difficulty_engine.evaluate(
@@ -196,6 +197,7 @@ class IngestionPipeline:
                 q.update({
                     "primary_topic": tags_data["primary_topic"],
                     "topics": tags_data["topics"],
+                    "subtopic": q.get("subtopic") or tags_data.get("subtopic"),
                     "tags": tags_data["tags"],
                     "question_hook": tags_data["question_hook"],
                     "curiosity_score": tags_data["curiosity_score"],

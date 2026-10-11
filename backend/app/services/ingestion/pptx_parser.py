@@ -17,6 +17,14 @@ AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".wma", ".ogg", ".flac"}
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".wmv", ".mkv", ".webm", ".m4v"}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".tiff"}
 
+def clean_pptx_text(text: Optional[str]) -> str:
+    if not text:
+        return ""
+    text = text.replace("\x0b", "\n").replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\u200b", "").replace("\ufeff", "")
+    text = text.replace("\xa0", " ")
+    return text.strip()
+
 class PPTXParser:
     """
     Extracts structured content, text, speaker notes, tables,
@@ -30,9 +38,30 @@ class PPTXParser:
         self.write_to_disk = write_to_disk
         self.output_dir = settings.SLIDES_DIR / document_id
         self.output_media_dir = self.output_dir / "media"
+        # Mirror extracted media to Next.js public directory if it exists for Edge CDN delivery
+        self.frontend_media_dir = Path(__file__).resolve().parents[4] / "frontend" / "public" / "static" / "slides" / document_id / "media"
         if self.write_to_disk:
             self.output_dir.mkdir(parents=True, exist_ok=True)
             self.output_media_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                if self.frontend_media_dir.parent.parent.exists():
+                    self.frontend_media_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+
+    def _save_media_file(self, filename: str, blob: bytes) -> Path:
+        local_path = self.output_media_dir / filename
+        if self.write_to_disk:
+            with open(local_path, "wb") as f:
+                f.write(blob)
+            if self.frontend_media_dir.exists():
+                try:
+                    f_dest = self.frontend_media_dir / filename
+                    with open(f_dest, "wb") as f:
+                        f.write(blob)
+                except Exception:
+                    pass
+        return local_path
 
     def _classify_media_type(self, ext: str) -> str:
         ext_lower = ext.lower()
@@ -48,19 +77,19 @@ class PPTXParser:
         """
         Filters out presentation clutter:
         - Animated GIFs (in tournament decks these are timers / countdowns)
-        - Tiny icons, bullets, or transparent spacer artifacts (< 6 KB or < 120 px)
+        - Tiny spacer artifacts (< 2 KB or < 80 px)
         - Corrupted or excessively oversized dumps (> 12 MB)
         """
         ext_clean = ext.lower().lstrip(".")
         if ext_clean == "gif":
             return False
-        if len(blob) < 6144:  # Under 6 KB
+        if len(blob) < 2048:  # Under 2 KB
             return False
         if len(blob) > 12 * 1024 * 1024:  # Over 12 MB
             return False
         if dims and isinstance(dims, (tuple, list)) and len(dims) == 2:
             w, h = dims[0], dims[1]
-            if (w is not None and w < 120) or (h is not None and h < 120):
+            if (w is not None and w < 80) or (h is not None and h < 80):
                 return False
         return True
 
@@ -156,24 +185,24 @@ class PPTXParser:
 
             # Extract title if present
             if slide.shapes.title and slide.shapes.title.has_text_frame:
-                title = slide.shapes.title.text_frame.text.strip()
+                title = clean_pptx_text(slide.shapes.title.text_frame.text)
 
             # Extract speaker notes
             if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
-                speaker_notes = slide.notes_slide.notes_text_frame.text.strip()
+                speaker_notes = clean_pptx_text(slide.notes_slide.notes_text_frame.text)
 
             # 1. Iterate shapes for text, tables, and PICTURE shapes
             img_counter = 1
             for shape in slide.shapes:
                 if shape.has_text_frame:
-                    shape_text = shape.text_frame.text.strip()
+                    shape_text = clean_pptx_text(shape.text_frame.text)
                     if shape_text:
                         slide_text_chunks.append(shape_text)
 
                 elif shape.has_table:
                     table_rows = []
                     for row in shape.table.rows:
-                        row_cells = [cell.text.strip() for cell in row.cells]
+                        row_cells = [clean_pptx_text(cell.text) for cell in row.cells]
                         table_rows.append(" | ".join(row_cells))
                     if table_rows:
                         slide_text_chunks.append("\n".join(table_rows))
@@ -194,10 +223,7 @@ class PPTXParser:
                         seen_img_hashes.add(img_hash)
 
                         img_filename = f"slide_{slide_idx}_img_{img_counter}{ext}"
-                        img_path = self.output_media_dir / img_filename
-                        if self.write_to_disk:
-                            with open(img_path, "wb") as f:
-                                f.write(image.blob)
+                        img_path = self._save_media_file(img_filename, image.blob)
 
                         rel_path = f"/static/slides/{self.document_id}/media/{img_filename}"
                         image_paths.append(rel_path)
@@ -214,7 +240,10 @@ class PPTXParser:
                         })
                         img_counter += 1
                     except Exception as e:
-                        logger.warning(f"Could not extract picture shape from slide {slide_idx}: {e}")
+                        if "no embedded image" in str(e).lower():
+                            logger.debug(f"Poster graphic shape on slide {slide_idx}: {e}")
+                        else:
+                            logger.warning(f"Could not extract picture shape from slide {slide_idx}: {e}")
 
             # 2. Extract embedded audio & video from slide.part.rels
             try:
@@ -247,12 +276,11 @@ class PPTXParser:
                             if part_name not in seen_media_names:
                                 seen_media_names.add(part_name)
                                 media_type = self._classify_media_type(ext)
-                                mime_type = getattr(target_part, "content_type", None) or mimetypes.guess_type(part_name)[0] or "application/octet-stream"
+                                if media_type == "image" and not self._is_valid_quiz_image(raw_data, ext):
+                                    continue
 
-                                local_file = self.output_media_dir / part_name
-                                if self.write_to_disk:
-                                    with open(local_file, "wb") as f:
-                                        f.write(raw_data)
+                                mime_type = getattr(target_part, "content_type", None) or mimetypes.guess_type(part_name)[0] or "application/octet-stream"
+                                local_file = self._save_media_file(part_name, raw_data)
 
                                 rel_url = f"/static/slides/{self.document_id}/media/{part_name}"
                                 media_dict = {
@@ -271,7 +299,7 @@ class PPTXParser:
                                     video_items.append(media_dict)
                                 elif media_type == "image":
                                     img_hash = hashlib.md5(raw_data).hexdigest()
-                                    if self._is_valid_quiz_image(raw_data, ext) and img_hash not in seen_img_hashes:
+                                    if img_hash not in seen_img_hashes:
                                         seen_img_hashes.add(img_hash)
                                         image_paths.append(rel_url)
             except Exception as re_err:
@@ -282,10 +310,10 @@ class PPTXParser:
                 for z_item in zip_media[slide_idx]:
                     if z_item["filename"] not in seen_media_names:
                         seen_media_names.add(z_item["filename"])
-                        local_file = self.output_media_dir / z_item["filename"]
-                        if self.write_to_disk:
-                            with open(local_file, "wb") as f:
-                                f.write(z_item["raw_bytes"])
+                        if z_item["media_type"] == "image" and not self._is_valid_quiz_image(z_item["raw_bytes"], Path(z_item["filename"]).suffix):
+                            continue
+
+                        local_file = self._save_media_file(z_item["filename"], z_item["raw_bytes"])
 
                         rel_url = f"/static/slides/{self.document_id}/media/{z_item['filename']}"
                         item_record = {
@@ -304,7 +332,7 @@ class PPTXParser:
                             video_items.append(item_record)
                         elif z_item["media_type"] == "image":
                             img_hash = hashlib.md5(z_item["raw_bytes"]).hexdigest()
-                            if self._is_valid_quiz_image(z_item["raw_bytes"], Path(z_item["filename"]).suffix) and img_hash not in seen_img_hashes:
+                            if img_hash not in seen_img_hashes:
                                 seen_img_hashes.add(img_hash)
                                 image_paths.append(rel_url)
 

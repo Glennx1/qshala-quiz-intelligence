@@ -26,6 +26,14 @@ class QuestionExtractor:
         re.IGNORECASE
     )
 
+    KNOWN_THEMES = [
+        "CREATIVITY", "LEADERSHIP", "SUSTAINABILITY", "ENTREPRENEURSHIP",
+        "TECHNOLOGY", "PROBLEM -SOLVING", "PROBLEM-SOLVING", "PROBLEM SOLVING",
+        "INNOVATION", "FINANCE", "BUSINESS", "SCIENCE", "NATURE", "CULTURE",
+        "HISTORY", "GEOGRAPHY", "SPORTS", "ENTERTAINMENT", "LITERATURE",
+        "GENERAL KNOWLEDGE"
+    ]
+
     def extract_from_slides(self, slides: List[Dict[str, Any]], doc_title: str, doc_year: Optional[int]) -> List[Dict[str, Any]]:
         extracted_questions = []
         i = 0
@@ -64,7 +72,7 @@ class QuestionExtractor:
             if slide_type == "QUESTION" and i + 2 < n and slides[i+1].get("slide_type") == "ANSWER_TRANSITION":
                 trans_slide = slides[i+1]
                 ans_slide = slides[i+2]
-                q_text, options = self._parse_question_and_options(text)
+                q_text, options, det_theme, det_num = self._parse_question_and_options(text)
                 ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("extracted_text", ""))
 
                 if not ans_text and ans_slide.get("title") and ans_slide.get("title") != "NO_TITLE":
@@ -88,11 +96,21 @@ class QuestionExtractor:
                             explanation = f"{explanation}\n{s3_text}".strip()
                             advance_steps = 4
 
-                    q_imgs = list(current.get("image_paths") or []) + list(trans_slide.get("image_paths") or []) + list(ans_slide.get("image_paths") or [])
+                    q_imgs = list(current.get("image_paths") or [])
+                    ans_imgs = list(ans_slide.get("image_paths") or [])
+                    if exp_slide:
+                        ans_imgs.extend(exp_slide.get("image_paths") or [])
+                    all_imgs = list(dict.fromkeys(q_imgs + ans_imgs))
+
+                    q_audio = list(current.get("audio_paths") or [a["rel_url"] for a in current.get("audio_items", []) if a.get("rel_url")])
+                    ans_audio = list(ans_slide.get("audio_paths") or [a["rel_url"] for a in ans_slide.get("audio_items", []) if a.get("rel_url")])
+                    all_audio = list(dict.fromkeys(q_audio + ans_audio))
+
                     q_media = list(current.get("all_media_items") or []) + list(trans_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
                     if exp_slide:
-                        q_imgs.extend(exp_slide.get("image_paths") or [])
                         q_media.extend(exp_slide.get("all_media_items") or [])
+
+                    raw_media_refs = list(dict.fromkeys([m["rel_url"] for m in q_media if m.get("rel_url")]))
 
                     extracted_questions.append({
                         "slide_id": current.get("id"),
@@ -101,15 +119,21 @@ class QuestionExtractor:
                         "answer": ans_text,
                         "options": options,
                         "explanation": explanation or ans_slide.get("extracted_text", ""),
-                        "subtopic": current_subtopic,
-                        "round_number": current_round_num,
+                        "subtopic": current_subtopic or det_theme,
+                        "round_number": current_round_num or det_num,
                         "question_type": "MULTIPLE_CHOICE" if options else "SLIDE_QA",
                         "source_year": doc_year or 2024,
                         "slide_number": current.get("slide_number"),
                         "answer_slide_number": ans_slide.get("slide_number"),
-                        "source_slide_range": f"Slide {current.get('slide_number')}–{ans_slide.get('slide_number')}",
-                        "image_refs": q_imgs,
+                        "source_slide_range": f"Slide {current.get('slide_number')}-{ans_slide.get('slide_number')}",
+                        "image_refs": all_imgs,
+                        "question_images": q_imgs,
+                        "answer_images": ans_imgs,
+                        "audio_refs": all_audio,
+                        "question_audio": q_audio,
+                        "answer_audio": ans_audio,
                         "media_items": q_media,
+                        "raw_media_refs": raw_media_refs,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
                     })
                     i += advance_steps
@@ -120,7 +144,7 @@ class QuestionExtractor:
                 clue_slide = slides[i+1]
                 trans_slide = slides[i+2]
                 ans_slide = slides[i+3]
-                q_text, options = self._parse_question_and_options(text)
+                q_text, options, det_theme, det_num = self._parse_question_and_options(text)
                 ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("extracted_text", ""))
 
                 if not ans_text and ans_slide.get("title") and ans_slide.get("title") != "NO_TITLE":
@@ -129,8 +153,17 @@ class QuestionExtractor:
                 if ans_text and not (ans_text.startswith("http://") or ans_text.startswith("https://")):
                     clue_text = clue_slide.get("extracted_text", "")
                     combined_exp = f"{explanation}\nClue: {clue_text}".strip() if clue_text else explanation
-                    q_imgs = list(current.get("image_paths") or []) + list(clue_slide.get("image_paths") or []) + list(ans_slide.get("image_paths") or [])
-                    q_media = list(current.get("all_media_items") or []) + list(clue_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
+                    q_imgs = list(current.get("image_paths") or []) + list(clue_slide.get("image_paths") or [])
+                    ans_imgs = list(ans_slide.get("image_paths") or [])
+                    all_imgs = list(dict.fromkeys(q_imgs + ans_imgs))
+
+                    q_audio = list(current.get("audio_paths") or [a["rel_url"] for a in current.get("audio_items", []) if a.get("rel_url")]) + list(clue_slide.get("audio_paths") or [a["rel_url"] for a in clue_slide.get("audio_items", []) if a.get("rel_url")])
+                    ans_audio = list(ans_slide.get("audio_paths") or [a["rel_url"] for a in ans_slide.get("audio_items", []) if a.get("rel_url")])
+                    all_audio = list(dict.fromkeys(q_audio + ans_audio))
+
+                    q_media = list(current.get("all_media_items") or []) + list(clue_slide.get("all_media_items") or []) + list(trans_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
+                    raw_media_refs = list(dict.fromkeys([m["rel_url"] for m in q_media if m.get("rel_url")]))
+
                     extracted_questions.append({
                         "slide_id": current.get("id"),
                         "answer_slide_id": ans_slide.get("id"),
@@ -138,15 +171,21 @@ class QuestionExtractor:
                         "answer": ans_text,
                         "options": options,
                         "explanation": combined_exp,
-                        "subtopic": current_subtopic,
-                        "round_number": current_round_num,
+                        "subtopic": current_subtopic or det_theme,
+                        "round_number": current_round_num or det_num,
                         "question_type": "MULTIPLE_CHOICE" if options else "SLIDE_QA",
                         "source_year": doc_year or 2024,
                         "slide_number": current.get("slide_number"),
                         "answer_slide_number": ans_slide.get("slide_number"),
-                        "source_slide_range": f"Slide {current.get('slide_number')}–{ans_slide.get('slide_number')}",
-                        "image_refs": q_imgs,
+                        "source_slide_range": f"Slide {current.get('slide_number')}-{ans_slide.get('slide_number')}",
+                        "image_refs": all_imgs,
+                        "question_images": q_imgs,
+                        "answer_images": ans_imgs,
+                        "audio_refs": all_audio,
+                        "question_audio": q_audio,
+                        "answer_audio": ans_audio,
                         "media_items": q_media,
+                        "raw_media_refs": raw_media_refs,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
                     })
                     i += 4
@@ -155,7 +194,7 @@ class QuestionExtractor:
             # Pattern A: Question on Slide i, Answer on Slide i + 1
             if slide_type == "QUESTION" and i + 1 < n and slides[i+1].get("slide_type") == "ANSWER":
                 ans_slide = slides[i+1]
-                q_text, options = self._parse_question_and_options(text)
+                q_text, options, det_theme, det_num = self._parse_question_and_options(text)
                 ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("extracted_text", ""))
 
                 # If answer text is still empty, check speaker notes of the answer slide
@@ -172,6 +211,8 @@ class QuestionExtractor:
                     all_audio = list(dict.fromkeys(q_audio + ans_audio))
 
                     q_media = list(current.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
+                    raw_media_refs = list(dict.fromkeys([m["rel_url"] for m in q_media if m.get("rel_url")]))
+
                     extracted_questions.append({
                         "slide_id": current.get("id"),
                         "answer_slide_id": ans_slide.get("id"),
@@ -179,13 +220,13 @@ class QuestionExtractor:
                         "answer": ans_text,
                         "options": options,
                         "explanation": explanation or ans_slide.get("extracted_text", ""),
-                        "subtopic": current_subtopic,
-                        "round_number": current_round_num,
+                        "subtopic": current_subtopic or det_theme,
+                        "round_number": current_round_num or det_num,
                         "question_type": "MULTIPLE_CHOICE" if options else "SLIDE_QA",
                         "source_year": doc_year or 2024,
                         "slide_number": current.get("slide_number"),
                         "answer_slide_number": ans_slide.get("slide_number"),
-                        "source_slide_range": f"Slide {current.get('slide_number')}–{ans_slide.get('slide_number')}",
+                        "source_slide_range": f"Slide {current.get('slide_number')}-{ans_slide.get('slide_number')}",
                         "image_refs": all_imgs,
                         "question_images": q_imgs,
                         "answer_images": ans_imgs,
@@ -193,6 +234,7 @@ class QuestionExtractor:
                         "question_audio": q_audio,
                         "answer_audio": ans_audio,
                         "media_items": q_media,
+                        "raw_media_refs": raw_media_refs,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
                     })
                     i += 2
@@ -202,7 +244,7 @@ class QuestionExtractor:
             if slide_type == "QUESTION" and i + 2 < n and slides[i+2].get("slide_type") == "ANSWER":
                 middle_slide = slides[i+1]
                 ans_slide = slides[i+2]
-                q_text, options = self._parse_question_and_options(text)
+                q_text, options, det_theme, det_num = self._parse_question_and_options(text)
                 ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("extracted_text", ""))
 
                 if ans_text and not (ans_text.startswith("http://") or ans_text.startswith("https://")):
@@ -219,6 +261,8 @@ class QuestionExtractor:
                     all_audio = list(dict.fromkeys(q_audio + ans_audio))
 
                     q_media = list(current.get("all_media_items") or []) + list(middle_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
+                    raw_media_refs = list(dict.fromkeys([m["rel_url"] for m in q_media if m.get("rel_url")]))
+
                     extracted_questions.append({
                         "slide_id": current.get("id"),
                         "answer_slide_id": ans_slide.get("id"),
@@ -226,13 +270,13 @@ class QuestionExtractor:
                         "answer": ans_text,
                         "options": options,
                         "explanation": combined_exp,
-                        "subtopic": current_subtopic,
-                        "round_number": current_round_num,
+                        "subtopic": current_subtopic or det_theme,
+                        "round_number": current_round_num or det_num,
                         "question_type": "MULTIPLE_CHOICE" if options else "SLIDE_QA",
                         "source_year": doc_year or 2024,
                         "slide_number": current.get("slide_number"),
                         "answer_slide_number": ans_slide.get("slide_number"),
-                        "source_slide_range": f"Slide {current.get('slide_number')}–{ans_slide.get('slide_number')}",
+                        "source_slide_range": f"Slide {current.get('slide_number')}-{ans_slide.get('slide_number')}",
                         "image_refs": all_imgs,
                         "question_images": q_imgs,
                         "answer_images": ans_imgs,
@@ -240,6 +284,7 @@ class QuestionExtractor:
                         "question_audio": q_audio,
                         "answer_audio": ans_audio,
                         "media_items": q_media,
+                        "raw_media_refs": raw_media_refs,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
                     })
                     i += 3
@@ -247,7 +292,7 @@ class QuestionExtractor:
 
             # Pattern B: Question and Answer on same slide (notes or trailing text)
             if slide_type == "QUESTION":
-                q_text, options = self._parse_question_and_options(text)
+                q_text, options, det_theme, det_num = self._parse_question_and_options(text)
                 ans_text = ""
                 explanation = ""
 
@@ -268,6 +313,8 @@ class QuestionExtractor:
                     ans_audio = []
                     all_audio = q_audio
                     q_media = list(current.get("all_media_items") or [])
+                    raw_media_refs = list(dict.fromkeys([m["rel_url"] for m in q_media if m.get("rel_url")]))
+
                     extracted_questions.append({
                         "slide_id": current.get("id"),
                         "answer_slide_id": None,
@@ -275,8 +322,8 @@ class QuestionExtractor:
                         "answer": ans_text,
                         "options": options,
                         "explanation": explanation,
-                        "subtopic": current_subtopic,
-                        "round_number": current_round_num,
+                        "subtopic": current_subtopic or det_theme,
+                        "round_number": current_round_num or det_num,
                         "question_type": "MULTIPLE_CHOICE" if options else "SLIDE_QA",
                         "source_year": doc_year or 2024,
                         "slide_number": current.get("slide_number"),
@@ -289,6 +336,7 @@ class QuestionExtractor:
                         "question_audio": q_audio,
                         "answer_audio": ans_audio,
                         "media_items": q_media,
+                        "raw_media_refs": raw_media_refs,
                         "speaker_notes": notes
                     })
                 i += 1
@@ -323,6 +371,11 @@ class QuestionExtractor:
                     existing["answer_slide_number"] = q.get("answer_slide_number")
                     existing["source_slide_range"] = q.get("source_slide_range")
 
+                if not existing.get("subtopic") and q.get("subtopic"):
+                    existing["subtopic"] = q["subtopic"]
+                if existing.get("round_number") is None and q.get("round_number") is not None:
+                    existing["round_number"] = q["round_number"]
+
                 # Merge image lists while maintaining role segregation
                 if q.get("question_images"):
                     existing["question_images"] = list(dict.fromkeys((existing.get("question_images") or []) + q["question_images"]))
@@ -338,34 +391,77 @@ class QuestionExtractor:
                     existing["answer_audio"] = list(dict.fromkeys((existing.get("answer_audio") or []) + q["answer_audio"]))
                 if q.get("audio_refs"):
                     existing["audio_refs"] = list(dict.fromkeys((existing.get("audio_refs") or []) + q["audio_refs"]))
+                if q.get("raw_media_refs"):
+                    existing["raw_media_refs"] = list(dict.fromkeys((existing.get("raw_media_refs") or []) + q["raw_media_refs"]))
             else:
                 seen_q[key] = q
                 consolidated.append(q)
 
         return consolidated
 
-    def _parse_question_and_options(self, text: str) -> Tuple[str, Optional[List[str]]]:
+    def _parse_question_and_options(self, text: str) -> Tuple[str, Optional[List[str]], Optional[str], Optional[int]]:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         if not lines:
-            return text, None
+            return text, None, None, None
 
         q_lines = []
         options = []
+        detected_theme: Optional[str] = None
+        detected_q_num: Optional[int] = None
 
         for line in lines:
-            if re.match(r"^QUESTION\s*\d*[:\.\-]?$", line, re.IGNORECASE):
+            norm_line = line.strip()
+            if re.match(r"^QUESTION\s*\d*[:\.\-]?$", norm_line, re.IGNORECASE):
                 continue
+
+            # Standalone question number badge like "1.", "2.", "11.*", "*13.", "14.*"
+            num_m = re.match(r"^\*?\s*(\d+)[\.\*\)]*$", norm_line)
+            if num_m:
+                try:
+                    detected_q_num = int(num_m.group(1))
+                except Exception:
+                    pass
+                continue
+
+            # Standalone theme badge like "CREATIVITY", "LEADERSHIP", "SUSTAINABILITY"
+            clean_upper = re.sub(r"[\s\-]+", " ", norm_line.upper()).strip()
+            matched_theme = next((t for t in self.KNOWN_THEMES if re.sub(r"[\s\-]+", " ", t) == clean_upper), None)
+            if matched_theme:
+                detected_theme = matched_theme.replace(" -", "-").title()
+                continue
+
             # Check if this line is an option: (A), A., A), [A], 1., 1)
-            if re.match(r"^(\([A-D1-4]\)|\[[A-D1-4]\]|[A-D1-4][\.\)])\s+", line, re.IGNORECASE):
-                options.append(line)
+            if re.match(r"^(\([A-D1-4]\)|\[[A-D1-4]\]|[A-D1-4][\.\)])\s+", norm_line, re.IGNORECASE):
+                options.append(norm_line)
             else:
                 if not options:
-                    q_lines.append(line)
+                    q_lines.append(norm_line)
 
         question_text = " ".join(q_lines) if q_lines else lines[0]
-        question_text = re.sub(r"^(?:QUESTION\s*\d*[:\.\-]?|Q\d*[:\.\-]?|\d+[\.\*)]\s*)\s*", "", question_text, flags=re.IGNORECASE)
+        # Strip leading question indicators
+        question_text = re.sub(r"^(?:QUESTION\s*\d*[:\.\-]?|Q\d*[:\.\-]?|\*?\d+[\.\*)]\s*)\s*", "", question_text, flags=re.IGNORECASE)
 
-        return question_text.strip(), options if len(options) >= 2 else None
+        # Strip trailing theme if it leaked into the question line
+        for theme in self.KNOWN_THEMES:
+            t_pat = rf"(?:\s+(?:\*?\d+[\.\*]*\s*)?{re.escape(theme)}\s*)$"
+            m = re.search(t_pat, question_text, re.IGNORECASE)
+            if m:
+                if not detected_theme:
+                    detected_theme = theme.replace(" -", "-").title()
+                question_text = question_text[:m.start()].strip()
+                break
+
+        # Strip trailing question number if at the end of the line
+        trailing_num = re.search(r"\s+\*?(\d+)[\.\*]+\s*$", question_text)
+        if trailing_num:
+            if detected_q_num is None:
+                try:
+                    detected_q_num = int(trailing_num.group(1))
+                except Exception:
+                    pass
+            question_text = question_text[:trailing_num.start()].strip()
+
+        return question_text.strip(), (options if len(options) >= 2 else None), detected_theme, detected_q_num
 
     def _parse_answer_and_explanation(self, text: str) -> Tuple[str, str]:
         if not text:

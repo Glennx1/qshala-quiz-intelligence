@@ -39,6 +39,12 @@ Quizzards*.pptx
 *optimized*.pptx
 *.pptx
 !backend/sample_decks/*.pptx
+*.mp4
+*.mov
+*.avi
+*.wmv
+*.mkv
+*.webm
 
 # Environment Variables & Secrets
 .env
