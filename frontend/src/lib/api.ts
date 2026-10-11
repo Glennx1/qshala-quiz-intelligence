@@ -373,6 +373,13 @@ export const api = {
     return handleResponse<Quiz>(res);
   },
 
+  deleteQuiz: async (id: string): Promise<{ message: string }> => {
+    const res = await fetch(`${getApiBase()}/quizzes/${id}`, {
+      method: 'DELETE',
+    });
+    return handleResponse<{ message: string }>(res);
+  },
+
   updateQuestion: async (
     questionId: string,
     data: Partial<GeneratedQuestion>

@@ -40,6 +40,15 @@ def get_quiz(quiz_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Quiz not found")
     return quiz
 
+@router.delete("/{quiz_id}")
+def delete_quiz(quiz_id: str, db: Session = Depends(get_db)):
+    quiz = db.query(Quiz).filter(Quiz.id == quiz_id).first()
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    db.delete(quiz)
+    db.commit()
+    return {"message": "Quiz deleted successfully"}
+
 @router.patch("/questions/{question_id}", response_model=GeneratedQuestionResponse)
 def update_question(
     question_id: str,

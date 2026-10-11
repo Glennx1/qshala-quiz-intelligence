@@ -9,9 +9,11 @@ import {
   Presentation,
   ArrowRight,
   Loader2,
+  Trash2,
 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Quiz } from '../../lib/types';
+import { getLocalQuizzes, deleteLocalQuiz, mergeQuizzes, saveLocalQuiz } from '../../lib/quizStorage';
 
 export default function QuizzesLibraryPage() {
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
@@ -19,12 +21,41 @@ export default function QuizzesLibraryPage() {
 
   const fetchQuizzes = async () => {
     try {
-      const data = await api.listQuizzes();
-      setQuizzes(data);
+      let backendQuizzes: Quiz[] = [];
+      try {
+        backendQuizzes = await api.listQuizzes();
+        // Cache backend quizzes locally for offline and serverless resilience
+        for (const bq of backendQuizzes) {
+          saveLocalQuiz(bq);
+        }
+      } catch (e) {
+        console.warn('Could not fetch backend quizzes, loading from local storage:', e);
+      }
+      const localQuizzes = getLocalQuizzes();
+      const merged = mergeQuizzes(backendQuizzes, localQuizzes);
+      setQuizzes(merged);
     } catch (err) {
-      console.error(err);
+      console.error('Error fetching quizzes:', err);
+      setQuizzes(getLocalQuizzes());
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteQuiz = async (quizId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm('Are you sure you want to delete this generated quiz?')) return;
+    try {
+      deleteLocalQuiz(quizId);
+      try {
+        await api.deleteQuiz(quizId);
+      } catch (err) {
+        console.warn('Backend delete notice:', err);
+      }
+      setQuizzes((prev) => prev.filter((q) => q.id !== quizId));
+    } catch (err) {
+      console.error('Failed to delete quiz:', err);
     }
   };
 
@@ -135,6 +166,14 @@ export default function QuizzesLibraryPage() {
                         <span>Open</span>
                         <ArrowRight className="h-3 w-3" />
                       </Link>
+                      <button
+                        type="button"
+                        onClick={(e) => handleDeleteQuiz(quiz.id, e)}
+                        className="rounded p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors ml-1 cursor-pointer"
+                        title="Delete Quiz"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </div>
                   </td>
                 </tr>

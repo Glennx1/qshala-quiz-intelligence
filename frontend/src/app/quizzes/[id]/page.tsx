@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { api, resolveMediaUrl, getFallbackMediaUrl } from '../../../lib/api';
 import { Quiz, GeneratedQuestion, RetrievalSource } from '../../../lib/types';
+import { getLocalQuiz, saveLocalQuiz } from '../../../lib/quizStorage';
 import QuestionCard from '../../../components/QuestionCard';
 import SlideViewerModal from '../../../components/SlideViewerModal';
 
@@ -55,8 +56,15 @@ export default function QuizReviewStudioPage() {
     try {
       const data = await api.getQuiz(quizId);
       setQuiz(data);
+      saveLocalQuiz(data);
     } catch (err) {
-      console.error('Error fetching quiz:', err);
+      console.warn('Backend getQuiz notice, falling back to local storage:', err);
+      const local = getLocalQuiz(quizId);
+      if (local) {
+        setQuiz(local);
+      } else {
+        console.error('Quiz not found in backend or local storage:', err);
+      }
     } finally {
       setLoading(false);
     }
@@ -70,14 +78,24 @@ export default function QuizReviewStudioPage() {
     try {
       const saved = await api.updateQuestion(qId, updated);
       if (quiz) {
-        setQuiz({
+        const updatedQuiz = {
           ...quiz,
           questions: quiz.questions.map((q) => (q.id === qId ? { ...q, ...saved } : q)),
-        });
+        };
+        setQuiz(updatedQuiz);
+        saveLocalQuiz(updatedQuiz);
       }
     } catch (e) {
       console.error(e);
-      alert('Failed to update question');
+      // Fallback: update in state and local storage even if backend fails
+      if (quiz) {
+        const updatedQuiz = {
+          ...quiz,
+          questions: quiz.questions.map((q) => (q.id === qId ? { ...q, ...updated } : q)),
+        };
+        setQuiz(updatedQuiz);
+        saveLocalQuiz(updatedQuiz);
+      }
     }
   };
 
@@ -88,10 +106,12 @@ export default function QuizReviewStudioPage() {
     try {
       const refreshed = await api.executeQuestionAction(qId, action);
       if (quiz) {
-        setQuiz({
+        const updatedQuiz = {
           ...quiz,
           questions: quiz.questions.map((q) => (q.id === qId ? refreshed : q)),
-        });
+        };
+        setQuiz(updatedQuiz);
+        saveLocalQuiz(updatedQuiz);
       }
     } catch (e: any) {
       console.error(e);
@@ -102,12 +122,18 @@ export default function QuizReviewStudioPage() {
   const handleDeleteQuestion = async (qId: string) => {
     if (!confirm('Are you sure you want to remove this question from the quiz?')) return;
     try {
-      await api.deleteQuestion(qId);
+      try {
+        await api.deleteQuestion(qId);
+      } catch (err) {
+        console.warn('Backend question delete notice:', err);
+      }
       if (quiz) {
-        setQuiz({
+        const updatedQuiz = {
           ...quiz,
           questions: quiz.questions.filter((q) => q.id !== qId),
-        });
+        };
+        setQuiz(updatedQuiz);
+        saveLocalQuiz(updatedQuiz);
       }
     } catch (e) {
       console.error(e);

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { TopicItem, TopicSummary, TagItem } from '../lib/types';
+import { saveLocalQuiz } from '../lib/quizStorage';
 
 import { QuizFormat } from '../lib/types';
 
@@ -241,6 +242,9 @@ export default function QuickGenerateCard() {
         style: 'QSHALA_HISTORICAL',
         raw_prompt: promptSummary,
       });
+
+      // Persist to local storage immediately so it always appears in Generated Quizzes
+      saveLocalQuiz(quiz);
 
       router.push(`/quizzes/${quiz.id}`);
     } catch (err: any) {
