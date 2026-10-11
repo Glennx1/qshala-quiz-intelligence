@@ -197,6 +197,9 @@ class QuizGenerator:
             for i, item in enumerate(selected_items[:req.question_count], start=1):
                 hist_q = item["question"]
                 assigned_diff = hist_q.difficulty if hist_q.difficulty in ["Easy", "Medium", "Hard"] else (target_difficulties[i - 1] if i - 1 < len(target_difficulties) else "Medium")
+                hist_raw = list(getattr(hist_q, "raw_media_refs", []) or [])
+                hist_videos = [r for r in hist_raw if isinstance(r, str) and r.lower().endswith(('.mp4', '.m4v', '.mov', '.webm'))]
+                hist_audios = list(getattr(hist_q, "question_audio", []) or []) or [r for r in hist_raw if isinstance(r, str) and r.lower().endswith(('.mp3', '.wav', '.m4a', '.ogg'))]
                 generated_raw_questions.append({
                     "question_text": hist_q.question_text,
                     "options": hist_q.options,
@@ -211,9 +214,12 @@ class QuizGenerator:
                     "question_images": list(getattr(hist_q, "question_images", []) or []),
                     "answer_images": list(getattr(hist_q, "answer_images", []) or []),
                     "visual_clues": getattr(hist_q, "visual_clues", None),
-                    "audio_refs": list(getattr(hist_q, "audio_refs", []) or []),
-                    "question_audio": list(getattr(hist_q, "question_audio", []) or []),
+                    "audio_refs": list(getattr(hist_q, "audio_refs", []) or []) or hist_audios,
+                    "question_audio": hist_audios,
                     "answer_audio": list(getattr(hist_q, "answer_audio", []) or []),
+                    "video_refs": hist_videos,
+                    "question_video": hist_videos,
+                    "raw_media_refs": hist_raw,
                     "provenance": {
                         "historical_question_id": hist_q.id,
                         "document_id": item["document"].id,
@@ -375,6 +381,9 @@ Please return a JSON object with this exact structure:
                 audio_refs=q_data.get("audio_refs") or [],
                 question_audio=q_data.get("question_audio") or [],
                 answer_audio=q_data.get("answer_audio") or [],
+                video_refs=q_data.get("video_refs") or [],
+                question_video=q_data.get("question_video") or [],
+                raw_media_refs=q_data.get("raw_media_refs") or [],
                 validation_status=val_result["overall_status"],
                 validation_details=val_result["details"],
                 duplicate_score=val_result["duplicate_score"],

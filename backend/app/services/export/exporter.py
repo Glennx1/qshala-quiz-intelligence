@@ -8,35 +8,55 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-def _resolve_image_path(rel_url: Optional[str]) -> Optional[Path]:
+def _resolve_media_path(rel_url: Optional[str]) -> Optional[Path]:
+    """Resolves local filesystem paths for images, audio, and video files."""
     if not rel_url or not isinstance(rel_url, str):
         return None
     from backend.app.config import settings
     clean_url = rel_url.strip()
     
-    # 1. Slide extracts directory
+    # 1. Slide extracts directory (/static/slides/...)
     if clean_url.startswith("/static/slides/"):
         sub = clean_url[len("/static/slides/"):]
         p = settings.SLIDES_DIR / sub
         if p.exists() and p.is_file():
             return p
-    # 2. Storage directory general
+    # 2. Storage directory general (/static/...)
     elif clean_url.startswith("/static/"):
         sub = clean_url.lstrip("/static/")
         p = settings.STORAGE_DIR / sub
         if p.exists() and p.is_file():
             return p
-    
-    # 3. Direct path
+            
+    # 3. Public media videos directory (/media/videos/...)
+    if clean_url.startswith("/media/videos/") or clean_url.startswith("media/videos/"):
+        name = Path(clean_url).name
+        p = Path("frontend/public/media/videos") / name
+        if p.exists() and p.is_file():
+            return p
+    elif clean_url.startswith("/media/") or clean_url.startswith("media/"):
+        name = Path(clean_url).name
+        p = Path("frontend/public/media") / name
+        if p.exists() and p.is_file():
+            return p
+
+    # 4. Direct filesystem path
     p_direct = Path(clean_url)
     if p_direct.exists() and p_direct.is_file():
         return p_direct
         
-    # 4. Storage uploads directory check
+    # 5. Storage uploads directory check
     p_upload = settings.STORAGE_DIR / "uploads" / Path(clean_url).name
     if p_upload.exists() and p_upload.is_file():
         return p_upload
         
+    # 6. Check within slides directory recursively by filename if needed
+    filename = Path(clean_url).name
+    if filename:
+        matches = list(settings.SLIDES_DIR.glob(f"**/{filename}"))
+        if matches and matches[0].is_file():
+            return matches[0]
+
     return None
 
 def _add_scaled_picture(slide, img_path: Path, max_left, max_top, max_w, max_h):
@@ -61,6 +81,36 @@ def _get_val(obj: Any, key: str, default: Any = None) -> Any:
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default)
+
+def _get_hist_q_media(q: Any) -> Dict[str, Any]:
+    """Helper to retrieve raw media, audio, and videos from the source vault question if available."""
+    sources = _get_val(q, "retrieval_sources", []) or _get_val(q, "sources", [])
+    if not sources:
+        return {}
+    hist_id = _get_val(sources[0], "historical_question_id")
+    if not hist_id:
+        return {}
+    try:
+        from backend.app.database import SessionLocal
+        from backend.app.models.question import Question
+        db = SessionLocal()
+        hq = db.query(Question).filter(Question.id == hist_id).first()
+        if not hq:
+            db.close()
+            return {}
+        res = {
+            "raw_media_refs": list(getattr(hq, "raw_media_refs", []) or []),
+            "question_audio": list(getattr(hq, "question_audio", []) or []),
+            "audio_refs": list(getattr(hq, "audio_refs", []) or []),
+            "question_images": list(getattr(hq, "question_images", []) or []),
+            "answer_images": list(getattr(hq, "answer_images", []) or []),
+            "image_refs": list(getattr(hq, "image_refs", []) or []),
+        }
+        db.close()
+        return res
+    except Exception as e:
+        logger.warning(f"Error fetching historical question media: {e}")
+        return {}
 
 class QuizExporter:
     @staticmethod
@@ -115,6 +165,9 @@ class QuizExporter:
                 "audio_refs": _get_val(q, "audio_refs", []) or [],
                 "question_audio": _get_val(q, "question_audio", []) or [],
                 "answer_audio": _get_val(q, "answer_audio", []) or [],
+                "video_refs": _get_val(q, "video_refs", []) or [],
+                "question_video": _get_val(q, "question_video", []) or [],
+                "raw_media_refs": _get_val(q, "raw_media_refs", []) or [],
                 "validation_status": _get_val(q, "validation_status", "PASSED"),
                 "sources": sources_list
             })
@@ -184,12 +237,11 @@ class QuizExporter:
         """
         Exports the quiz into a crisp, minimalist, high-typography presentation deck (16:9 widescreen).
         
-        Designed to be clean, to the point, and free of unnecessary fluff:
-        1. Minimalist Title Slide (Dark architectural canvas, crisp typography)
-        2. Direct Question -> Answer Slide sequence (No filler slides, 1 slide per question followed immediately by its answer)
-        3. High legibility fonts (28-34pt questions, 38-44pt answers, 18-20pt context/options)
-        4. Generous whitespace, clean natural image scaling without clunky frames or heavy borders
-        5. Comprehensive host notes in Speaker Notes
+        Properly embeds all media types:
+        1. High-resolution images (proportional PIL scaling)
+        2. Videos (embedded directly into PowerPoint slides via add_movie with poster frames)
+        3. Audio clues (embedded into slides with clean interactive sound effect cards)
+        4. Immediate Question -> Answer pairs (no filler slides, zero fluff)
         """
         from pptx import Presentation
         from pptx.util import Inches, Pt
@@ -214,13 +266,14 @@ class QuizExporter:
         C_ACCENT_BLUE = RGBColor(37, 99, 235)     # #2563EB Blue 600
         C_ACCENT_GREEN = RGBColor(5, 150, 105)    # #059669 Emerald 600
         C_ACCENT_GOLD = RGBColor(217, 119, 6)     # #D97706 Amber 600
+        C_CARD_BG = RGBColor(241, 245, 249)       # #F1F5F9 Slate 100
+        C_CARD_BORDER = RGBColor(203, 213, 225)   # #CBD5E1 Slate 300
 
         FONT_HEAD = "Trebuchet MS"
         FONT_BODY = "Calibri"
 
         title_text = _get_val(quiz, "title", "QShala Tournament Quiz")
         topic_text = _get_val(quiz, "topic", "General Knowledge")
-        personality = _get_val(quiz, "personality")
         difficulty = _get_val(quiz, "difficulty", "Balanced")
 
         questions_raw = _get_val(quiz, "questions", [])
@@ -276,10 +329,58 @@ class QuizExporter:
             is_starred = (idx % 5 == 0)
             star_tag = " *" if is_starred else ""
 
-            # Resolve Question Media
-            q_imgs = _get_val(q, "question_images", []) or _get_val(q, "image_refs", []) or []
-            resolved_q_imgs = [_resolve_image_path(img) for img in q_imgs]
-            valid_q_imgs = [p for p in resolved_q_imgs if p is not None]
+            # Check historical source media fallback
+            hist_media = _get_hist_q_media(q)
+
+            # --- VIDEO DETECTION ---
+            cand_videos = (
+                list(_get_val(q, "question_video", []) or []) +
+                list(_get_val(q, "video_refs", []) or []) +
+                list(_get_val(q, "raw_media_refs", []) or []) +
+                list(_get_val(q, "image_refs", []) or []) +
+                list(hist_media.get("raw_media_refs", []) or [])
+            )
+            video_path = None
+            for cv in cand_videos:
+                if isinstance(cv, str) and cv.lower().endswith(('.mp4', '.m4v', '.mov', '.webm')):
+                    p = _resolve_media_path(cv)
+                    if p and p.exists():
+                        video_path = p
+                        break
+
+            # --- AUDIO DETECTION ---
+            cand_audios = (
+                list(_get_val(q, "question_audio", []) or []) +
+                list(_get_val(q, "audio_refs", []) or []) +
+                list(_get_val(q, "raw_media_refs", []) or []) +
+                list(hist_media.get("question_audio", []) or []) +
+                list(hist_media.get("audio_refs", []) or []) +
+                list(hist_media.get("raw_media_refs", []) or [])
+            )
+            audio_path = None
+            for ca in cand_audios:
+                if isinstance(ca, str) and ca.lower().endswith(('.mp3', '.wav', '.m4a', '.ogg')):
+                    p = _resolve_media_path(ca)
+                    if p and p.exists():
+                        audio_path = p
+                        break
+
+            # --- IMAGE DETECTION ---
+            cand_q_imgs = (
+                list(_get_val(q, "question_images", []) or []) +
+                list(_get_val(q, "image_refs", []) or []) +
+                list(hist_media.get("question_images", []) or []) +
+                list(hist_media.get("image_refs", []) or [])
+            )
+            resolved_q_imgs = []
+            for ci in cand_q_imgs:
+                if isinstance(ci, str) and not ci.lower().endswith(('.mp4', '.m4v', '.mov', '.mp3', '.wav')):
+                    p = _resolve_media_path(ci)
+                    if p and p.exists() and p not in resolved_q_imgs:
+                        resolved_q_imgs.append(p)
+
+            # Poster frame for video / audio
+            poster_path = resolved_q_imgs[0] if resolved_q_imgs else None
 
             q_text = (_get_val(q, "question_text") or _get_val(q, "question", "")).strip()
             options = _get_val(q, "options", []) or []
@@ -298,17 +399,24 @@ class QuizExporter:
             bg_q.line.fill.background()
 
             # Top Clean Tag (Category & Question Number)
+            media_type_tag = ""
+            if video_path:
+                media_type_tag = "   [VIDEO CLUE]"
+            elif audio_path:
+                media_type_tag = "   [AUDIO CLUE]"
+
             tb_qtag = sq.shapes.add_textbox(Inches(1.0), Inches(0.6), Inches(11.3), Inches(0.5))
             pq_tag = tb_qtag.text_frame.paragraphs[0]
-            aud_tag = "   [AUDIO CLUE]" if (_get_val(q, "question_audio", []) or _get_val(q, "audio_refs", [])) else ""
-            pq_tag.text = f"QUESTION {idx:02d}{star_tag}   /   {cat_text}{aud_tag}"
+            pq_tag.text = f"QUESTION {idx:02d}{star_tag}   /   {cat_text}{media_type_tag}"
             pq_tag.font.name = FONT_HEAD
             pq_tag.font.size = Pt(13)
             pq_tag.font.bold = True
             pq_tag.font.color.rgb = C_ACCENT_BLUE
 
-            if len(valid_q_imgs) == 1:
-                # 60/40 Minimalist Split: Left Text & Options, Right Image
+            # Question Body Text & Options (Left 60% if media present, full width otherwise)
+            has_media = bool(video_path or audio_path or resolved_q_imgs)
+
+            if has_media:
                 tb_q = sq.shapes.add_textbox(Inches(1.0), Inches(1.3), Inches(6.8), Inches(5.2))
                 tf_q = tb_q.text_frame
                 tf_q.word_wrap = True
@@ -330,26 +438,60 @@ class QuizExporter:
                         po.font.size = Pt(17)
                         po.font.color.rgb = C_TEXT_BODY
 
-                _add_scaled_picture(sq, valid_q_imgs[0], Inches(8.1), Inches(1.3), Inches(4.2), Inches(5.1))
+                # Media Placement on Right Side
+                if video_path:
+                    # 1. EMBEDDED VIDEO
+                    logger.info(f"Embedding video {video_path} into slide Q{idx}")
+                    sq.shapes.add_movie(
+                        str(video_path),
+                        Inches(8.1), Inches(1.3), Inches(4.5), Inches(5.0),
+                        poster_frame_image=str(poster_path) if poster_path else None,
+                        mime_type="video/mp4"
+                    )
+                elif audio_path:
+                    # 2. EMBEDDED AUDIO CLUE with Interactive Card
+                    logger.info(f"Embedding audio {audio_path} into slide Q{idx}")
+                    card = sq.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(8.1), Inches(1.8), Inches(4.2), Inches(3.6))
+                    card.fill.solid()
+                    card.fill.fore_color.rgb = C_CARD_BG
+                    card.line.color.rgb = C_CARD_BORDER
+                    card.line.width = Pt(1)
 
-            elif len(valid_q_imgs) >= 2:
-                # 2 Images: Question on Top, Side-by-side Images Below
-                tb_q = sq.shapes.add_textbox(Inches(1.0), Inches(1.2), Inches(11.3), Inches(1.8))
-                tf_q = tb_q.text_frame
-                tf_q.word_wrap = True
+                    tf_c = card.text_frame
+                    tf_c.word_wrap = True
+                    p_c1 = tf_c.paragraphs[0]
+                    p_c1.text = "🎧 AUDIO CLUE"
+                    p_c1.font.name = FONT_HEAD
+                    p_c1.font.size = Pt(16)
+                    p_c1.font.bold = True
+                    p_c1.font.color.rgb = C_ACCENT_GOLD
+                    p_c1.alignment = PP_ALIGN.CENTER
 
-                pq_main = tf_q.paragraphs[0]
-                pq_main.text = q_text
-                pq_main.font.name = FONT_HEAD
-                pq_main.font.size = Pt(24)
-                pq_main.font.bold = True
-                pq_main.font.color.rgb = C_TEXT_DARK
+                    p_c2 = tf_c.add_paragraph()
+                    p_c2.space_before = Pt(14)
+                    p_c2.text = "Click the speaker below to play the sound effect:"
+                    p_c2.font.name = FONT_BODY
+                    p_c2.font.size = Pt(14)
+                    p_c2.font.color.rgb = C_TEXT_MUTED
+                    p_c2.alignment = PP_ALIGN.CENTER
 
-                _add_scaled_picture(sq, valid_q_imgs[0], Inches(1.0), Inches(3.1), Inches(5.4), Inches(3.6))
-                _add_scaled_picture(sq, valid_q_imgs[1], Inches(6.8), Inches(3.1), Inches(5.4), Inches(3.6))
+                    # Embedded audio player object inside card
+                    sq.shapes.add_movie(
+                        str(audio_path),
+                        Inches(9.7), Inches(3.4), Inches(1.0), Inches(1.0),
+                        poster_frame_image=str(poster_path) if poster_path else None,
+                        mime_type="audio/mpeg"
+                    )
+                elif len(resolved_q_imgs) >= 2:
+                    # 3. MULTI-IMAGE (side-by-side or stacked)
+                    _add_scaled_picture(sq, resolved_q_imgs[0], Inches(8.1), Inches(1.3), Inches(4.2), Inches(2.4))
+                    _add_scaled_picture(sq, resolved_q_imgs[1], Inches(8.1), Inches(3.9), Inches(4.2), Inches(2.4))
+                elif len(resolved_q_imgs) == 1:
+                    # 4. SINGLE IMAGE
+                    _add_scaled_picture(sq, resolved_q_imgs[0], Inches(8.1), Inches(1.3), Inches(4.2), Inches(5.1))
 
             else:
-                # Full Width Layout with Generous Breathing Room
+                # Full Width Layout (Text Only)
                 tb_q = sq.shapes.add_textbox(Inches(1.2), Inches(1.6), Inches(10.9), Inches(5.0))
                 tf_q = tb_q.text_frame
                 tf_q.word_wrap = True
@@ -386,9 +528,10 @@ class QuizExporter:
                 host_notes.append("★ Important: Star tie-breaker question!")
             ans_val = (_get_val(q, "answer") or "N/A").strip()
             host_notes.append(f"Official Answer: {ans_val}")
-            aud_clips = _get_val(q, "question_audio", []) or _get_val(q, "audio_refs", [])
-            if aud_clips:
-                host_notes.append(f"Audio clue clip: {aud_clips[0]}")
+            if video_path:
+                host_notes.append(f"Video clue: {video_path.name}")
+            elif audio_path:
+                host_notes.append(f"Audio clue: {audio_path.name}")
             sq.notes_slide.notes_text_frame.text = "\n".join(host_notes)
 
             # ---------------------------------------------------------
@@ -410,16 +553,28 @@ class QuizExporter:
             pa_tag.font.color.rgb = C_ACCENT_GREEN
 
             # Resolve Answer Media
-            ans_imgs = _get_val(q, "answer_images", []) or []
-            resolved_ans_imgs = [_resolve_image_path(img) for img in ans_imgs]
-            valid_ans_imgs = [p for p in resolved_ans_imgs if p is not None]
-            if not valid_ans_imgs and valid_q_imgs:
-                valid_ans_imgs = valid_q_imgs
+            cand_ans_imgs = (
+                list(_get_val(q, "answer_images", []) or []) +
+                list(hist_media.get("answer_images", []) or []) +
+                list(_get_val(q, "image_refs", []) or []) +
+                list(hist_media.get("raw_media_refs", []) or [])
+            )
+            ans_img_path = None
+            for ai in cand_ans_imgs:
+                if isinstance(ai, str) and not ai.lower().endswith(('.mp4', '.m4v', '.mov', '.mp3', '.wav')):
+                    p = _resolve_media_path(ai)
+                    if p and p.exists():
+                        ans_img_path = p
+                        break
+
+            # Fallback to poster path if no distinct answer image
+            if not ans_img_path and poster_path:
+                ans_img_path = poster_path
 
             ans_size = Pt(40) if len(ans_val) < 35 else (Pt(32) if len(ans_val) < 70 else Pt(26))
             explanation = (_get_val(q, "explanation") or "").strip()
 
-            if valid_ans_imgs:
+            if ans_img_path:
                 # Answer & Story Left, Solution Image Right
                 tb_a = sa.shapes.add_textbox(Inches(1.0), Inches(1.3), Inches(6.8), Inches(5.2))
                 tf_a = tb_a.text_frame
@@ -440,7 +595,7 @@ class QuizExporter:
                     pa_exp.font.size = Pt(18)
                     pa_exp.font.color.rgb = C_TEXT_BODY
 
-                _add_scaled_picture(sa, valid_ans_imgs[0], Inches(8.1), Inches(1.3), Inches(4.2), Inches(5.1))
+                _add_scaled_picture(sa, ans_img_path, Inches(8.1), Inches(1.3), Inches(4.2), Inches(5.1))
 
             else:
                 # Full Width Answer & Explanation

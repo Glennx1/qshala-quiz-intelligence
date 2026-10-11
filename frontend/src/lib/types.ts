@@ -187,6 +187,9 @@ export interface GeneratedQuestion {
   audio_refs?: string[];
   question_audio?: string[];
   answer_audio?: string[];
+  video_refs?: string[];
+  question_video?: string[];
+  raw_media_refs?: string[];
   validation_status: 'PASSED' | 'WARNING' | 'FAILED';
   validation_details?: ValidationDetails;
   duplicate_score: number;

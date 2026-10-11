@@ -55,6 +55,9 @@ class GeneratedQuestionResponse(BaseModel):
     audio_refs: List[str] = []
     question_audio: List[str] = []
     answer_audio: List[str] = []
+    video_refs: List[str] = []
+    question_video: List[str] = []
+    raw_media_refs: List[str] = []
     visual_clues: Optional[str] = None
     validation_status: str
     validation_details: Optional[Dict[str, Any]] = None

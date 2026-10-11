@@ -60,6 +60,9 @@ class GeneratedQuestion(Base):
     audio_refs = Column(JSON, default=list)            # All audio URLs
     question_audio = Column(JSON, default=list)        # Clue / Question slide audio clips
     answer_audio = Column(JSON, default=list)          # Reveal / Answer slide audio clips
+    video_refs = Column(JSON, default=list)            # All video URLs
+    question_video = Column(JSON, default=list)        # Clue / Question slide video clips
+    raw_media_refs = Column(JSON, default=list)        # Raw media files
     visual_clues = Column(Text, nullable=True)         # OCR & visual description
     
     # Validation fields
