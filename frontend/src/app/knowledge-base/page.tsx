@@ -21,7 +21,7 @@ import {
   X,
   FileSpreadsheet
 } from 'lucide-react';
-import { api } from '../../lib/api';
+import { api, resolveMediaUrl } from '../../lib/api';
 import { HistoricalQuestion, TopicItem, DocumentItem } from '../../lib/types';
 import SlideViewerModal from '../../components/SlideViewerModal';
 import TagManagerModal from '../../components/TagManagerModal';
@@ -55,6 +55,23 @@ function KnowledgeBaseContent() {
   const [selectedDuplicateForReview, setSelectedDuplicateForReview] = useState<HistoricalQuestion | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [imgFallbackUrls, setImgFallbackUrls] = useState<Record<string, string>>({});
+
+  const getImageSrc = (rawUrl: string | null | undefined) => {
+    if (!rawUrl) return '';
+    if (imgFallbackUrls[rawUrl]) {
+      return imgFallbackUrls[rawUrl];
+    }
+    return resolveMediaUrl(rawUrl);
+  };
+
+  const handleImgError = (rawUrl: string) => {
+    const current = getImageSrc(rawUrl);
+    if (current.includes('/static/') && !current.includes('/api/v1/static/')) {
+      const altUrl = current.replace('/static/', '/api/v1/static/');
+      setImgFallbackUrls((prev) => ({ ...prev, [rawUrl]: altUrl }));
+    }
+  };
 
   // Fetch topics list, documents list, and duplicate count on mount
   useEffect(() => {
@@ -419,7 +436,12 @@ function KnowledgeBaseContent() {
                                 className="relative rounded-md overflow-hidden border border-slate-200 hover:border-blue-400 bg-white transition-all cursor-pointer group shadow-xs"
                                 title="Click to view clue image"
                               >
-                                <img src={imgUrl} alt={`Clue ${i + 1}`} className="h-9 w-13 object-cover group-hover:scale-105 transition-transform" />
+                                <img
+                                  src={getImageSrc(imgUrl)}
+                                  onError={() => handleImgError(imgUrl)}
+                                  alt={`Clue ${i + 1}`}
+                                  className="h-9 w-13 object-cover group-hover:scale-105 transition-transform"
+                                />
                               </button>
                             ))}
                             {q.answer_images && q.answer_images.length > 0 && q.answer_images.slice(0, 2).map((imgUrl, i) => (
@@ -430,7 +452,12 @@ function KnowledgeBaseContent() {
                                 className="relative rounded-md overflow-hidden border border-emerald-300 ring-1 ring-emerald-400/50 hover:border-emerald-500 bg-white transition-all cursor-pointer group shadow-xs"
                                 title="Click to view answer reveal image"
                               >
-                                <img src={imgUrl} alt={`Answer ${i + 1}`} className="h-9 w-13 object-cover group-hover:scale-105 transition-transform" />
+                                <img
+                                  src={getImageSrc(imgUrl)}
+                                  onError={() => handleImgError(imgUrl)}
+                                  alt={`Answer ${i + 1}`}
+                                  className="h-9 w-13 object-cover group-hover:scale-105 transition-transform"
+                                />
                               </button>
                             ))}
                           </div>
@@ -829,7 +856,8 @@ function KnowledgeBaseContent() {
               <X className="h-5 w-5" />
             </button>
             <img
-              src={previewImage}
+              src={getImageSrc(previewImage)}
+              onError={() => previewImage && handleImgError(previewImage)}
               alt="Vault Visual Asset"
               className="max-h-[82vh] w-auto object-contain rounded-lg mx-auto"
             />

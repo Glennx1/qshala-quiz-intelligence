@@ -71,10 +71,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static file directory for extracted slide assets
+class MultiDirStaticFiles(StaticFiles):
+    """Static file handler that falls back to bundled repository storage when running in serverless (/tmp)."""
+    def __init__(self, *args, fallback_dirs=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fallback_dirs = [Path(d) for d in (fallback_dirs or []) if Path(d).exists()]
+
+    def lookup_path(self, path: str):
+        full_path, stat_result = super().lookup_path(path)
+        if stat_result is not None:
+            return full_path, stat_result
+        for fb in self.fallback_dirs:
+            fb_path = fb / path
+            if fb_path.exists() and fb_path.is_file():
+                return str(fb_path.resolve()), fb_path.stat()
+        return full_path, stat_result
+
+# Mount static file directory for extracted slide assets with fallback
 settings.STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/static", StaticFiles(directory=str(settings.STORAGE_DIR)), name="static")
-app.mount(f"{settings.API_V1_STR}/static", StaticFiles(directory=str(settings.STORAGE_DIR)), name="api_v1_static")
+static_fallbacks = [
+    _backend_dir / "storage",
+    _project_root / "backend" / "storage",
+    _project_root / "storage",
+]
+app.mount("/static", MultiDirStaticFiles(directory=str(settings.STORAGE_DIR), fallback_dirs=static_fallbacks), name="static")
+app.mount(f"{settings.API_V1_STR}/static", MultiDirStaticFiles(directory=str(settings.STORAGE_DIR), fallback_dirs=static_fallbacks), name="api_v1_static")
 
 # Mount API routers
 app.include_router(stats.router, prefix=settings.API_V1_STR)

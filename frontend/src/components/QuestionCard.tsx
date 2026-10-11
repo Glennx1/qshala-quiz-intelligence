@@ -18,6 +18,7 @@ import {
   Eye,
 } from 'lucide-react';
 import { GeneratedQuestion, RetrievalSource } from '../lib/types';
+import { resolveMediaUrl } from '../lib/api';
 
 interface Props {
   question: GeneratedQuestion;
@@ -42,6 +43,23 @@ export default function QuestionCard({
   const [showSource, setShowSource] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [activeImageModal, setActiveImageModal] = useState<string | null>(null);
+  const [imgFallbackUrls, setImgFallbackUrls] = useState<Record<string, string>>({});
+
+  const getImageSrc = (rawUrl: string | null | undefined) => {
+    if (!rawUrl) return '';
+    if (imgFallbackUrls[rawUrl]) {
+      return imgFallbackUrls[rawUrl];
+    }
+    return resolveMediaUrl(rawUrl);
+  };
+
+  const handleImgError = (rawUrl: string) => {
+    const current = getImageSrc(rawUrl);
+    if (current.includes('/static/') && !current.includes('/api/v1/static/')) {
+      const altUrl = current.replace('/static/', '/api/v1/static/');
+      setImgFallbackUrls((prev) => ({ ...prev, [rawUrl]: altUrl }));
+    }
+  };
 
   const handleSave = async () => {
     await onUpdate(question.id, {
@@ -170,7 +188,8 @@ export default function QuestionCard({
                     className="relative group rounded-lg overflow-hidden border border-slate-200 bg-white hover:border-blue-400 shadow-sm transition-all cursor-pointer"
                   >
                     <img
-                      src={imgUrl}
+                      src={getImageSrc(imgUrl)}
+                      onError={() => handleImgError(imgUrl)}
                       alt={`Question Clue ${i + 1}`}
                       className="h-16 w-24 object-cover group-hover:scale-105 transition-transform duration-200"
                     />
@@ -283,7 +302,8 @@ export default function QuestionCard({
                     className="relative group rounded-lg overflow-hidden border border-emerald-200 bg-white hover:border-emerald-500 shadow-sm transition-all cursor-pointer"
                   >
                     <img
-                      src={imgUrl}
+                      src={getImageSrc(imgUrl)}
+                      onError={() => handleImgError(imgUrl)}
                       alt={`Answer Image ${i + 1}`}
                       className="h-16 w-24 object-cover group-hover:scale-105 transition-transform duration-200"
                     />
@@ -431,7 +451,8 @@ export default function QuestionCard({
               <X className="h-5 w-5" />
             </button>
             <img
-              src={activeImageModal}
+              src={getImageSrc(activeImageModal)}
+              onError={() => activeImageModal && handleImgError(activeImageModal)}
               alt="Enlarged Visual Clue"
               className="max-h-[82vh] w-auto object-contain rounded-lg mx-auto"
             />

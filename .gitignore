@@ -31,6 +31,8 @@ backend/storage/uploads/*
 !backend/storage/uploads/.gitkeep
 backend/storage/slides/*
 !backend/storage/slides/.gitkeep
+!backend/storage/slides/668b4c1f-ca4e-483b-8fe4-cacd4cb82f75/
+!backend/storage/slides/668b4c1f-ca4e-483b-8fe4-cacd4cb82f75/**
 backend/storage/chroma/
 scratch/
 Quizzards*.pptx

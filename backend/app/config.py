@@ -66,6 +66,28 @@ if is_vercel:
                     shutil.copy2(f, dest_f)
     except Exception as e:
         print(f"[Vercel Init] Failed to copy sample decks: {e}", file=sys.stderr)
+
+    candidate_slide_dirs = [
+        BASE_DIR / "storage" / "slides",
+        Path.cwd() / "storage" / "slides",
+        Path.cwd() / "backend" / "storage" / "slides",
+        PROJECT_ROOT / "backend" / "storage" / "slides",
+    ]
+    bundled_slides = next((p for p in candidate_slide_dirs if p.exists()), None)
+    tmp_slides = STORAGE_DIR / "slides"
+    if bundled_slides and bundled_slides.exists():
+        try:
+            tmp_slides.mkdir(parents=True, exist_ok=True)
+            for item in bundled_slides.rglob("*"):
+                if item.is_file():
+                    rel = item.relative_to(bundled_slides)
+                    target = tmp_slides / rel
+                    if not target.exists():
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(item, target)
+            print(f"[Vercel Init] Seeded slide assets copied to {tmp_slides}", file=sys.stderr)
+        except Exception as e:
+            print(f"[Vercel Init] Failed to copy bundled slides: {e}", file=sys.stderr)
 else:
     STORAGE_DIR = BASE_DIR / "storage"
     default_db_url = f"sqlite:///{(BASE_DIR / 'qshala.db').resolve().as_posix()}"
