@@ -35,29 +35,17 @@ export function resolveMediaUrl(url: string | null | undefined): string {
   }
   const cleanPath = url.startsWith('/') ? url : `/${url}`;
   
-  // Prefer /api/v1/static/ so image requests always route via the backend service rewrite on Vercel
-  const normalizedPath = cleanPath.startsWith('/static/')
-    ? `/api/v1${cleanPath}`
-    : cleanPath;
-
-  const apiBase = getApiBase();
-  if (apiBase.startsWith('http')) {
-    try {
-      const origin = new URL(apiBase).origin;
-      return `${origin}${normalizedPath}`;
-    } catch {
-      return normalizedPath;
-    }
-  }
-  return normalizedPath;
+  // Return static edge path directly so Next.js Edge CDN serves assets with 0ms cold start
+  return cleanPath;
 }
 
 export function getFallbackMediaUrl(currentUrl: string): string | null {
   if (!currentUrl) return null;
-  if (currentUrl.includes('/api/v1/static/')) {
-    return currentUrl.replace('/api/v1/static/', '/static/');
+  // If the Edge CDN static request fails, fallback to backend API service /api/v1/static/
+  if (currentUrl.startsWith('/static/')) {
+    return `/api/v1${currentUrl}`;
   }
-  if (currentUrl.includes('/static/')) {
+  if (currentUrl.includes('/static/') && !currentUrl.includes('/api/v1/static/')) {
     return currentUrl.replace('/static/', '/api/v1/static/');
   }
   return null;

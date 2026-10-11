@@ -37,6 +37,8 @@ backend/storage/chroma/
 scratch/
 Quizzards*.pptx
 *optimized*.pptx
+*.pptx
+!backend/sample_decks/*.pptx
 
 # Environment Variables & Secrets
 .env
