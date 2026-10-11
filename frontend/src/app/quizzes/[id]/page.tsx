@@ -17,7 +17,7 @@ import {
   Sparkles,
   Tag,
 } from 'lucide-react';
-import { api } from '../../../lib/api';
+import { api, resolveMediaUrl, getFallbackMediaUrl } from '../../../lib/api';
 import { Quiz, GeneratedQuestion, RetrievalSource } from '../../../lib/types';
 import QuestionCard from '../../../components/QuestionCard';
 import SlideViewerModal from '../../../components/SlideViewerModal';
@@ -33,6 +33,23 @@ export default function QuizReviewStudioPage() {
   // Live Slide Deck Presentation Mode
   const [isPresenting, setIsPresenting] = useState(false);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const [imgFallbackUrls, setImgFallbackUrls] = useState<Record<string, string>>({});
+
+  const getImageSrc = (rawUrl: string | null | undefined) => {
+    if (!rawUrl) return '';
+    if (imgFallbackUrls[rawUrl]) {
+      return imgFallbackUrls[rawUrl];
+    }
+    return resolveMediaUrl(rawUrl);
+  };
+
+  const handleImgError = (rawUrl: string) => {
+    const current = getImageSrc(rawUrl);
+    const altUrl = getFallbackMediaUrl(current);
+    if (altUrl && !imgFallbackUrls[rawUrl]) {
+      setImgFallbackUrls((prev) => ({ ...prev, [rawUrl]: altUrl }));
+    }
+  };
 
   const fetchQuiz = async () => {
     try {
@@ -98,6 +115,14 @@ export default function QuizReviewStudioPage() {
   };
 
   const handleViewSource = (src: RetrievalSource) => {
+    // Find parent question for image assets if available
+    const parentQ = quiz?.questions.find(q =>
+      q.retrieval_sources?.some(s => s.id === src.id || (s.slide_number === src.slide_number && s.document_title === src.document_title))
+    );
+    const qImgs = parentQ ? (parentQ.question_images && parentQ.question_images.length > 0 ? parentQ.question_images : parentQ.image_refs || []) : [];
+    const ansImgs = parentQ?.answer_images || [];
+    const allImgs = Array.from(new Set([...qImgs, ...ansImgs]));
+
     setSelectedSlide({
       document_title: src.document_title,
       slide_number: src.slide_number,
@@ -105,6 +130,7 @@ export default function QuizReviewStudioPage() {
       extracted_text: src.source_quote,
       speaker_notes: src.rationale,
       slide_type: 'HISTORICAL_SOURCE',
+      image_paths: allImgs,
     });
   };
 
@@ -344,7 +370,8 @@ export default function QuizReviewStudioPage() {
                       {hasImgs && (
                         <div className="flex flex-col items-center justify-center bg-slate-50 rounded-xl border border-slate-200 p-2 overflow-hidden shadow-xs">
                           <img
-                            src={qImgs[0]}
+                            src={getImageSrc(qImgs[0])}
+                            onError={() => handleImgError(qImgs[0])}
                             alt="Question Clue"
                             className="max-h-[320px] w-auto object-contain rounded-lg shadow-sm"
                           />
@@ -395,7 +422,8 @@ export default function QuizReviewStudioPage() {
                       {hasImgs && (
                         <div className="flex flex-col items-center justify-center bg-slate-50 rounded-xl border border-emerald-200/80 p-2 overflow-hidden shadow-xs">
                           <img
-                            src={ansImgs[0]}
+                            src={getImageSrc(ansImgs[0])}
+                            onError={() => handleImgError(ansImgs[0])}
                             alt="Answer Reveal Visual"
                             className="max-h-[320px] w-auto object-contain rounded-lg shadow-sm"
                           />

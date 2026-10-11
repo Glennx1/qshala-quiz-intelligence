@@ -34,16 +34,33 @@ export function resolveMediaUrl(url: string | null | undefined): string {
     return url;
   }
   const cleanPath = url.startsWith('/') ? url : `/${url}`;
+  
+  // Prefer /api/v1/static/ so image requests always route via the backend service rewrite on Vercel
+  const normalizedPath = cleanPath.startsWith('/static/')
+    ? `/api/v1${cleanPath}`
+    : cleanPath;
+
   const apiBase = getApiBase();
   if (apiBase.startsWith('http')) {
     try {
       const origin = new URL(apiBase).origin;
-      return `${origin}${cleanPath}`;
+      return `${origin}${normalizedPath}`;
     } catch {
-      return cleanPath;
+      return normalizedPath;
     }
   }
-  return cleanPath;
+  return normalizedPath;
+}
+
+export function getFallbackMediaUrl(currentUrl: string): string | null {
+  if (!currentUrl) return null;
+  if (currentUrl.includes('/api/v1/static/')) {
+    return currentUrl.replace('/api/v1/static/', '/static/');
+  }
+  if (currentUrl.includes('/static/')) {
+    return currentUrl.replace('/static/', '/api/v1/static/');
+  }
+  return null;
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {

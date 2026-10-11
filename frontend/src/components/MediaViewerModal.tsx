@@ -14,7 +14,7 @@ import {
   Maximize2
 } from 'lucide-react';
 import { HistoricalQuestion } from '../lib/types';
-import { resolveMediaUrl } from '../lib/api';
+import { resolveMediaUrl, getFallbackMediaUrl } from '../lib/api';
 
 interface MediaViewerModalProps {
   question: HistoricalQuestion | null;
@@ -37,8 +37,8 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
 
   const handleImageError = (rawUrl: string) => {
     const current = getImageSrc(rawUrl);
-    if (current.includes('/static/') && !current.includes('/api/v1/static/')) {
-      const altUrl = current.replace('/static/', '/api/v1/static/');
+    const altUrl = getFallbackMediaUrl(current);
+    if (altUrl && !fallbackUrls[rawUrl]) {
       setFallbackUrls((prev) => ({ ...prev, [rawUrl]: altUrl }));
     } else {
       setImageErrors((prev) => ({ ...prev, [rawUrl]: true }));
@@ -408,6 +408,12 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
             src={fullscreenImage}
             alt="Fullscreen view"
             className="max-h-[95vh] max-w-[95vw] object-contain rounded-lg"
+            onError={() => {
+              const altUrl = getFallbackMediaUrl(fullscreenImage);
+              if (altUrl && altUrl !== fullscreenImage) {
+                setFullscreenImage(altUrl);
+              }
+            }}
           />
         </div>
       )}

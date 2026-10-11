@@ -20,7 +20,7 @@ import {
   Headphones,
 } from 'lucide-react';
 import { GeneratedQuestion, RetrievalSource } from '../lib/types';
-import { resolveMediaUrl } from '../lib/api';
+import { resolveMediaUrl, getFallbackMediaUrl } from '../lib/api';
 
 interface Props {
   question: GeneratedQuestion;
@@ -57,8 +57,8 @@ export default function QuestionCard({
 
   const handleImgError = (rawUrl: string) => {
     const current = getImageSrc(rawUrl);
-    if (current.includes('/static/') && !current.includes('/api/v1/static/')) {
-      const altUrl = current.replace('/static/', '/api/v1/static/');
+    const altUrl = getFallbackMediaUrl(current);
+    if (altUrl && !imgFallbackUrls[rawUrl]) {
       setImgFallbackUrls((prev) => ({ ...prev, [rawUrl]: altUrl }));
     }
   };

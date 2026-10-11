@@ -21,7 +21,7 @@ import {
   X,
   FileSpreadsheet
 } from 'lucide-react';
-import { api, resolveMediaUrl } from '../../lib/api';
+import { api, resolveMediaUrl, getFallbackMediaUrl } from '../../lib/api';
 import { HistoricalQuestion, TopicItem, DocumentItem } from '../../lib/types';
 import SlideViewerModal from '../../components/SlideViewerModal';
 import TagManagerModal from '../../components/TagManagerModal';
@@ -67,8 +67,8 @@ function KnowledgeBaseContent() {
 
   const handleImgError = (rawUrl: string) => {
     const current = getImageSrc(rawUrl);
-    if (current.includes('/static/') && !current.includes('/api/v1/static/')) {
-      const altUrl = current.replace('/static/', '/api/v1/static/');
+    const altUrl = getFallbackMediaUrl(current);
+    if (altUrl && !imgFallbackUrls[rawUrl]) {
       setImgFallbackUrls((prev) => ({ ...prev, [rawUrl]: altUrl }));
     }
   };
@@ -156,12 +156,19 @@ function KnowledgeBaseContent() {
   };
 
   const handleViewSlide = (q: HistoricalQuestion) => {
+    const qImgs = (q.question_images && q.question_images.length > 0)
+      ? q.question_images
+      : (q.image_refs || []);
+    const ansImgs = q.answer_images || [];
+    const allSlideImgs = Array.from(new Set([...qImgs, ...ansImgs]));
+
     setSelectedSlide({
       document_title: q.document_title,
       slide_number: q.slide_number,
       extracted_text: `${q.question_text}\n\n${(q.options || []).join('\n')}\n\nAnswer: ${q.answer}`,
       speaker_notes: q.explanation,
       slide_type: 'QUESTION',
+      image_paths: allSlideImgs,
     });
   };
 

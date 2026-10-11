@@ -1,6 +1,8 @@
 'use client';
 
+import { useState } from 'react';
 import { X, Bookmark, Image as ImageIcon } from 'lucide-react';
+import { resolveMediaUrl, getFallbackMediaUrl } from '../lib/api';
 
 interface Props {
   isOpen: boolean;
@@ -17,7 +19,25 @@ interface Props {
 }
 
 export default function SlideViewerModal({ isOpen, onClose, slide }: Props) {
+  const [fallbackUrls, setFallbackUrls] = useState<Record<string, string>>({});
+
   if (!isOpen || !slide) return null;
+
+  const getImageSrc = (rawUrl: string) => {
+    if (!rawUrl) return '';
+    if (fallbackUrls[rawUrl]) {
+      return fallbackUrls[rawUrl];
+    }
+    return resolveMediaUrl(rawUrl);
+  };
+
+  const handleImgError = (rawUrl: string) => {
+    const current = getImageSrc(rawUrl);
+    const altUrl = getFallbackMediaUrl(current);
+    if (altUrl && !fallbackUrls[rawUrl]) {
+      setFallbackUrls((prev) => ({ ...prev, [rawUrl]: altUrl }));
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm animate-in fade-in">
@@ -86,7 +106,8 @@ export default function SlideViewerModal({ isOpen, onClose, slide }: Props) {
                 {slide.image_paths.map((img, idx) => (
                   <img
                     key={idx}
-                    src={img}
+                    src={getImageSrc(img)}
+                    onError={() => handleImgError(img)}
                     alt={`Slide asset ${idx + 1}`}
                     className="rounded-lg border border-slate-200 bg-slate-50 object-contain h-32 w-full"
                   />

@@ -59,9 +59,26 @@ def diagnostics():
     }
 
 try:
-    from backend.app.main import app as qshala_app
+    from backend.app.main import app as qshala_app, MultiDirStaticFiles
+    from backend.app.config import settings
+
     for r in qshala_app.routes:
         app.routes.append(r)
+
+    # Direct root mounts to guarantee static asset resolution on Vercel
+    static_dirs = [
+        _current_dir / "storage",
+        _parent_dir / "backend" / "storage",
+        settings.STORAGE_DIR,
+    ]
+    slide_dirs = [
+        _current_dir / "storage" / "slides",
+        _parent_dir / "backend" / "storage" / "slides",
+        settings.SLIDES_DIR,
+    ]
+    app.mount("/static", MultiDirStaticFiles(directory=str(settings.STORAGE_DIR), fallback_dirs=static_dirs), name="root_static")
+    app.mount(f"{settings.API_V1_STR}/static", MultiDirStaticFiles(directory=str(settings.STORAGE_DIR), fallback_dirs=static_dirs), name="root_api_static")
+    app.mount("/slides", MultiDirStaticFiles(directory=str(settings.SLIDES_DIR), fallback_dirs=slide_dirs), name="root_slides")
 except Exception as e:
     import traceback
     _init_error = str(e)

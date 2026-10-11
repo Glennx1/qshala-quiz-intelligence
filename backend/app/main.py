@@ -94,8 +94,15 @@ static_fallbacks = [
     _project_root / "backend" / "storage",
     _project_root / "storage",
 ]
+slide_fallbacks = [
+    _backend_dir / "storage" / "slides",
+    _project_root / "backend" / "storage" / "slides",
+    _project_root / "storage" / "slides",
+    settings.SLIDES_DIR,
+]
 app.mount("/static", MultiDirStaticFiles(directory=str(settings.STORAGE_DIR), fallback_dirs=static_fallbacks), name="static")
 app.mount(f"{settings.API_V1_STR}/static", MultiDirStaticFiles(directory=str(settings.STORAGE_DIR), fallback_dirs=static_fallbacks), name="api_v1_static")
+app.mount("/slides", MultiDirStaticFiles(directory=str(settings.SLIDES_DIR), fallback_dirs=slide_fallbacks), name="slides")
 
 # Mount API routers
 app.include_router(stats.router, prefix=settings.API_V1_STR)
