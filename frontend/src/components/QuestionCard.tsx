@@ -12,6 +12,10 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  Image as ImageIcon,
+  X,
+  ZoomIn,
+  Eye,
 } from 'lucide-react';
 import { GeneratedQuestion, RetrievalSource } from '../lib/types';
 
@@ -37,6 +41,7 @@ export default function QuestionCard({
   const [explanation, setExplanation] = useState(question.explanation || '');
   const [showSource, setShowSource] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [activeImageModal, setActiveImageModal] = useState<string | null>(null);
 
   const handleSave = async () => {
     await onUpdate(question.id, {
@@ -124,7 +129,7 @@ export default function QuestionCard({
       {/* Question Content: QShala Slide Pair Presentation */}
       <div className="space-y-3.5">
         {/* Slide 1: Question Slide */}
-        <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-4 space-y-2">
+        <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-4 space-y-2.5">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
@@ -143,6 +148,50 @@ export default function QuestionCard({
             <h3 className="text-[15px] sm:text-[16px] font-semibold text-slate-900 leading-relaxed">
               {question.question_text}
             </h3>
+          )}
+
+          {/* Clue Images Thumbnails */}
+          {((question.question_images && question.question_images.length > 0) ||
+            (question.image_refs && question.image_refs.length > 0)) && (
+            <div className="mt-3 pt-2.5 border-t border-slate-200/60">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-2 flex items-center gap-1.5">
+                <ImageIcon className="h-3.5 w-3.5 text-blue-500" />
+                Visual Clues & Reference Assets
+              </span>
+              <div className="flex flex-wrap gap-2.5 items-center">
+                {(question.question_images && question.question_images.length > 0
+                  ? question.question_images
+                  : question.image_refs || []
+                ).map((imgUrl, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setActiveImageModal(imgUrl)}
+                    className="relative group rounded-lg overflow-hidden border border-slate-200 bg-white hover:border-blue-400 shadow-sm transition-all cursor-pointer"
+                  >
+                    <img
+                      src={imgUrl}
+                      alt={`Question Clue ${i + 1}`}
+                      className="h-16 w-24 object-cover group-hover:scale-105 transition-transform duration-200"
+                    />
+                    <div className="absolute inset-0 bg-slate-950/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                      <ZoomIn className="h-4 w-4 text-white drop-shadow" />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Visual Clues / OCR description badge */}
+          {question.visual_clues && (
+            <div className="rounded-md bg-indigo-50/80 border border-indigo-100 p-2 text-[11.5px] text-indigo-900 flex items-start gap-1.5 mt-2">
+              <Eye className="h-3.5 w-3.5 text-indigo-600 mt-0.5 shrink-0" />
+              <div className="leading-snug">
+                <span className="font-semibold text-indigo-950">Vision OCR / Context: </span>
+                <span className="text-indigo-800 line-clamp-2">{question.visual_clues}</span>
+              </div>
+            </div>
           )}
         </div>
 
@@ -217,6 +266,35 @@ export default function QuestionCard({
               </span>
             )}
           </div>
+
+          {/* Answer Images Thumbnails */}
+          {question.answer_images && question.answer_images.length > 0 && (
+            <div className="mt-2.5 pt-2 border-t border-emerald-100/80">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 block mb-2 flex items-center gap-1.5">
+                <ImageIcon className="h-3.5 w-3.5 text-emerald-600" />
+                Answer Reveal Images
+              </span>
+              <div className="flex flex-wrap gap-2.5 items-center">
+                {question.answer_images.map((imgUrl, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setActiveImageModal(imgUrl)}
+                    className="relative group rounded-lg overflow-hidden border border-emerald-200 bg-white hover:border-emerald-500 shadow-sm transition-all cursor-pointer"
+                  >
+                    <img
+                      src={imgUrl}
+                      alt={`Answer Image ${i + 1}`}
+                      className="h-16 w-24 object-cover group-hover:scale-105 transition-transform duration-200"
+                    />
+                    <div className="absolute inset-0 bg-slate-950/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                      <ZoomIn className="h-4 w-4 text-white drop-shadow" />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {(question.explanation || isEditing) && (
             <div className="pt-2 border-t border-emerald-100/80 text-[13px] text-slate-600 leading-relaxed space-y-1">
@@ -335,6 +413,31 @@ export default function QuestionCard({
           <Trash2 className="h-4 w-4" />
         </button>
       </div>
+
+      {/* Lightbox Image Zoom Modal */}
+      {activeImageModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 cursor-pointer"
+          onClick={() => setActiveImageModal(null)}
+        >
+          <div
+            className="relative max-w-4xl max-h-[90vh] bg-white rounded-xl shadow-2xl p-2 border border-slate-700 overflow-hidden cursor-default"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setActiveImageModal(null)}
+              className="absolute top-3 right-3 z-10 rounded-full bg-slate-900/70 p-1.5 text-white hover:bg-slate-900 transition-colors cursor-pointer"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <img
+              src={activeImageModal}
+              alt="Enlarged Visual Clue"
+              className="max-h-[82vh] w-auto object-contain rounded-lg mx-auto"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

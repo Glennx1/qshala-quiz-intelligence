@@ -53,6 +53,12 @@ class GeneratedQuestion(Base):
     topic = Column(String(100), nullable=True)
     question_type = Column(String(50), default="SLIDE_QA")
     
+    # Multimodal media & visual clues
+    image_refs = Column(JSON, default=list)            # All image URLs
+    question_images = Column(JSON, default=list)       # Clue / Question slide images
+    answer_images = Column(JSON, default=list)         # Reveal / Answer slide images
+    visual_clues = Column(Text, nullable=True)         # OCR & visual description
+    
     # Validation fields
     validation_status = Column(String(50), default="PASSED")  # PASSED, WARNING, FAILED
     validation_details = Column(JSON, default=dict)

@@ -62,6 +62,8 @@ export interface HistoricalQuestion {
   duplicate_of_text?: string | null;
   duplicate_of_answer?: string | null;
   image_refs?: string[];
+  question_images?: string[];
+  answer_images?: string[];
   visual_clues?: string | null;
   audio_transcript?: string | null;
   video_transcript?: string | null;
@@ -175,6 +177,10 @@ export interface GeneratedQuestion {
   grade_max?: number;
   topic?: string;
   question_type: string;
+  image_refs?: string[];
+  question_images?: string[];
+  answer_images?: string[];
+  visual_clues?: string | null;
   validation_status: 'PASSED' | 'WARNING' | 'FAILED';
   validation_details?: ValidationDetails;
   duplicate_score: number;

@@ -54,6 +54,7 @@ function KnowledgeBaseContent() {
   const [selectedQuestionForMedia, setSelectedQuestionForMedia] = useState<HistoricalQuestion | null>(null);
   const [selectedDuplicateForReview, setSelectedDuplicateForReview] = useState<HistoricalQuestion | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   // Fetch topics list, documents list, and duplicate count on mount
   useEffect(() => {
@@ -407,7 +408,35 @@ function KnowledgeBaseContent() {
                           Answer: <span className="font-semibold text-slate-800">{q.answer}</span>
                         </div>
 
-                        {/* Multimodal Badges & Media Preview Trigger */}
+                        {/* Clue and Answer Images Thumbnails */}
+                        {((q.question_images && q.question_images.length > 0) || (q.image_refs && q.image_refs.length > 0) || (q.answer_images && q.answer_images.length > 0)) && (
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                            {(q.question_images && q.question_images.length > 0 ? q.question_images : q.image_refs || []).slice(0, 3).map((imgUrl, i) => (
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={() => setPreviewImage(imgUrl)}
+                                className="relative rounded-md overflow-hidden border border-slate-200 hover:border-blue-400 bg-white transition-all cursor-pointer group shadow-xs"
+                                title="Click to view clue image"
+                              >
+                                <img src={imgUrl} alt={`Clue ${i + 1}`} className="h-9 w-13 object-cover group-hover:scale-105 transition-transform" />
+                              </button>
+                            ))}
+                            {q.answer_images && q.answer_images.length > 0 && q.answer_images.slice(0, 2).map((imgUrl, i) => (
+                              <button
+                                key={`ans-${i}`}
+                                type="button"
+                                onClick={() => setPreviewImage(imgUrl)}
+                                className="relative rounded-md overflow-hidden border border-emerald-300 ring-1 ring-emerald-400/50 hover:border-emerald-500 bg-white transition-all cursor-pointer group shadow-xs"
+                                title="Click to view answer reveal image"
+                              >
+                                <img src={imgUrl} alt={`Answer ${i + 1}`} className="h-9 w-13 object-cover group-hover:scale-105 transition-transform" />
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Multimodal Badges: Images, Audio, Video */}
                         <div className="mt-2 flex flex-wrap items-center gap-1.5">
                           {((q.image_refs && q.image_refs.length > 0) || q.visual_clues || q.audio_transcript || q.video_transcript || (q.raw_media_refs && q.raw_media_refs.length > 0)) && (
                             <button
@@ -781,6 +810,31 @@ function KnowledgeBaseContent() {
           question={selectedQuestionForMedia}
           onClose={() => setSelectedQuestionForMedia(null)}
         />
+      )}
+
+      {/* Lightbox Image Zoom Modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 cursor-pointer"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div
+            className="relative max-w-4xl max-h-[90vh] bg-white rounded-xl shadow-2xl p-2 border border-slate-700 overflow-hidden cursor-default"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="absolute top-3 right-3 z-10 rounded-full bg-slate-900/70 p-1.5 text-white hover:bg-slate-900 transition-colors cursor-pointer"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <img
+              src={previewImage}
+              alt="Vault Visual Asset"
+              className="max-h-[82vh] w-auto object-contain rounded-lg mx-auto"
+            />
+          </div>
+        </div>
       )}
     </div>
   );

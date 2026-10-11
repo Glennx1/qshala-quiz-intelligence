@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from backend.app.models.document import Document, Slide
 from backend.app.models.question import Question
+from backend.app.config import settings
 from backend.app.services.ingestion.pptx_parser import PPTXParser
 from backend.app.services.ingestion.pdf_parser import PDFParser
 from backend.app.services.ingestion.slide_classifier import SlideClassifier
@@ -11,7 +12,7 @@ from backend.app.services.ingestion.question_extractor import QuestionExtractor
 from backend.app.services.tagging.auto_tagger import AutoTagger
 from backend.app.services.tagging.difficulty_engine import DifficultyEngine
 from backend.app.services.deduplication.deduplicator import Deduplicator
-from backend.app.services.ai.factory import get_embedding_provider
+from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class IngestionPipeline:
         self.difficulty_engine = DifficultyEngine()
         self.deduplicator = Deduplicator()
         self.embedding_provider = get_embedding_provider()
+        self.llm_provider = get_llm_provider()
 
     async def run(self, document_id: str):
         INGESTION_STATUS_REGISTRY[document_id] = {
@@ -125,25 +127,58 @@ class IngestionPipeline:
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "progress_percentage": 75,
                 "questions_extracted": len(raw_questions),
-                "current_step": "5. Intelligent multi-topic tagging & difficulty scoring"
+                "current_step": "5. Multimodal visual inspection & intelligent tagging"
             })
 
             enriched_questions = []
             for q in raw_questions:
-                # 1. Multi-topic and entity tagging
+                # 0. Multimodal Visual Clues Inspection
+                visual_clues_list = []
+                # Inspect question images first (and clue images)
+                target_imgs = list(q.get("question_images") or [])
+                for rel_img_path in target_imgs:
+                    disk_path = None
+                    if rel_img_path.startswith("/static/slides/"):
+                        sub = rel_img_path[len("/static/slides/"):]
+                        cand = settings.SLIDES_DIR / sub
+                        if cand.exists():
+                            disk_path = cand
+                    elif rel_img_path.startswith("/static/"):
+                        cand = settings.STORAGE_DIR / rel_img_path.lstrip("/static/")
+                        if cand.exists():
+                            disk_path = cand
+
+                    if disk_path and disk_path.exists():
+                        try:
+                            with open(disk_path, "rb") as f:
+                                img_bytes = f.read()
+                            ext = disk_path.suffix.lower()
+                            mime = "image/png" if ext == ".png" else ("image/jpeg" if ext in [".jpg", ".jpeg"] else "image/webp")
+                            desc = await self.llm_provider.describe_image(img_bytes, mime_type=mime)
+                            if desc and desc.strip():
+                                visual_clues_list.append(desc.strip())
+                        except Exception as vision_err:
+                            logger.warning(f"Failed to describe image {rel_img_path}: {vision_err}")
+
+                visual_clues_str = "\n".join(visual_clues_list) if visual_clues_list else None
+                q["visual_clues"] = visual_clues_str
+
+                # 1. Multi-topic and entity tagging (including visual clues)
                 is_multimodal = bool(
                     q.get("image_refs") or
+                    q.get("question_images") or
                     q.get("media_items") or
                     q.get("audio_transcript") or
                     q.get("video_transcript") or
                     q.get("raw_media_refs")
                 )
+
                 tags_data = self.auto_tagger.tag_question(
                     question_text=q["question_text"],
                     answer_text=q["answer"],
                     explanation=q.get("explanation", ""),
                     doc_title=doc.title,
-                    visual_clues=q.get("visual_clues", ""),
+                    visual_clues=visual_clues_str or q.get("visual_clues", "") or "",
                     audio_transcript=q.get("audio_transcript", ""),
                     video_transcript=q.get("video_transcript", "")
                 )
@@ -183,7 +218,7 @@ class IngestionPipeline:
                 q["_emb_idx"] = idx
 
             texts_to_embed = [
-                f"{q['primary_topic']} {' '.join(q.get('topics') or [])} {q['question_text']} {q['answer']} {q.get('explanation') or ''}"
+                f"{q['primary_topic']} {' '.join(q.get('topics') or [])} {q['question_text']} {q['answer']} {q.get('visual_clues') or ''} {q.get('explanation') or ''}".strip()
                 for q in enriched_questions
             ]
 
@@ -248,6 +283,9 @@ class IngestionPipeline:
                     source_year=q_data.get("source_year", doc.year),
                     round_number=q_data.get("round_number"),
                     image_refs=q_data.get("image_refs", []),
+                    question_images=q_data.get("question_images", []),
+                    answer_images=q_data.get("answer_images", []),
+                    visual_clues=q_data.get("visual_clues"),
                     audio_transcript=q_data.get("audio_transcript"),
                     video_transcript=q_data.get("video_transcript"),
                     raw_media_refs=q_data.get("raw_media_refs", []),

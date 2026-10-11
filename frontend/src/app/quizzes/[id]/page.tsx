@@ -302,49 +302,108 @@ export default function QuizReviewStudioPage() {
             </div>
 
             {/* Slide Stage Body */}
-            <div className="flex-1 p-8 sm:p-12 flex flex-col justify-center">
+            <div className="flex-1 p-6 sm:p-10 flex flex-col justify-center overflow-y-auto max-h-[75vh]">
               {!isAnswerSlide ? (
                 /* Question Slide Content */
-                <div className="space-y-6">
-                  <div className="text-[13px] font-bold tracking-wider text-blue-600 uppercase flex items-center gap-2">
-                    <Sparkles className="h-4 w-4" />
-                    <span>QShala Question Slide</span>
-                  </div>
-                  <h2 className="text-[24px] sm:text-[32px] font-bold text-slate-900 leading-snug">
-                    {currentQuestion.question_text}
-                  </h2>
-                  <p className="text-[14px] text-slate-500 italic">
-                    Think carefully... click Next Slide to reveal the answer!
-                  </p>
-                </div>
+                (() => {
+                  const qImgs = (currentQuestion.question_images && currentQuestion.question_images.length > 0)
+                    ? currentQuestion.question_images
+                    : (currentQuestion.image_refs || []);
+                  const hasImgs = qImgs.length > 0;
+
+                  return (
+                    <div className={`space-y-6 ${hasImgs ? 'grid grid-cols-1 md:grid-cols-2 gap-8 items-center space-y-0' : ''}`}>
+                      <div className="space-y-4">
+                        <div className="text-[13px] font-bold tracking-wider text-blue-600 uppercase flex items-center gap-2">
+                          <Sparkles className="h-4 w-4" />
+                          <span>QShala Question Slide</span>
+                        </div>
+                        <h2 className="text-[22px] sm:text-[28px] font-bold text-slate-900 leading-snug">
+                          {currentQuestion.question_text}
+                        </h2>
+
+                        {/* Options if MCQ */}
+                        {currentQuestion.options && currentQuestion.options.length > 0 && (
+                          <div className="grid grid-cols-1 gap-2 pt-2">
+                            {currentQuestion.options.map((opt, i) => (
+                              <div key={i} className="rounded-lg border border-slate-200 bg-slate-50/70 px-3.5 py-2 text-[13.5px] text-slate-700 font-medium flex items-center gap-2">
+                                <span className="h-5 w-5 rounded-full bg-blue-100 text-blue-700 font-bold text-[11px] flex items-center justify-center shrink-0">
+                                  {String.fromCharCode(65 + i)}
+                                </span>
+                                <span>{opt}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <p className="text-[13px] text-slate-500 italic pt-1">
+                          Think carefully... click Reveal Answer to see the solution!
+                        </p>
+                      </div>
+
+                      {hasImgs && (
+                        <div className="flex flex-col items-center justify-center bg-slate-50 rounded-xl border border-slate-200 p-2 overflow-hidden shadow-xs">
+                          <img
+                            src={qImgs[0]}
+                            alt="Question Clue"
+                            className="max-h-[320px] w-auto object-contain rounded-lg shadow-sm"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()
               ) : (
                 /* Answer Slide Content */
-                <div className="space-y-6">
-                  <div className="text-[13px] font-bold tracking-wider text-emerald-600 uppercase flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                    <span>Answer & Educational Explanation</span>
-                  </div>
+                (() => {
+                  const ansImgs = (currentQuestion.answer_images && currentQuestion.answer_images.length > 0)
+                    ? currentQuestion.answer_images
+                    : ((currentQuestion.question_images && currentQuestion.question_images.length > 0)
+                      ? currentQuestion.question_images
+                      : (currentQuestion.image_refs || []));
+                  const hasImgs = ansImgs.length > 0;
 
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-5">
-                    <span className="text-[12px] font-bold uppercase tracking-wider text-emerald-800 block mb-1">
-                      Correct Answer:
-                    </span>
-                    <h2 className="text-[26px] sm:text-[30px] font-bold text-emerald-950 leading-tight">
-                      {currentQuestion.answer}
-                    </h2>
-                  </div>
+                  return (
+                    <div className={`space-y-6 ${hasImgs ? 'grid grid-cols-1 md:grid-cols-2 gap-8 items-center space-y-0' : ''}`}>
+                      <div className="space-y-4">
+                        <div className="text-[13px] font-bold tracking-wider text-emerald-600 uppercase flex items-center gap-2">
+                          <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                          <span>Answer & Educational Explanation</span>
+                        </div>
 
-                  {currentQuestion.explanation && (
-                    <div className="rounded-xl border border-slate-100 bg-slate-50 p-5 space-y-1.5">
-                      <span className="text-[12px] font-bold uppercase tracking-wider text-slate-500 block">
-                        The Story Behind It:
-                      </span>
-                      <p className="text-[15px] sm:text-[16px] text-slate-700 leading-relaxed font-normal">
-                        {currentQuestion.explanation}
-                      </p>
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 sm:p-5">
+                          <span className="text-[12px] font-bold uppercase tracking-wider text-emerald-800 block mb-1">
+                            Correct Answer:
+                          </span>
+                          <h2 className="text-[24px] sm:text-[28px] font-bold text-emerald-950 leading-tight">
+                            {currentQuestion.answer}
+                          </h2>
+                        </div>
+
+                        {currentQuestion.explanation && (
+                          <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 sm:p-5 space-y-1.5">
+                            <span className="text-[12px] font-bold uppercase tracking-wider text-slate-500 block">
+                              The Story Behind It:
+                            </span>
+                            <p className="text-[14px] sm:text-[15px] text-slate-700 leading-relaxed font-normal">
+                              {currentQuestion.explanation}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {hasImgs && (
+                        <div className="flex flex-col items-center justify-center bg-slate-50 rounded-xl border border-emerald-200/80 p-2 overflow-hidden shadow-xs">
+                          <img
+                            src={ansImgs[0]}
+                            alt="Answer Reveal Visual"
+                            className="max-h-[320px] w-auto object-contain rounded-lg shadow-sm"
+                          />
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
+                  );
+                })()
               )}
             </div>
 

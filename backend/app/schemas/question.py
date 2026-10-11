@@ -27,6 +27,8 @@ class QuestionBase(BaseModel):
     source_year: Optional[int] = None
     # Multi-modal media & canonical representations
     image_refs: List[str] = []
+    question_images: List[str] = []
+    answer_images: List[str] = []
     visual_clues: Optional[str] = None
     audio_transcript: Optional[str] = None
     video_transcript: Optional[str] = None

@@ -49,6 +49,10 @@ class GeneratedQuestionResponse(BaseModel):
     grade_max: Optional[int] = None
     topic: Optional[str] = None
     question_type: str
+    image_refs: List[str] = []
+    question_images: List[str] = []
+    answer_images: List[str] = []
+    visual_clues: Optional[str] = None
     validation_status: str
     validation_details: Optional[Dict[str, Any]] = None
     duplicate_score: float = 0.0
@@ -65,6 +69,10 @@ class GeneratedQuestionUpdate(BaseModel):
     difficulty: Optional[str] = None
     grade_min: Optional[int] = None
     grade_max: Optional[int] = None
+    image_refs: Optional[List[str]] = None
+    question_images: Optional[List[str]] = None
+    answer_images: Optional[List[str]] = None
+    visual_clues: Optional[str] = None
     is_approved: Optional[bool] = None
     order_index: Optional[int] = None
 

@@ -3,9 +3,10 @@ import re
 import uuid
 import zipfile
 import logging
+import hashlib
 import mimetypes
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional, Set, Tuple
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from backend.app.config import settings
@@ -42,6 +43,26 @@ class PPTXParser:
         if ext_lower in IMAGE_EXTS:
             return "image"
         return "other"
+
+    def _is_valid_quiz_image(self, blob: bytes, ext: str, dims: Optional[Tuple[int, int]] = None) -> bool:
+        """
+        Filters out presentation clutter:
+        - Animated GIFs (in tournament decks these are timers / countdowns)
+        - Tiny icons, bullets, or transparent spacer artifacts (< 6 KB or < 120 px)
+        - Corrupted or excessively oversized dumps (> 12 MB)
+        """
+        ext_clean = ext.lower().lstrip(".")
+        if ext_clean == "gif":
+            return False
+        if len(blob) < 6144:  # Under 6 KB
+            return False
+        if len(blob) > 12 * 1024 * 1024:  # Over 12 MB
+            return False
+        if dims and isinstance(dims, (tuple, list)) and len(dims) == 2:
+            w, h = dims[0], dims[1]
+            if (w is not None and w < 120) or (h is not None and h < 120):
+                return False
+        return True
 
     def extract_media_from_zip(self) -> Dict[int, List[Dict[str, Any]]]:
         """
@@ -131,6 +152,7 @@ class PPTXParser:
             video_items = []
             all_media_items = []
             seen_media_names: Set[str] = set()
+            seen_img_hashes: Set[str] = set()
 
             # Extract title if present
             if slide.shapes.title and slide.shapes.title.has_text_frame:
@@ -160,6 +182,17 @@ class PPTXParser:
                     try:
                         image = shape.image
                         ext = f".{image.ext.lower().lstrip('.')}"
+                        dims = getattr(image, "size", None)
+                        
+                        # Validate that this is a genuine quiz image (not a GIF timer, bullet icon, or spacer)
+                        if not self._is_valid_quiz_image(image.blob, ext, dims):
+                            continue
+
+                        img_hash = hashlib.md5(image.blob).hexdigest()
+                        if img_hash in seen_img_hashes:
+                            continue
+                        seen_img_hashes.add(img_hash)
+
                         img_filename = f"slide_{slide_idx}_img_{img_counter}{ext}"
                         img_path = self.output_media_dir / img_filename
                         if self.write_to_disk:
@@ -201,7 +234,7 @@ class PPTXParser:
                         ext in IMAGE_EXTS
                     )
 
-                    if is_media:
+                    if is_media and not getattr(rel, "is_external", False):
                         try:
                             if not hasattr(rel, "target_part"):
                                 continue
@@ -237,7 +270,10 @@ class PPTXParser:
                                 elif media_type == "video":
                                     video_items.append(media_dict)
                                 elif media_type == "image":
-                                    image_paths.append(rel_url)
+                                    img_hash = hashlib.md5(raw_data).hexdigest()
+                                    if self._is_valid_quiz_image(raw_data, ext) and img_hash not in seen_img_hashes:
+                                        seen_img_hashes.add(img_hash)
+                                        image_paths.append(rel_url)
             except Exception as re_err:
                 logger.warning(f"Error inspecting slide.part.rels on slide {slide_idx}: {re_err}")
 
@@ -267,7 +303,10 @@ class PPTXParser:
                         elif z_item["media_type"] == "video":
                             video_items.append(item_record)
                         elif z_item["media_type"] == "image":
-                            image_paths.append(rel_url)
+                            img_hash = hashlib.md5(z_item["raw_bytes"]).hexdigest()
+                            if self._is_valid_quiz_image(z_item["raw_bytes"], Path(z_item["filename"]).suffix) and img_hash not in seen_img_hashes:
+                                seen_img_hashes.add(img_hash)
+                                image_paths.append(rel_url)
 
             # Deduplicate text chunks while preserving order
             unique_chunks = []

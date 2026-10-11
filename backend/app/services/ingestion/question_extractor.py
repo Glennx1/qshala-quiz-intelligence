@@ -163,7 +163,9 @@ class QuestionExtractor:
                     ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("speaker_notes", ""))
 
                 if ans_text and not (ans_text.startswith("http://") or ans_text.startswith("https://")):
-                    q_imgs = list(current.get("image_paths") or []) + list(ans_slide.get("image_paths") or [])
+                    q_imgs = list(current.get("image_paths") or [])
+                    ans_imgs = list(ans_slide.get("image_paths") or [])
+                    all_imgs = list(dict.fromkeys(q_imgs + ans_imgs))
                     q_media = list(current.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
                     extracted_questions.append({
                         "slide_id": current.get("id"),
@@ -179,7 +181,9 @@ class QuestionExtractor:
                         "slide_number": current.get("slide_number"),
                         "answer_slide_number": ans_slide.get("slide_number"),
                         "source_slide_range": f"Slide {current.get('slide_number')}–{ans_slide.get('slide_number')}",
-                        "image_refs": q_imgs,
+                        "image_refs": all_imgs,
+                        "question_images": q_imgs,
+                        "answer_images": ans_imgs,
                         "media_items": q_media,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
                     })
@@ -198,7 +202,9 @@ class QuestionExtractor:
                     if mid_text.lower() in ["answer", "answers", "the answer", "solution", "solutions"]:
                         mid_text = ""
                     combined_exp = f"{explanation}\nClue: {mid_text}".strip() if mid_text else explanation
-                    q_imgs = list(current.get("image_paths") or []) + list(middle_slide.get("image_paths") or []) + list(ans_slide.get("image_paths") or [])
+                    q_imgs = list(current.get("image_paths") or []) + list(middle_slide.get("image_paths") or [])
+                    ans_imgs = list(ans_slide.get("image_paths") or [])
+                    all_imgs = list(dict.fromkeys(q_imgs + ans_imgs))
                     q_media = list(current.get("all_media_items") or []) + list(middle_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
                     extracted_questions.append({
                         "slide_id": current.get("id"),
@@ -214,7 +220,9 @@ class QuestionExtractor:
                         "slide_number": current.get("slide_number"),
                         "answer_slide_number": ans_slide.get("slide_number"),
                         "source_slide_range": f"Slide {current.get('slide_number')}–{ans_slide.get('slide_number')}",
-                        "image_refs": q_imgs,
+                        "image_refs": all_imgs,
+                        "question_images": q_imgs,
+                        "answer_images": ans_imgs,
                         "media_items": q_media,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
                     })
@@ -238,6 +246,8 @@ class QuestionExtractor:
                 # Only include if a real answer was resolved and not an HTTP link
                 if ans_text and ans_text.lower() not in ["see explanation", "answer indicated on slide", ""] and not (ans_text.startswith("http://") or ans_text.startswith("https://")):
                     q_imgs = list(current.get("image_paths") or [])
+                    ans_imgs = []
+                    all_imgs = q_imgs
                     q_media = list(current.get("all_media_items") or [])
                     extracted_questions.append({
                         "slide_id": current.get("id"),
@@ -253,7 +263,9 @@ class QuestionExtractor:
                         "slide_number": current.get("slide_number"),
                         "answer_slide_number": None,
                         "source_slide_range": f"Slide {current.get('slide_number')}",
-                        "image_refs": q_imgs,
+                        "image_refs": all_imgs,
+                        "question_images": q_imgs,
+                        "answer_images": ans_imgs,
                         "media_items": q_media,
                         "speaker_notes": notes
                     })
@@ -288,8 +300,14 @@ class QuestionExtractor:
                     existing["explanation"] = q["explanation"] or existing["explanation"]
                     existing["answer_slide_number"] = q.get("answer_slide_number")
                     existing["source_slide_range"] = q.get("source_slide_range")
-                    if q.get("image_refs"):
-                        existing["image_refs"] = list(set((existing.get("image_refs") or []) + q["image_refs"]))
+
+                # Merge image lists while maintaining role segregation
+                if q.get("question_images"):
+                    existing["question_images"] = list(dict.fromkeys((existing.get("question_images") or []) + q["question_images"]))
+                if q.get("answer_images"):
+                    existing["answer_images"] = list(dict.fromkeys((existing.get("answer_images") or []) + q["answer_images"]))
+                if q.get("image_refs"):
+                    existing["image_refs"] = list(dict.fromkeys((existing.get("image_refs") or []) + q["image_refs"]))
             else:
                 seen_q[key] = q
                 consolidated.append(q)

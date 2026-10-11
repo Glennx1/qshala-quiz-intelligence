@@ -68,6 +68,7 @@ class HybridRetriever:
         grade_max: Optional[int] = None,
         subtopic: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        has_visual: Optional[bool] = None,
         exclude_ids: Optional[List[str]] = None,
         limit: int = 10
     ) -> List[Dict[str, Any]]:
@@ -84,7 +85,8 @@ class HybridRetriever:
             query_builder = query_builder.filter(
                 or_(
                     Question.topic.ilike(f"%{topic}%"),
-                    Question.subtopic.ilike(f"%{topic}%")
+                    Question.subtopic.ilike(f"%{topic}%"),
+                    Question.visual_clues.ilike(f"%{topic}%")
                 )
             )
 
@@ -93,6 +95,18 @@ class HybridRetriever:
 
         if difficulty:
             query_builder = query_builder.filter(Question.difficulty.ilike(difficulty))
+
+        if has_visual is True:
+            query_builder = query_builder.filter(
+                or_(
+                    and_(Question.visual_clues.isnot(None), Question.visual_clues != ""),
+                    and_(Question.question_images.isnot(None), Question.question_images != "[]")
+                )
+            )
+        elif has_visual is False:
+            query_builder = query_builder.filter(
+                or_(Question.visual_clues.is_(None), Question.visual_clues == "")
+            )
 
         if grade_min is not None and grade_max is not None:
             query_builder = query_builder.filter(
@@ -165,7 +179,8 @@ class HybridRetriever:
                 or_(
                     Question.topic.ilike(f"%{topic}%"),
                     Question.subtopic.ilike(f"%{topic}%"),
-                    Question.question_text.ilike(f"%{topic}%")
+                    Question.question_text.ilike(f"%{topic}%"),
+                    Question.visual_clues.ilike(f"%{topic}%")
                 )
             )
         elif topic:
@@ -173,7 +188,8 @@ class HybridRetriever:
                 or_(
                     Question.topic.ilike(f"%{topic}%"),
                     Question.subtopic.ilike(f"%{topic}%"),
-                    Question.question_text.ilike(f"%{topic}%")
+                    Question.question_text.ilike(f"%{topic}%"),
+                    Question.visual_clues.ilike(f"%{topic}%")
                 )
             )
 
@@ -217,7 +233,7 @@ class HybridRetriever:
         sparse_scores = []
         tag_overlaps = []
         for i, (q, doc, slide) in enumerate(candidates):
-            content_text = f"{q.question_text} {q.answer} {q.topic} {q.subtopic or ''} {slide.extracted_text if slide else ''}".lower()
+            content_text = f"{q.question_text} {q.answer} {q.topic} {q.subtopic or ''} {q.visual_clues or ''} {slide.extracted_text if slide else ''}".lower()
             q_tags_lower = [t.strip().lstrip("#").lower() for t in (q.tags or []) if isinstance(t, str)]
             tag_overlap = sum(1 for t in clean_tags if t in q_tags_lower)
             tag_overlaps.append(tag_overlap)

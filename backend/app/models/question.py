@@ -46,7 +46,9 @@ class Question(Base):
     round_number = Column(Integer, nullable=True)
 
     # Multi-modal media & canonical representations
-    image_refs = Column(JSON, default=list)            # List of Blob URLs for images
+    image_refs = Column(JSON, default=list)            # List of Blob URLs for images (all images)
+    question_images = Column(JSON, default=list)       # Specific clue/question images
+    answer_images = Column(JSON, default=list)         # Specific reveal/answer images
     visual_clues = Column(Text, nullable=True)         # OCR text & Gemini vision description
     audio_transcript = Column(Text, nullable=True)     # Transcribed audio speech/clue
     video_transcript = Column(Text, nullable=True)     # Transcribed video speech

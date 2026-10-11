@@ -103,6 +103,8 @@ def ensure_schema_columns():
                     ("occurrence_count", "INTEGER DEFAULT 1"),
                     ("round_number", "INTEGER"),
                     ("image_refs", "TEXT DEFAULT '[]'"),
+                    ("question_images", "TEXT DEFAULT '[]'"),
+                    ("answer_images", "TEXT DEFAULT '[]'"),
                     ("visual_clues", "TEXT"),
                     ("audio_transcript", "TEXT"),
                     ("video_transcript", "TEXT"),
@@ -121,10 +123,34 @@ def ensure_schema_columns():
                     except Exception:
                         pass # Column already exists
 
+            # Check if generated_questions table exists
+            gen_q_table_check = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='generated_questions';").fetchone() if not is_postgres else True
+            if gen_q_table_check:
+                gen_q_cols = [
+                    ("image_refs", "TEXT DEFAULT '[]'"),
+                    ("question_images", "TEXT DEFAULT '[]'"),
+                    ("answer_images", "TEXT DEFAULT '[]'"),
+                    ("visual_clues", "TEXT")
+                ]
+                for col_name, col_type in gen_q_cols:
+                    try:
+                        if is_postgres:
+                            conn.exec_driver_sql(f"ALTER TABLE generated_questions ADD COLUMN IF NOT EXISTS {col_name} {col_type};")
+                        else:
+                            conn.exec_driver_sql(f"ALTER TABLE generated_questions ADD COLUMN {col_name} {col_type};")
+                    except Exception:
+                        pass
+
             # Check if quizzes table exists
             quiz_table_check = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='quizzes';").fetchone() if not is_postgres else True
             if quiz_table_check:
                 quiz_cols = [
+                    ("quiz_format", "VARCHAR(50) DEFAULT 'TOURNAMENT_PRELIMS'"),
+                    ("audience_type", "VARCHAR(50) DEFAULT NULL"),
+                    ("grades", "TEXT DEFAULT '[]'"),
+                    ("age_range", "VARCHAR(50) DEFAULT NULL"),
+                    ("grade_min", "INTEGER DEFAULT NULL"),
+                    ("grade_max", "INTEGER DEFAULT NULL"),
                     ("tags", "TEXT"),
                     ("personality", "VARCHAR(50) DEFAULT NULL")
                 ]

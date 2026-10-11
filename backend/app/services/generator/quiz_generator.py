@@ -77,6 +77,7 @@ class QuizGenerator:
 
         grade_min = getattr(req, "grade_min", None)
         grade_max = getattr(req, "grade_max", None)
+        aud_type = getattr(req, "audience_type", None) or "general"
         audience_label = "General Audience"
 
         # Resolve difficulty distribution
@@ -206,6 +207,10 @@ class QuizGenerator:
                     "grade_max": grade_max,
                     "topic": hist_q.topic,
                     "question_type": hist_q.question_type,
+                    "image_refs": list(getattr(hist_q, "image_refs", []) or []),
+                    "question_images": list(getattr(hist_q, "question_images", []) or []),
+                    "answer_images": list(getattr(hist_q, "answer_images", []) or []),
+                    "visual_clues": getattr(hist_q, "visual_clues", None),
                     "provenance": {
                         "historical_question_id": hist_q.id,
                         "document_id": item["document"].id,
@@ -360,6 +365,10 @@ Please return a JSON object with this exact structure:
                 grade_max=grade_max,
                 topic=q_data.get("topic", req.topic),
                 question_type=q_data.get("question_type", "SLIDE_QA"),
+                image_refs=q_data.get("image_refs") or [],
+                question_images=q_data.get("question_images") or [],
+                answer_images=q_data.get("answer_images") or [],
+                visual_clues=q_data.get("visual_clues"),
                 validation_status=val_result["overall_status"],
                 validation_details=val_result["details"],
                 duplicate_score=val_result["duplicate_score"],

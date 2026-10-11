@@ -46,6 +46,8 @@ def to_question_response(q: Question, doc: Optional[Document], slide: Optional[S
         question_type=q.question_type or "SLIDE_QA",
         source_year=q.source_year,
         image_refs=getattr(q, "image_refs", []) or [],
+        question_images=getattr(q, "question_images", []) or [],
+        answer_images=getattr(q, "answer_images", []) or [],
         visual_clues=getattr(q, "visual_clues", None),
         audio_transcript=getattr(q, "audio_transcript", None),
         video_transcript=getattr(q, "video_transcript", None),
