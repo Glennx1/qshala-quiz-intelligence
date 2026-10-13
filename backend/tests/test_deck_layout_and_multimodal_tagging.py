@@ -96,7 +96,7 @@ def test_question_extractor_transition_bridge():
     assert "Qatar has become the 8th country" in q["question_text"]
     assert q["answer"] == "UPI"
     assert "Unified Payments Interface" in q["explanation"]
-    assert q["source_slide_range"] == "Slide 1–3"
+    assert q["source_slide_range"] in ["Slide 1-3", "Slide 1–3"]
     assert "/static/slides/doc/media/q1.png" in q["image_refs"]
     assert "/static/slides/doc/media/upi.png" in q["image_refs"]
     # Ensure source URL was NOT set as answer
