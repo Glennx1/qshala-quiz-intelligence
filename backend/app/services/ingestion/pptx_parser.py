@@ -85,7 +85,9 @@ class PPTXParser:
             return False
         if len(blob) < 2048:  # Under 2 KB
             return False
-        if len(blob) > 12 * 1024 * 1024:  # Over 12 MB
+        # Filter out PowerPoint video play / poster placeholder icons (e.g. black video camera icon)
+        img_hash = hashlib.md5(blob).hexdigest()
+        if img_hash in {"c050197d0f5c8b511e976e3975d4d36f"}:
             return False
         if dims and isinstance(dims, (tuple, list)) and len(dims) == 2:
             w, h = dims[0], dims[1]

@@ -106,6 +106,10 @@ class QuestionExtractor:
                     ans_audio = list(ans_slide.get("audio_paths") or [a["rel_url"] for a in ans_slide.get("audio_items", []) if a.get("rel_url")])
                     all_audio = list(dict.fromkeys(q_audio + ans_audio))
 
+                    q_video = list(current.get("video_paths") or [v["rel_url"] for v in current.get("video_items", []) if v.get("rel_url")])
+                    ans_video = list(ans_slide.get("video_paths") or [v["rel_url"] for v in ans_slide.get("video_items", []) if v.get("rel_url")])
+                    all_video = list(dict.fromkeys(q_video + ans_video))
+
                     q_media = list(current.get("all_media_items") or []) + list(trans_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
                     if exp_slide:
                         q_media.extend(exp_slide.get("all_media_items") or [])
@@ -132,6 +136,9 @@ class QuestionExtractor:
                         "audio_refs": all_audio,
                         "question_audio": q_audio,
                         "answer_audio": ans_audio,
+                        "video_refs": all_video,
+                        "question_videos": q_video,
+                        "answer_videos": ans_video,
                         "media_items": q_media,
                         "raw_media_refs": raw_media_refs,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
@@ -161,6 +168,10 @@ class QuestionExtractor:
                     ans_audio = list(ans_slide.get("audio_paths") or [a["rel_url"] for a in ans_slide.get("audio_items", []) if a.get("rel_url")])
                     all_audio = list(dict.fromkeys(q_audio + ans_audio))
 
+                    q_video = list(current.get("video_paths") or [v["rel_url"] for v in current.get("video_items", []) if v.get("rel_url")]) + list(clue_slide.get("video_paths") or [v["rel_url"] for v in clue_slide.get("video_items", []) if v.get("rel_url")])
+                    ans_video = list(ans_slide.get("video_paths") or [v["rel_url"] for v in ans_slide.get("video_items", []) if v.get("rel_url")])
+                    all_video = list(dict.fromkeys(q_video + ans_video))
+
                     q_media = list(current.get("all_media_items") or []) + list(clue_slide.get("all_media_items") or []) + list(trans_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
                     raw_media_refs = list(dict.fromkeys([m["rel_url"] for m in q_media if m.get("rel_url")]))
 
@@ -184,6 +195,9 @@ class QuestionExtractor:
                         "audio_refs": all_audio,
                         "question_audio": q_audio,
                         "answer_audio": ans_audio,
+                        "video_refs": all_video,
+                        "question_videos": q_video,
+                        "answer_videos": ans_video,
                         "media_items": q_media,
                         "raw_media_refs": raw_media_refs,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
@@ -210,6 +224,10 @@ class QuestionExtractor:
                     ans_audio = list(ans_slide.get("audio_paths") or [a["rel_url"] for a in ans_slide.get("audio_items", []) if a.get("rel_url")])
                     all_audio = list(dict.fromkeys(q_audio + ans_audio))
 
+                    q_video = list(current.get("video_paths") or [v["rel_url"] for v in current.get("video_items", []) if v.get("rel_url")])
+                    ans_video = list(ans_slide.get("video_paths") or [v["rel_url"] for v in ans_slide.get("video_items", []) if v.get("rel_url")])
+                    all_video = list(dict.fromkeys(q_video + ans_video))
+
                     q_media = list(current.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
                     raw_media_refs = list(dict.fromkeys([m["rel_url"] for m in q_media if m.get("rel_url")]))
 
@@ -233,6 +251,9 @@ class QuestionExtractor:
                         "audio_refs": all_audio,
                         "question_audio": q_audio,
                         "answer_audio": ans_audio,
+                        "video_refs": all_video,
+                        "question_videos": q_video,
+                        "answer_videos": ans_video,
                         "media_items": q_media,
                         "raw_media_refs": raw_media_refs,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
@@ -260,6 +281,10 @@ class QuestionExtractor:
                     ans_audio = list(ans_slide.get("audio_paths") or [a["rel_url"] for a in ans_slide.get("audio_items", []) if a.get("rel_url")])
                     all_audio = list(dict.fromkeys(q_audio + ans_audio))
 
+                    q_video = list(current.get("video_paths") or [v["rel_url"] for v in current.get("video_items", []) if v.get("rel_url")]) + list(middle_slide.get("video_paths") or [v["rel_url"] for v in middle_slide.get("video_items", []) if v.get("rel_url")])
+                    ans_video = list(ans_slide.get("video_paths") or [v["rel_url"] for v in ans_slide.get("video_items", []) if v.get("rel_url")])
+                    all_video = list(dict.fromkeys(q_video + ans_video))
+
                     q_media = list(current.get("all_media_items") or []) + list(middle_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
                     raw_media_refs = list(dict.fromkeys([m["rel_url"] for m in q_media if m.get("rel_url")]))
 
@@ -283,6 +308,9 @@ class QuestionExtractor:
                         "audio_refs": all_audio,
                         "question_audio": q_audio,
                         "answer_audio": ans_audio,
+                        "video_refs": all_video,
+                        "question_videos": q_video,
+                        "answer_videos": ans_video,
                         "media_items": q_media,
                         "raw_media_refs": raw_media_refs,
                         "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
@@ -312,6 +340,9 @@ class QuestionExtractor:
                     q_audio = list(current.get("audio_paths") or [a["rel_url"] for a in current.get("audio_items", []) if a.get("rel_url")])
                     ans_audio = []
                     all_audio = q_audio
+                    q_video = list(current.get("video_paths") or [v["rel_url"] for v in current.get("video_items", []) if v.get("rel_url")])
+                    ans_video = []
+                    all_video = q_video
                     q_media = list(current.get("all_media_items") or [])
                     raw_media_refs = list(dict.fromkeys([m["rel_url"] for m in q_media if m.get("rel_url")]))
 
@@ -335,6 +366,9 @@ class QuestionExtractor:
                         "audio_refs": all_audio,
                         "question_audio": q_audio,
                         "answer_audio": ans_audio,
+                        "video_refs": all_video,
+                        "question_videos": q_video,
+                        "answer_videos": ans_video,
                         "media_items": q_media,
                         "raw_media_refs": raw_media_refs,
                         "speaker_notes": notes
@@ -391,6 +425,15 @@ class QuestionExtractor:
                     existing["answer_audio"] = list(dict.fromkeys((existing.get("answer_audio") or []) + q["answer_audio"]))
                 if q.get("audio_refs"):
                     existing["audio_refs"] = list(dict.fromkeys((existing.get("audio_refs") or []) + q["audio_refs"]))
+
+                # Merge video lists while maintaining role segregation
+                if q.get("question_videos"):
+                    existing["question_videos"] = list(dict.fromkeys((existing.get("question_videos") or []) + q["question_videos"]))
+                if q.get("answer_videos"):
+                    existing["answer_videos"] = list(dict.fromkeys((existing.get("answer_videos") or []) + q["answer_videos"]))
+                if q.get("video_refs"):
+                    existing["video_refs"] = list(dict.fromkeys((existing.get("video_refs") or []) + q["video_refs"]))
+
                 if q.get("raw_media_refs"):
                     existing["raw_media_refs"] = list(dict.fromkeys((existing.get("raw_media_refs") or []) + q["raw_media_refs"]))
             else:

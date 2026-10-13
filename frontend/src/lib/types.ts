@@ -68,6 +68,9 @@ export interface HistoricalQuestion {
   audio_refs?: string[];
   question_audio?: string[];
   answer_audio?: string[];
+  video_refs?: string[];
+  question_videos?: string[];
+  answer_videos?: string[];
   audio_transcript?: string | null;
   video_transcript?: string | null;
   raw_media_refs?: string[];

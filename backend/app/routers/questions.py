@@ -17,6 +17,36 @@ def to_question_response(q: Question, doc: Optional[Document], slide: Optional[S
         dup_text = q.duplicate_of.question_text
         dup_ans = q.duplicate_of.answer
 
+    # Resolve video refs: check column or fallback to raw_media_refs with .mp4
+    raw_refs = getattr(q, "raw_media_refs", []) or []
+    vids = getattr(q, "video_refs", []) or []
+    if not vids and raw_refs:
+        vids = [r for r in raw_refs if r.endswith((".mp4", ".mov", ".webm", ".m4v")) or "/media/media" in r]
+    
+    q_vids = getattr(q, "question_videos", []) or []
+    if not q_vids and vids:
+        q_vids = vids
+    ans_vids = getattr(q, "answer_videos", []) or []
+
+    # Filter out placeholder video camera icons from image_refs / question_images
+    placeholder_filenames = {
+        "slide_41_img_1.png", "slide_40_img_1.png", "slide_49_img_1.png",
+        "slide_53_img_1.png", "slide_120_img_1.png", "slide_122_img_1.png",
+        "image16.png"
+    }
+    def _is_placeholder(p: str) -> bool:
+        if not p:
+            return False
+        fname = p.replace("\\", "/").rstrip("/").split("/")[-1].lower()
+        return fname in placeholder_filenames
+
+    raw_imgs = getattr(q, "image_refs", []) or []
+    clean_imgs = [img for img in raw_imgs if not _is_placeholder(img)]
+    raw_q_imgs = getattr(q, "question_images", []) or []
+    clean_q_imgs = [img for img in raw_q_imgs if not _is_placeholder(img)]
+    raw_ans_imgs = getattr(q, "answer_images", []) or []
+    clean_ans_imgs = [img for img in raw_ans_imgs if not _is_placeholder(img)]
+
     return QuestionResponse(
         id=q.id,
         content_hash=getattr(q, "content_hash", None),
@@ -44,17 +74,19 @@ def to_question_response(q: Question, doc: Optional[Document], slide: Optional[S
         provenance_decks=getattr(q, "provenance_decks", []) or [],
         round_number=getattr(q, "round_number", None),
         question_type=q.question_type or "SLIDE_QA",
-        source_year=q.source_year,
-        image_refs=getattr(q, "image_refs", []) or [],
-        question_images=getattr(q, "question_images", []) or [],
-        answer_images=getattr(q, "answer_images", []) or [],
+        image_refs=clean_imgs,
+        question_images=clean_q_imgs,
+        answer_images=clean_ans_imgs,
         audio_refs=getattr(q, "audio_refs", []) or [],
         question_audio=getattr(q, "question_audio", []) or [],
         answer_audio=getattr(q, "answer_audio", []) or [],
+        video_refs=vids,
+        question_videos=q_vids,
+        answer_videos=ans_vids,
         visual_clues=getattr(q, "visual_clues", None),
         audio_transcript=getattr(q, "audio_transcript", None),
         video_transcript=getattr(q, "video_transcript", None),
-        raw_media_refs=getattr(q, "raw_media_refs", []) or [],
+        raw_media_refs=raw_refs,
         source_slide_range=getattr(q, "source_slide_range", None),
         duplicate_status=getattr(q, "duplicate_status", "UNIQUE") or "UNIQUE",
         duplicate_similarity=getattr(q, "duplicate_similarity", None),

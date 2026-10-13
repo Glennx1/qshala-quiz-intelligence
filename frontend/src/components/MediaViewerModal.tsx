@@ -53,10 +53,23 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
 
   if (!question) return null;
 
-  const questionImages = question.question_images && question.question_images.length > 0
+  const PLACEHOLDER_ICONS = new Set([
+    'slide_41_img_1.png', 'slide_40_img_1.png', 'slide_49_img_1.png',
+    'slide_53_img_1.png', 'slide_120_img_1.png', 'slide_122_img_1.png',
+    'image16.png'
+  ]);
+
+  const isPlaceholderIcon = (url?: string | null) => {
+    if (!url) return false;
+    const name = url.replace(/\\/g, '/').split('/').pop()?.toLowerCase();
+    return name ? PLACEHOLDER_ICONS.has(name) : false;
+  };
+
+  const rawQImages = question.question_images && question.question_images.length > 0
     ? question.question_images
     : (question.image_refs || []);
-  const answerImages = question.answer_images || [];
+  const questionImages = rawQImages.filter(x => !isPlaceholderIcon(x));
+  const answerImages = (question.answer_images || []).filter(x => !isPlaceholderIcon(x));
   const images = questionImages.concat(answerImages.filter(x => !questionImages.includes(x)));
   const hasImages = images.length > 0;
 
@@ -67,13 +80,15 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
   const rawAudioList = (question.raw_media_refs || []).filter(r => r.endsWith('.mp3') || r.endsWith('.wav') || r.endsWith('.m4a') || r.endsWith('.aac') || r.includes('audio'));
   const allAudios = Array.from(new Set([...questionAudioList, ...answerAudioList, ...rawAudioList]));
 
-  const hasAudio = Boolean(allAudios.length > 0 || question.audio_transcript);
-  const hasVideo = Boolean(question.video_transcript || (question.raw_media_refs && question.raw_media_refs.some(r => r.endsWith('.mp4'))));
-  const hasVisualClues = Boolean(question.visual_clues);
-
-  // Find video media URL from raw_media_refs or video_transcript if it contains a URL
-  const videoRef = (question.raw_media_refs || []).find(r => r.endsWith('.mp4') || r.includes('video'))
+  // Find video media URL from video_refs, question_videos, raw_media_refs, or video_transcript
+  const videoRef = (question.video_refs && question.video_refs.length > 0 ? question.video_refs[0] : null)
+    || (question.question_videos && question.question_videos.length > 0 ? question.question_videos[0] : null)
+    || (question.raw_media_refs || []).find(r => r.endsWith('.mp4') || r.endsWith('.webm') || r.endsWith('.mov') || r.includes('/media/media'))
     || (question.video_transcript && (question.video_transcript.includes('http') || question.video_transcript.includes('youtu')) ? question.video_transcript.trim() : null);
+
+  const hasAudio = Boolean(allAudios.length > 0 || question.audio_transcript);
+  const hasVideo = Boolean(videoRef || question.video_transcript);
+  const hasVisualClues = Boolean(question.visual_clues);
 
   const isYouTubeUrl = (url: string) => {
     return url.includes('youtube.com') || url.includes('youtu.be');
@@ -165,6 +180,84 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
               )}
             </div>
           </div>
+
+          {/* Section: Video Clue (placed prominently at top of media viewer) */}
+          {hasVideo && (
+            <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-bold text-violet-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <Video className="h-4 w-4 text-violet-600" />
+                  Embedded Video Clue
+                </span>
+                {videoRef && (
+                  <span className="text-[11px] font-mono text-violet-700 bg-violet-100/60 px-2 py-0.5 rounded">
+                    {videoRef.split('/').pop()}
+                  </span>
+                )}
+              </div>
+
+              {videoRef && isYouTubeUrl(videoRef) ? (
+                <div className="pt-1 aspect-video w-full rounded-lg overflow-hidden bg-black shadow-md">
+                  <iframe
+                    src={getYouTubeEmbedUrl(videoRef)}
+                    title="Embedded Video Clue"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                    className="w-full h-full"
+                  />
+                </div>
+              ) : videoRef ? (
+                <div className="pt-1 space-y-2">
+                  <div className="relative rounded-lg overflow-hidden bg-black shadow-md">
+                    <video
+                      controls
+                      playsInline
+                      preload="metadata"
+                      className="w-full max-h-72 object-contain mx-auto"
+                      onError={() => setVideoError(true)}
+                    >
+                      <source src={resolvedVideoSrc} type="video/mp4" />
+                      {fallbackVideoSrc && <source src={fallbackVideoSrc} type="video/mp4" />}
+                      Your browser does not support HTML5 video playback.
+                    </video>
+                  </div>
+
+                  {videoError && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12.5px] text-amber-900 space-y-2">
+                      <div className="font-semibold flex items-center gap-1.5">
+                        <AlertTriangle className="h-4 w-4 text-amber-600" />
+                        <span>Video Stream Not Available on Serverless Tier</span>
+                      </div>
+                      <p className="text-amber-800 text-[12px] leading-relaxed">
+                        High-definition tournament video files exceeding serverless deployment quotas are kept in local storage. You can access or open the video directly:
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <a
+                          href={resolvedVideoSrc}
+                          target="_blank"
+                          rel="noreferrer"
+                          download
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-700 text-white font-semibold text-[11.5px] transition-colors shadow-2xs"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          <span>Open / Download Video File</span>
+                        </a>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              {question.video_transcript && !isYouTubeUrl(question.video_transcript) && (
+                <div className="bg-white/80 rounded-lg p-3 border border-violet-100 text-[13px] text-violet-950">
+                  <div className="font-semibold text-violet-800 text-[11px] uppercase tracking-wider mb-1">
+                    Video Audio Transcript:
+                  </div>
+                  <div className="italic leading-relaxed">"{question.video_transcript}"</div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Section: Slide Images & Visual Clues */}
           {hasImages ? (
@@ -375,83 +468,6 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
             </div>
           )}
 
-          {/* Section: Video Clue */}
-          {hasVideo && (
-            <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[12px] font-bold text-violet-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Video className="h-4 w-4 text-violet-600" />
-                  Embedded Video Clue
-                </span>
-                {videoRef && (
-                  <span className="text-[11px] font-mono text-violet-700 bg-violet-100/60 px-2 py-0.5 rounded">
-                    {videoRef.split('/').pop()}
-                  </span>
-                )}
-              </div>
-
-              {videoRef && isYouTubeUrl(videoRef) ? (
-                <div className="pt-1 aspect-video w-full rounded-lg overflow-hidden bg-black shadow-md">
-                  <iframe
-                    src={getYouTubeEmbedUrl(videoRef)}
-                    title="Embedded Video Clue"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                    className="w-full h-full"
-                  />
-                </div>
-              ) : videoRef ? (
-                <div className="pt-1 space-y-2">
-                  <div className="relative rounded-lg overflow-hidden bg-black shadow-md">
-                    <video
-                      controls
-                      playsInline
-                      preload="metadata"
-                      className="w-full max-h-72 object-contain mx-auto"
-                      onError={() => setVideoError(true)}
-                    >
-                      <source src={resolvedVideoSrc} type="video/mp4" />
-                      {fallbackVideoSrc && <source src={fallbackVideoSrc} type="video/mp4" />}
-                      Your browser does not support HTML5 video playback.
-                    </video>
-                  </div>
-
-                  {videoError && (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12.5px] text-amber-900 space-y-2">
-                      <div className="font-semibold flex items-center gap-1.5">
-                        <AlertTriangle className="h-4 w-4 text-amber-600" />
-                        <span>Video Stream Not Available on Serverless Tier</span>
-                      </div>
-                      <p className="text-amber-800 text-[12px] leading-relaxed">
-                        High-definition tournament video files exceeding serverless deployment quotas are kept in local storage. You can access or open the video directly:
-                      </p>
-                      <div className="flex flex-wrap items-center gap-2 pt-1">
-                        <a
-                          href={resolvedVideoSrc}
-                          target="_blank"
-                          rel="noreferrer"
-                          download
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-700 text-white font-semibold text-[11.5px] transition-colors shadow-2xs"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                          <span>Open / Download Video File</span>
-                        </a>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : null}
-
-              {question.video_transcript && !isYouTubeUrl(question.video_transcript) && (
-                <div className="bg-white/80 rounded-lg p-3 border border-violet-100 text-[13px] text-violet-950">
-                  <div className="font-semibold text-violet-800 text-[11px] uppercase tracking-wider mb-1">
-                    Video Audio Transcript:
-                  </div>
-                  <div className="italic leading-relaxed">"{question.video_transcript}"</div>
-                </div>
-              )}
-            </div>
-          )}
 
           {/* Empty state if somehow opened on text-only question */}
           {!hasImages && !hasAudio && !hasVideo && !hasVisualClues && (

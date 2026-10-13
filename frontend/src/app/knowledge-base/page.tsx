@@ -16,6 +16,7 @@ import {
   XCircle,
   Volume2,
   Video,
+  Play,
   Image as ImageIcon,
   Copy,
   X,
@@ -26,6 +27,18 @@ import { HistoricalQuestion, TopicItem, DocumentItem } from '../../lib/types';
 import SlideViewerModal from '../../components/SlideViewerModal';
 import TagManagerModal from '../../components/TagManagerModal';
 import MediaViewerModal from '../../components/MediaViewerModal';
+
+const PLACEHOLDER_ICONS = new Set([
+  'slide_41_img_1.png', 'slide_40_img_1.png', 'slide_49_img_1.png',
+  'slide_53_img_1.png', 'slide_120_img_1.png', 'slide_122_img_1.png',
+  'image16.png'
+]);
+
+function isPlaceholderIcon(url?: string | null): boolean {
+  if (!url) return false;
+  const name = url.replace(/\\/g, '/').split('/').pop()?.toLowerCase();
+  return name ? PLACEHOLDER_ICONS.has(name) : false;
+}
 
 function KnowledgeBaseContent() {
   const searchParams = useSearchParams();
@@ -156,10 +169,11 @@ function KnowledgeBaseContent() {
   };
 
   const handleViewSlide = (q: HistoricalQuestion) => {
-    const qImgs = (q.question_images && q.question_images.length > 0)
+    const rawQImgs = (q.question_images && q.question_images.length > 0)
       ? q.question_images
       : (q.image_refs || []);
-    const ansImgs = q.answer_images || [];
+    const qImgs = rawQImgs.filter(x => !isPlaceholderIcon(x));
+    const ansImgs = (q.answer_images || []).filter(x => !isPlaceholderIcon(x));
     const allSlideImgs = Array.from(new Set([...qImgs, ...ansImgs]));
 
     setSelectedSlide({
@@ -405,149 +419,190 @@ function KnowledgeBaseContent() {
                     </td>
                   </tr>
                 ) : (
-                  questions.map((q) => (
-                    <tr key={q.id} className="hover:bg-slate-50/70 transition-colors group">
-                      <td className="py-3.5 px-4">
-                        {/* Duplicate Alert Banner */}
-                        {q.duplicate_status === 'POSSIBLE_DUPLICATE' && (
-                          <div className="mb-2 flex items-center justify-between rounded-md bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-[11.5px] text-amber-800">
-                            <span className="flex items-center gap-1.5 font-semibold">
-                              <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
-                              Possible Duplicate ({Math.round((q.duplicate_similarity || 0.92) * 100)}% Match)
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setSelectedDuplicateForReview(q)}
-                              className="rounded bg-amber-600 px-2 py-0.5 font-semibold text-white hover:bg-amber-700 transition-colors text-[11px] cursor-pointer"
-                            >
-                              Review Match
-                            </button>
-                          </div>
-                        )}
+                  questions.map((q) => {
+                    const rawQImgs = (q.question_images && q.question_images.length > 0 ? q.question_images : q.image_refs || []);
+                    const cleanQImgs = rawQImgs.filter(x => !isPlaceholderIcon(x));
+                    const cleanAnsImgs = (q.answer_images || []).filter(x => !isPlaceholderIcon(x));
+                    const hasVideoClue = Boolean(
+                      (q.video_refs && q.video_refs.length > 0) ||
+                      (q.question_videos && q.question_videos.length > 0) ||
+                      (q.raw_media_refs && q.raw_media_refs.some(r => r.endsWith('.mp4') || r.endsWith('.webm') || r.endsWith('.mov') || r.includes('/media/media')))
+                    );
 
-                        <div className="font-semibold text-[13.5px] text-slate-900 leading-snug">
-                          {q.question_text}
-                        </div>
-                        <div className="mt-1 text-[12px] text-slate-600 font-normal">
-                          Answer: <span className="font-semibold text-slate-800">{q.answer}</span>
-                        </div>
-
-                        {/* Clue and Answer Images Thumbnails */}
-                        {((q.question_images && q.question_images.length > 0) || (q.image_refs && q.image_refs.length > 0) || (q.answer_images && q.answer_images.length > 0)) && (
-                          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                            {(q.question_images && q.question_images.length > 0 ? q.question_images : q.image_refs || []).slice(0, 3).map((imgUrl, i) => (
+                    return (
+                      <tr key={q.id} className="hover:bg-slate-50/70 transition-colors group">
+                        <td className="py-3.5 px-4">
+                          {/* Duplicate Alert Banner */}
+                          {q.duplicate_status === 'POSSIBLE_DUPLICATE' && (
+                            <div className="mb-2 flex items-center justify-between rounded-md bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-[11.5px] text-amber-800">
+                              <span className="flex items-center gap-1.5 font-semibold">
+                                <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                                Possible Duplicate ({Math.round((q.duplicate_similarity || 0.92) * 100)}% Match)
+                              </span>
                               <button
-                                key={i}
                                 type="button"
-                                onClick={() => setPreviewImage(imgUrl)}
-                                className="relative rounded-md overflow-hidden border border-slate-200 hover:border-blue-400 bg-white transition-all cursor-pointer group shadow-xs"
-                                title="Click to view clue image"
+                                onClick={() => setSelectedDuplicateForReview(q)}
+                                className="rounded bg-amber-600 px-2 py-0.5 font-semibold text-white hover:bg-amber-700 transition-colors text-[11px] cursor-pointer"
                               >
-                                <img
-                                  src={getImageSrc(imgUrl)}
-                                  onError={() => handleImgError(imgUrl)}
-                                  alt={`Clue ${i + 1}`}
-                                  className="h-9 w-13 object-cover group-hover:scale-105 transition-transform"
-                                />
+                                Review Match
                               </button>
-                            ))}
-                            {q.answer_images && q.answer_images.length > 0 && q.answer_images.slice(0, 2).map((imgUrl, i) => (
-                              <button
-                                key={`ans-${i}`}
-                                type="button"
-                                onClick={() => setPreviewImage(imgUrl)}
-                                className="relative rounded-md overflow-hidden border border-emerald-300 ring-1 ring-emerald-400/50 hover:border-emerald-500 bg-white transition-all cursor-pointer group shadow-xs"
-                                title="Click to view answer reveal image"
-                              >
-                                <img
-                                  src={getImageSrc(imgUrl)}
-                                  onError={() => handleImgError(imgUrl)}
-                                  alt={`Answer ${i + 1}`}
-                                  className="h-9 w-13 object-cover group-hover:scale-105 transition-transform"
-                                />
-                              </button>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Audio Clue Inline Player (if question has audio) */}
-                        {((q.question_audio && q.question_audio.length > 0) || (q.audio_refs && q.audio_refs.length > 0)) && (
-                          <div className="mt-2 flex items-center gap-2 p-1.5 rounded-lg bg-teal-50/80 border border-teal-200/80 max-w-sm">
-                            <Volume2 className="h-4 w-4 text-teal-600 shrink-0 ml-1" />
-                            <audio
-                              controls
-                              src={getImageSrc((q.question_audio && q.question_audio.length > 0 ? q.question_audio : q.audio_refs || [])[0])}
-                              onError={() => handleImgError((q.question_audio && q.question_audio.length > 0 ? q.question_audio : q.audio_refs || [])[0])}
-                              className="w-full h-7 text-xs accent-teal-600"
-                              preload="none"
-                            />
-                          </div>
-                        )}
-
-                        {/* Multimodal Badges: Images, Audio, Video */}
-                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                          {((q.image_refs && q.image_refs.length > 0) ||
-                            (q.question_audio && q.question_audio.length > 0) ||
-                            (q.answer_audio && q.answer_audio.length > 0) ||
-                            (q.audio_refs && q.audio_refs.length > 0) ||
-                            q.visual_clues ||
-                            q.audio_transcript ||
-                            q.video_transcript ||
-                            (q.raw_media_refs && q.raw_media_refs.length > 0)) && (
-                            <button
-                              type="button"
-                              onClick={() => setSelectedQuestionForMedia(q)}
-                              className="inline-flex items-center gap-1.5 rounded-md bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 text-[11px] font-bold text-blue-700 transition-colors cursor-pointer shadow-2xs"
-                              title="Click to view slide images, audio, video & transcripts in a popup"
-                            >
-                              <ImageIcon className="h-3 w-3 text-blue-600" />
-                              <span>View Media</span>
-                              {q.image_refs && q.image_refs.length > 0 && (
-                                <span className="rounded-full bg-blue-200/80 text-blue-800 text-[10px] px-1 py-0.2 font-mono">
-                                  {q.image_refs.length}
-                                </span>
-                              )}
-                              {((q.question_audio && q.question_audio.length > 0) || (q.audio_refs && q.audio_refs.length > 0) || q.audio_transcript) && (
-                                <Volume2 className="h-2.5 w-2.5 text-teal-600" />
-                              )}
-                              {q.video_transcript && <Video className="h-2.5 w-2.5 text-violet-600" />}
-                            </button>
+                            </div>
                           )}
 
+                          <div className="font-semibold text-[13.5px] text-slate-900 leading-snug">
+                            {q.question_text}
+                          </div>
+                          <div className="mt-1 text-[12px] text-slate-600 font-normal">
+                            Answer: <span className="font-semibold text-slate-800">{q.answer}</span>
+                          </div>
+
+                          {/* Video Clue Prominent Button */}
+                          {hasVideoClue && (
+                            <div className="mt-2.5 flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedQuestionForMedia(q)}
+                                className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 px-3 py-1.5 text-[12px] font-bold text-white shadow-xs hover:from-violet-700 hover:to-indigo-700 hover:shadow transition-all cursor-pointer group"
+                                title="Watch and hear embedded video clue"
+                              >
+                                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-white/20 group-hover:scale-110 transition-transform">
+                                  <Play className="h-3 w-3 fill-white text-white ml-0.5" />
+                                </div>
+                                <span>Watch Video Clue</span>
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Clue and Answer Images Thumbnails (excluding placeholder camera icons) */}
+                          {(cleanQImgs.length > 0 || cleanAnsImgs.length > 0) && (
+                            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                              {cleanQImgs.slice(0, 3).map((imgUrl, i) => (
+                                <button
+                                  key={i}
+                                  type="button"
+                                  onClick={() => setPreviewImage(imgUrl)}
+                                  className="relative rounded-md overflow-hidden border border-slate-200 hover:border-blue-400 bg-white transition-all cursor-pointer group shadow-xs"
+                                  title="Click to view clue image"
+                                >
+                                  <img
+                                    src={getImageSrc(imgUrl)}
+                                    onError={() => handleImgError(imgUrl)}
+                                    alt={`Clue ${i + 1}`}
+                                    className="h-9 w-13 object-cover group-hover:scale-105 transition-transform"
+                                  />
+                                </button>
+                              ))}
+                              {cleanAnsImgs.slice(0, 2).map((imgUrl, i) => (
+                                <button
+                                  key={`ans-${i}`}
+                                  type="button"
+                                  onClick={() => setPreviewImage(imgUrl)}
+                                  className="relative rounded-md overflow-hidden border border-emerald-300 ring-1 ring-emerald-400/50 hover:border-emerald-500 bg-white transition-all cursor-pointer group shadow-xs"
+                                  title="Click to view answer reveal image"
+                                >
+                                  <img
+                                    src={getImageSrc(imgUrl)}
+                                    onError={() => handleImgError(imgUrl)}
+                                    alt={`Answer ${i + 1}`}
+                                    className="h-9 w-13 object-cover group-hover:scale-105 transition-transform"
+                                  />
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Audio Clue Inline Player (if question has audio) */}
                           {((q.question_audio && q.question_audio.length > 0) || (q.audio_refs && q.audio_refs.length > 0)) && (
-                            <button
-                              type="button"
-                              onClick={() => setSelectedQuestionForMedia(q)}
-                              className="inline-flex items-center gap-1 rounded bg-teal-50 hover:bg-teal-100 border border-teal-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-teal-700 cursor-pointer"
-                              title="Click to play audio clue"
-                            >
-                              <Volume2 className="h-2.5 w-2.5" />
-                              Audio Clue
-                            </button>
-                          )}
-                          {q.answer_audio && q.answer_audio.length > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => setSelectedQuestionForMedia(q)}
-                              className="inline-flex items-center gap-1 rounded bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-700 cursor-pointer"
-                              title="Click to play answer reveal audio"
-                            >
-                              <Volume2 className="h-2.5 w-2.5" />
-                              Reveal Audio
-                            </button>
+                            <div className="mt-2 flex items-center gap-2 p-1.5 rounded-lg bg-teal-50/80 border border-teal-200/80 max-w-sm">
+                              <Volume2 className="h-4 w-4 text-teal-600 shrink-0 ml-1" />
+                              <audio
+                                controls
+                                src={getImageSrc((q.question_audio && q.question_audio.length > 0 ? q.question_audio : q.audio_refs || [])[0])}
+                                onError={() => handleImgError((q.question_audio && q.question_audio.length > 0 ? q.question_audio : q.audio_refs || [])[0])}
+                                className="w-full h-7 text-xs accent-teal-600"
+                                preload="none"
+                              />
+                            </div>
                           )}
 
-                          {q.image_refs && q.image_refs.length > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => setSelectedQuestionForMedia(q)}
-                              className="inline-flex items-center gap-1 rounded bg-sky-50 hover:bg-sky-100 border border-sky-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-sky-700 cursor-pointer"
-                              title="Click to preview slide images"
-                            >
-                              <ImageIcon className="h-2.5 w-2.5" />
-                              {q.image_refs.length} Images
-                            </button>
-                          )}
+                          {/* Multimodal Badges: Images, Audio, Video */}
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                            {((cleanQImgs.length > 0) ||
+                              (cleanAnsImgs.length > 0) ||
+                              hasVideoClue ||
+                              (q.question_audio && q.question_audio.length > 0) ||
+                              (q.answer_audio && q.answer_audio.length > 0) ||
+                              (q.audio_refs && q.audio_refs.length > 0) ||
+                              q.visual_clues ||
+                              q.audio_transcript ||
+                              q.video_transcript ||
+                              (q.raw_media_refs && q.raw_media_refs.length > 0)) && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedQuestionForMedia(q)}
+                                className="inline-flex items-center gap-1.5 rounded-md bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 text-[11px] font-bold text-blue-700 transition-colors cursor-pointer shadow-2xs"
+                                title="Click to view slide images, audio, video & transcripts in a popup"
+                              >
+                                <ImageIcon className="h-3 w-3 text-blue-600" />
+                                <span>View Media</span>
+                                {cleanQImgs.length + cleanAnsImgs.length > 0 && (
+                                  <span className="rounded-full bg-blue-200/80 text-blue-800 text-[10px] px-1 py-0.2 font-mono">
+                                    {cleanQImgs.length + cleanAnsImgs.length}
+                                  </span>
+                                )}
+                                {((q.question_audio && q.question_audio.length > 0) || (q.audio_refs && q.audio_refs.length > 0) || q.audio_transcript) && (
+                                  <Volume2 className="h-2.5 w-2.5 text-teal-600" />
+                                )}
+                                {hasVideoClue && <Video className="h-2.5 w-2.5 text-violet-600" />}
+                              </button>
+                            )}
+
+                            {hasVideoClue && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedQuestionForMedia(q)}
+                                className="inline-flex items-center gap-1 rounded bg-violet-50 hover:bg-violet-100 border border-violet-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-violet-700 cursor-pointer"
+                                title="Click to watch embedded video clue"
+                              >
+                                <Video className="h-2.5 w-2.5" />
+                                Video Clue
+                              </button>
+                            )}
+
+                            {((q.question_audio && q.question_audio.length > 0) || (q.audio_refs && q.audio_refs.length > 0)) && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedQuestionForMedia(q)}
+                                className="inline-flex items-center gap-1 rounded bg-teal-50 hover:bg-teal-100 border border-teal-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-teal-700 cursor-pointer"
+                                title="Click to play audio clue"
+                              >
+                                <Volume2 className="h-2.5 w-2.5" />
+                                Audio Clue
+                              </button>
+                            )}
+                            {q.answer_audio && q.answer_audio.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedQuestionForMedia(q)}
+                                className="inline-flex items-center gap-1 rounded bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-700 cursor-pointer"
+                                title="Click to play answer reveal audio"
+                              >
+                                <Volume2 className="h-2.5 w-2.5" />
+                                Reveal Audio
+                              </button>
+                            )}
+
+                            {cleanQImgs.length + cleanAnsImgs.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedQuestionForMedia(q)}
+                                className="inline-flex items-center gap-1 rounded bg-sky-50 hover:bg-sky-100 border border-sky-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-sky-700 cursor-pointer"
+                                title="Click to preview slide images"
+                              >
+                                <ImageIcon className="h-2.5 w-2.5" />
+                                {cleanQImgs.length + cleanAnsImgs.length} Images
+                              </button>
+                            )}
                           {q.visual_clues && (
                             <button
                               type="button"
@@ -726,7 +781,8 @@ function KnowledgeBaseContent() {
                         </div>
                       </td>
                     </tr>
-                  ))
+                  );
+                })
                 )}
               </tbody>
             </table>

@@ -169,6 +169,8 @@ class IngestionPipeline:
                     q.get("question_images") or
                     q.get("audio_refs") or
                     q.get("question_audio") or
+                    q.get("video_refs") or
+                    q.get("question_videos") or
                     q.get("media_items") or
                     q.get("audio_transcript") or
                     q.get("video_transcript") or
@@ -292,6 +294,9 @@ class IngestionPipeline:
                     audio_refs=q_data.get("audio_refs", []),
                     question_audio=q_data.get("question_audio", []),
                     answer_audio=q_data.get("answer_audio", []),
+                    video_refs=q_data.get("video_refs", []),
+                    question_videos=q_data.get("question_videos", []),
+                    answer_videos=q_data.get("answer_videos", []),
                     visual_clues=q_data.get("visual_clues"),
                     audio_transcript=q_data.get("audio_transcript"),
                     video_transcript=q_data.get("video_transcript"),

@@ -52,6 +52,9 @@ class Question(Base):
     audio_refs = Column(JSON, default=list)            # All audio URLs
     question_audio = Column(JSON, default=list)        # Specific clue/question audio clips
     answer_audio = Column(JSON, default=list)          # Specific reveal/answer audio clips
+    video_refs = Column(JSON, default=list)            # All video URLs
+    question_videos = Column(JSON, default=list)       # Specific clue/question video clips
+    answer_videos = Column(JSON, default=list)         # Specific reveal/answer video clips
     visual_clues = Column(Text, nullable=True)         # OCR text & Gemini vision description
     audio_transcript = Column(Text, nullable=True)     # Transcribed audio speech/clue
     video_transcript = Column(Text, nullable=True)     # Transcribed video speech
