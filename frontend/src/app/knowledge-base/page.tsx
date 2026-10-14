@@ -80,9 +80,9 @@ function KnowledgeBaseContent() {
 
   const handleImgError = (rawUrl: string) => {
     const current = getImageSrc(rawUrl);
-    const altUrl = getFallbackMediaUrl(current);
-    if (altUrl && !imgFallbackUrls[rawUrl]) {
-      setImgFallbackUrls((prev) => ({ ...prev, [rawUrl]: altUrl }));
+    const nextFallback = getFallbackMediaUrl(current);
+    if (nextFallback && nextFallback !== current) {
+      setImgFallbackUrls((prev) => ({ ...prev, [rawUrl]: nextFallback }));
     }
   };
 
@@ -625,15 +625,19 @@ function KnowledgeBaseContent() {
                               <span className="truncate">{q.audio_transcript}</span>
                             </button>
                           )}
-                          {q.video_transcript && (
+                          {Boolean(
+                            (q.raw_media_refs && q.raw_media_refs.some((r: string) => r.endsWith('.mp4') || r.includes('video'))) ||
+                            ((q as any).video_refs && (q as any).video_refs.length > 0) ||
+                            q.video_transcript
+                          ) && (
                             <button
                               type="button"
                               onClick={() => setSelectedQuestionForMedia(q)}
-                              className="inline-flex items-center gap-1 rounded bg-violet-50 hover:bg-violet-100 border border-violet-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-violet-800 max-w-[200px] truncate cursor-pointer"
-                              title={q.video_transcript}
+                              className="inline-flex items-center gap-1 rounded bg-violet-100 hover:bg-violet-200 border border-violet-300 px-1.5 py-0.5 text-[10.5px] font-bold text-violet-900 max-w-[200px] truncate cursor-pointer shadow-2xs"
+                              title={q.video_transcript || "Tournament Video Clue"}
                             >
-                              <Video className="h-2.5 w-2.5 flex-shrink-0" />
-                              <span className="truncate">{q.video_transcript}</span>
+                              <Video className="h-3 w-3 text-violet-700 flex-shrink-0" />
+                              <span className="truncate">{q.video_transcript ? `Video: ${q.video_transcript}` : 'Video Clue'}</span>
                             </button>
                           )}
                           {q.source_slide_range && (

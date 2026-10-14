@@ -82,6 +82,7 @@ def to_question_response(q: Question, doc: Optional[Document], slide: Optional[S
         answer_audio=getattr(q, "answer_audio", []) or [],
         video_refs=vids,
         question_videos=q_vids,
+        question_video=q_vids,
         answer_videos=ans_vids,
         visual_clues=getattr(q, "visual_clues", None),
         audio_transcript=getattr(q, "audio_transcript", None),

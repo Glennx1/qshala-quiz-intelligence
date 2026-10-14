@@ -41,11 +41,16 @@ export function resolveMediaUrl(url: string | null | undefined): string {
 
 export function getFallbackMediaUrl(currentUrl: string): string | null {
   if (!currentUrl) return null;
-  // If the Edge CDN static request fails, fallback to backend API service /api/v1/static/
+  // Layer 1 -> Layer 2: If Edge CDN (/static/...) fails, fallback to backend API service /api/v1/static/...
   if (currentUrl.startsWith('/static/')) {
     return `/api/v1${currentUrl}`;
   }
-  if (currentUrl.includes('/static/') && !currentUrl.includes('/api/v1/static/')) {
+  // Layer 2 -> Layer 3: If backend API (/api/v1/static/...) fails, fallback to internal Next.js media streamer /api/media/...
+  if (currentUrl.startsWith('/api/v1/static/')) {
+    const rel = currentUrl.replace('/api/v1/static/', '');
+    return `/api/media/${rel.replace(/^\/+/, '')}`;
+  }
+  if (currentUrl.includes('/static/') && !currentUrl.includes('/api/v1/static/') && !currentUrl.includes('/api/media/')) {
     return currentUrl.replace('/static/', '/api/v1/static/');
   }
   return null;

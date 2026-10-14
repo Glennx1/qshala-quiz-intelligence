@@ -33,9 +33,9 @@ export default function SlideViewerModal({ isOpen, onClose, slide }: Props) {
 
   const handleImgError = (rawUrl: string) => {
     const current = getImageSrc(rawUrl);
-    const altUrl = getFallbackMediaUrl(current);
-    if (altUrl && !fallbackUrls[rawUrl]) {
-      setFallbackUrls((prev) => ({ ...prev, [rawUrl]: altUrl }));
+    const nextFallback = getFallbackMediaUrl(current);
+    if (nextFallback && nextFallback !== current) {
+      setFallbackUrls((prev) => ({ ...prev, [rawUrl]: nextFallback }));
     }
   };
 

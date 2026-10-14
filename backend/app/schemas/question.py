@@ -34,6 +34,7 @@ class QuestionBase(BaseModel):
     answer_audio: List[str] = []
     video_refs: List[str] = []
     question_videos: List[str] = []
+    question_video: List[str] = []
     answer_videos: List[str] = []
     visual_clues: Optional[str] = None
     audio_transcript: Optional[str] = None

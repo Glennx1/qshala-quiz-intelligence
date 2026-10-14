@@ -69,11 +69,13 @@ try:
     static_dirs = [
         _current_dir / "storage",
         _parent_dir / "backend" / "storage",
+        _parent_dir / "frontend" / "public" / "static",
         settings.STORAGE_DIR,
     ]
     slide_dirs = [
         _current_dir / "storage" / "slides",
         _parent_dir / "backend" / "storage" / "slides",
+        _parent_dir / "frontend" / "public" / "static" / "slides",
         settings.SLIDES_DIR,
     ]
     app.mount("/static", MultiDirStaticFiles(directory=str(settings.STORAGE_DIR), fallback_dirs=static_dirs), name="root_static")

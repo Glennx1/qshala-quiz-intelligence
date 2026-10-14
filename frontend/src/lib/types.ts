@@ -70,6 +70,7 @@ export interface HistoricalQuestion {
   answer_audio?: string[];
   video_refs?: string[];
   question_videos?: string[];
+  question_video?: string[];
   answer_videos?: string[];
   audio_transcript?: string | null;
   video_transcript?: string | null;

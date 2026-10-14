@@ -28,10 +28,9 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
   const [fallbackUrls, setFallbackUrls] = useState<Record<string, string>>({});
   const [videoError, setVideoError] = useState(false);
-
-  React.useEffect(() => {
-    setVideoError(false);
-  }, [question?.id]);
+  const [videoSrc, setVideoSrc] = useState<string>('');
+  const [videoFallbackAttempted, setVideoFallbackAttempted] = useState(false);
+  const [, setVideoPlaying] = useState(false);
 
   const getImageSrc = (rawUrl: string) => {
     if (!rawUrl) return '';
@@ -111,7 +110,21 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
   };
 
   const resolvedVideoSrc = videoRef ? getImageSrc(videoRef) : '';
-  const fallbackVideoSrc = resolvedVideoSrc ? getFallbackMediaUrl(resolvedVideoSrc) : null;
+
+  React.useEffect(() => {
+    if (resolvedVideoSrc) {
+      setVideoSrc(resolvedVideoSrc);
+    } else {
+      setVideoSrc('');
+    }
+    setVideoFallbackAttempted(false);
+    setVideoError(false);
+  }, [resolvedVideoSrc, question?.id]);
+
+  // Poster frame from question clue images
+  const posterRef = (question.question_images && question.question_images.length > 0 ? question.question_images[0] : null)
+    || (question.image_refs && question.image_refs.length > 0 ? question.image_refs[0] : null);
+  const posterSrc = posterRef ? getImageSrc(posterRef) : undefined;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
@@ -210,37 +223,56 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
                 <div className="pt-1 space-y-2">
                   <div className="relative rounded-lg overflow-hidden bg-black shadow-md">
                     <video
+                      key={videoSrc}
+                      src={videoSrc}
                       controls
                       playsInline
-                      preload="metadata"
+                      preload="auto"
+                      poster={posterSrc}
                       className="w-full max-h-72 object-contain mx-auto"
-                      onError={() => setVideoError(true)}
+                      onPlay={() => setVideoPlaying(true)}
+                      onPause={() => setVideoPlaying(false)}
+                      onError={() => {
+                        const fallback = getFallbackMediaUrl(videoSrc);
+                        if (fallback && !videoFallbackAttempted && fallback !== videoSrc) {
+                          console.log('[MediaViewer] Video load failed, trying resilient fallback:', fallback);
+                          setVideoFallbackAttempted(true);
+                          setVideoSrc(fallback);
+                        } else {
+                          setVideoError(true);
+                        }
+                      }}
                     >
-                      <source src={resolvedVideoSrc} type="video/mp4" />
-                      {fallbackVideoSrc && <source src={fallbackVideoSrc} type="video/mp4" />}
                       Your browser does not support HTML5 video playback.
                     </video>
                   </div>
 
                   {videoError && (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12.5px] text-amber-900 space-y-2">
-                      <div className="font-semibold flex items-center gap-1.5">
-                        <AlertTriangle className="h-4 w-4 text-amber-600" />
-                        <span>Video Stream Not Available on Serverless Tier</span>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-[12.5px] text-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
+                        <span className="font-medium text-slate-800">Video player encountered a streaming issue.</span>
                       </div>
-                      <p className="text-amber-800 text-[12px] leading-relaxed">
-                        High-definition tournament video files exceeding serverless deployment quotas are kept in local storage. You can access or open the video directly:
-                      </p>
-                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setVideoError(false);
+                            setVideoFallbackAttempted(false);
+                            setVideoSrc(resolvedVideoSrc);
+                          }}
+                          className="px-2.5 py-1 text-xs font-semibold rounded bg-white border border-slate-300 hover:bg-slate-100 transition-colors cursor-pointer"
+                        >
+                          Retry Stream
+                        </button>
                         <a
-                          href={resolvedVideoSrc}
+                          href={videoSrc || resolvedVideoSrc}
                           target="_blank"
                           rel="noreferrer"
-                          download
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-700 text-white font-semibold text-[11.5px] transition-colors shadow-2xs"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-violet-600 hover:bg-violet-700 text-white transition-colors cursor-pointer"
                         >
                           <ExternalLink className="h-3.5 w-3.5" />
-                          <span>Open / Download Video File</span>
+                          <span>Open Video Directly</span>
                         </a>
                       </div>
                     </div>
@@ -467,6 +499,7 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
               )}
             </div>
           )}
+
 
 
           {/* Empty state if somehow opened on text-only question */}

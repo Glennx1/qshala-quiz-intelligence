@@ -1,19 +1,26 @@
 import type { NextConfig } from "next";
 
+const isVercel = Boolean(process.env.VERCEL || process.env.NEXT_PUBLIC_VERCEL_ENV);
+
 const nextConfig: NextConfig = {
   async rewrites() {
-    return [
+    const rewrites = [
       {
         source: "/api/:path*",
         destination: process.env.INTERNAL_API_URL || "http://127.0.0.1:8000/api/:path*",
       },
-      {
-        source: "/static/:path*",
-        destination: process.env.INTERNAL_API_URL
-          ? `${process.env.INTERNAL_API_URL.replace(/\/api.*$/, '')}/static/:path*`
-          : "http://127.0.0.1:8000/static/:path*",
-      },
     ];
+
+    // Only proxy /static in local dev when NOT on Vercel and an explicit internal API URL is provided.
+    // In production and on Vercel, static assets are served directly from public/ via Vercel Edge CDN with 0ms cold start.
+    if (!isVercel && process.env.NODE_ENV === "development" && process.env.INTERNAL_API_URL) {
+      rewrites.push({
+        source: "/static/:path*",
+        destination: `${process.env.INTERNAL_API_URL.replace(/\/api.*$/, '')}/static/:path*`,
+      });
+    }
+
+    return rewrites;
   },
 };
 

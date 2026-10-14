@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from backend.app.services.tagging.auto_tagger import AutoTagger
 from backend.app.services.tagging.difficulty_engine import DifficultyEngine
 
+__test__ = False
+
 def test_question(q_text: str, ans_text: str, exp_text: str = ""):
     tagger = AutoTagger()
     engine = DifficultyEngine()

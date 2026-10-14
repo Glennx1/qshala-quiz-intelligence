@@ -18,6 +18,7 @@ import {
   Eye,
   Volume2,
   Headphones,
+  Video,
 } from 'lucide-react';
 import { GeneratedQuestion, RetrievalSource } from '../lib/types';
 import { resolveMediaUrl, getFallbackMediaUrl } from '../lib/api';
@@ -57,9 +58,9 @@ export default function QuestionCard({
 
   const handleImgError = (rawUrl: string) => {
     const current = getImageSrc(rawUrl);
-    const altUrl = getFallbackMediaUrl(current);
-    if (altUrl && !imgFallbackUrls[rawUrl]) {
-      setImgFallbackUrls((prev) => ({ ...prev, [rawUrl]: altUrl }));
+    const nextFallback = getFallbackMediaUrl(current);
+    if (nextFallback && nextFallback !== current) {
+      setImgFallbackUrls((prev) => ({ ...prev, [rawUrl]: nextFallback }));
     }
   };
 
@@ -120,6 +121,19 @@ export default function QuestionCard({
               <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-700 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded">
                 <Volume2 className="h-3 w-3 text-teal-600" />
                 Audio Clue
+              </span>
+            </>
+          )}
+          {Boolean(
+            (question.video_refs && question.video_refs.length > 0) ||
+            (question.question_video && question.question_video.length > 0) ||
+            (question.raw_media_refs && question.raw_media_refs.some(r => r.endsWith('.mp4') || r.includes('video')))
+          ) && (
+            <>
+              <span className="text-slate-300">•</span>
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-violet-700 bg-violet-50 border border-violet-200 px-1.5 py-0.5 rounded">
+                <Video className="h-3 w-3 text-violet-600" />
+                Video Clue
               </span>
             </>
           )}
@@ -253,6 +267,42 @@ export default function QuestionCard({
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Video Clues Player */}
+          {Boolean(
+            (question.video_refs && question.video_refs.length > 0) ||
+            (question.question_video && question.question_video.length > 0) ||
+            (question.raw_media_refs && question.raw_media_refs.some(r => r.endsWith('.mp4') || r.includes('video')))
+          ) && (
+            <div className="mt-3 pt-2.5 border-t border-slate-200/60">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-violet-700 block mb-2 flex items-center gap-1.5">
+                <Video className="h-3.5 w-3.5 text-violet-600" />
+                Video Clue & Tournament Motion Clip
+              </span>
+              {(() => {
+                const vUrl = (question.video_refs && question.video_refs[0]) ||
+                  (question.question_video && question.question_video[0]) ||
+                  (question.raw_media_refs || []).find(r => r.endsWith('.mp4') || r.includes('video'));
+                const posterUrl = (question.question_images && question.question_images[0]) ||
+                  (question.image_refs && question.image_refs[0]);
+                return vUrl ? (
+                  <div className="rounded-lg overflow-hidden border border-violet-200/80 bg-black max-w-md shadow-sm">
+                    <video
+                      controls
+                      playsInline
+                      preload="metadata"
+                      poster={posterUrl ? getImageSrc(posterUrl) : undefined}
+                      src={getImageSrc(vUrl)}
+                      onError={() => handleImgError(vUrl)}
+                      className="w-full max-h-56 object-contain mx-auto"
+                    >
+                      Your browser does not support HTML5 video playback.
+                    </video>
+                  </div>
+                ) : null;
+              })()}
             </div>
           )}
         </div>

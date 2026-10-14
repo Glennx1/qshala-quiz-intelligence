@@ -47,9 +47,9 @@ export default function QuizReviewStudioPage() {
 
   const handleImgError = (rawUrl: string) => {
     const current = getImageSrc(rawUrl);
-    const altUrl = getFallbackMediaUrl(current);
-    if (altUrl && !imgFallbackUrls[rawUrl]) {
-      setImgFallbackUrls((prev) => ({ ...prev, [rawUrl]: altUrl }));
+    const nextFallback = getFallbackMediaUrl(current);
+    if (nextFallback && nextFallback !== current) {
+      setImgFallbackUrls((prev) => ({ ...prev, [rawUrl]: nextFallback }));
     }
   };
 

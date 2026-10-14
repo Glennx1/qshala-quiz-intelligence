@@ -95,12 +95,14 @@ static_fallbacks = [
     _project_root / "storage",
     _project_root / "frontend" / "public",
     _project_root / "frontend" / "public" / "static",
+    _backend_dir.parent / "frontend" / "public" / "static",
 ]
 slide_fallbacks = [
     _backend_dir / "storage" / "slides",
     _project_root / "backend" / "storage" / "slides",
     _project_root / "storage" / "slides",
     _project_root / "frontend" / "public" / "static" / "slides",
+    _backend_dir.parent / "frontend" / "public" / "static" / "slides",
     settings.SLIDES_DIR,
 ]
 app.mount("/static", MultiDirStaticFiles(directory=str(settings.STORAGE_DIR), fallback_dirs=static_fallbacks), name="static")
