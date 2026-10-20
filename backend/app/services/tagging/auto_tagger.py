@@ -1,8 +1,14 @@
 import os
 import json
 import re
+import logging
 from pathlib import Path
 from typing import Dict, Any, List, Set, Optional
+
+from backend.app.config import settings
+from backend.app.services.ai.gemini_provider import GeminiLLMProvider
+
+logger = logging.getLogger(__name__)
 
 TAXONOMY_FILE = Path(__file__).resolve().parent / "taxonomy.json"
 
@@ -71,29 +77,7 @@ class AutoTagger:
         vid_clean = (video_transcript or "").lower()
 
         # 1. Multi-Topic Weighted Scoring
-        topic_scores: Dict[str, float] = {}
-
-        for topic, keywords in self.taxonomy.items():
-            score = 0.0
-            for kw in keywords:
-                pattern = rf"\b{re.escape(kw)}\b"
-                if re.search(pattern, q_clean):
-                    score += 2.5
-                if re.search(pattern, a_clean):
-                    score += 2.0
-                if re.search(pattern, title_clean):
-                    score += 1.5
-                if re.search(pattern, exp_clean):
-                    score += 1.0
-                if vis_clean and re.search(pattern, vis_clean):
-                    score += 1.5
-                if audio_clean and re.search(pattern, audio_clean):
-                    score += 1.5
-                if vid_clean and re.search(pattern, vid_clean):
-                    score += 1.5
-
-            if score > 0:
-                topic_scores[topic] = score
+        topic_scores = self._compute_topic_scores(q_clean, a_clean, exp_clean, title_clean, vis_clean, audio_clean, vid_clean)
 
         # Rank topics descending
         sorted_topics = sorted(topic_scores.items(), key=lambda x: x[1], reverse=True)
@@ -152,16 +136,56 @@ class AutoTagger:
         doc_title: str = "",
         visual_clues: str = "",
         audio_transcript: str = "",
-        video_transcript: str = ""
+        video_transcript: str = "",
+        subtopic: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Feeds the canonical representation into Gemini classification step,
-        injecting visual OCR context and audio transcripts into the prompt.
-        Falls back to rule-based tagging on error or missing keys.
+        Hybrid tagging. The free rule-based pass always runs first. If it finds a
+        clear, unambiguous keyword match (see _is_confident), we return that result
+        immediately and never call Gemini at all. Only ambiguous or unmatched
+        questions are escalated to the AI, which is what keeps per-question AI cost
+        down at high ingestion volume (e.g. bulk SharePoint sync). Any failure during
+        the AI call (bad/missing key, network error, malformed response) falls back
+        to the already-computed rule-based result rather than failing the question.
         """
+        q_clean = question_text.lower()
+        a_clean = answer_text.lower()
+        exp_clean = explanation.lower()
+        title_clean = doc_title.lower()
+        vis_clean = (visual_clues or "").lower()
+        audio_clean = (audio_transcript or "").lower()
+        vid_clean = (video_transcript or "").lower()
+        topic_scores = self._compute_topic_scores(q_clean, a_clean, exp_clean, title_clean, vis_clean, audio_clean, vid_clean)
+
+        rule_based_result = self.tag_question(
+            question_text=question_text,
+            answer_text=answer_text,
+            explanation=explanation,
+            doc_title=doc_title,
+            visual_clues=visual_clues,
+            audio_transcript=audio_transcript,
+            video_transcript=video_transcript,
+            subtopic=subtopic
+        )
+
+        if not settings.FORCE_AI_TAGGING and self._is_confident(topic_scores):
+            logger.info(
+                f"[AutoTagger] Rule-based match is confident (topic='{rule_based_result['primary_topic']}'), "
+                f"skipping Gemini call for this question"
+            )
+            return rule_based_result
+
+        if settings.FORCE_AI_TAGGING:
+            logger.info("[AutoTagger] FORCE_AI_TAGGING is on, sending question to Gemini regardless of rule-based confidence")
+        else:
+            logger.info("[AutoTagger] Rule-based match is low-confidence/ambiguous, escalating to AI tagging")
+
         try:
             from backend.app.services.ai.factory import get_llm_provider
             llm = get_llm_provider()
+            logger.info(f"[AutoTagger] Tagging question with AI using provider: {type(llm).__name__}")
+            if settings.LLM_PROVIDER.lower() == "gemini" and not isinstance(llm, GeminiLLMProvider):
+                raise ValueError("LLM_PROVIDER is configured as 'gemini' but GEMINI_API_KEY is not set or invalid in .env, so GeminiLLMProvider could not be initialized.")
 
             prompt_parts = [
                 f"Question: {question_text}",
@@ -202,28 +226,77 @@ class AutoTagger:
                 hook = res.get("question_hook", "DIRECT_TRIVIA")
                 if hook == "STORY_NARRATIVE":
                     hook = "HISTORICAL_CONTEXT"
+                logger.info(f"[AutoTagger] AI tagging response: primary_topic='{res.get('primary_topic')}', topics={res.get('topics')}, tags={clean_tags}")
                 return {
                     "primary_topic": res.get("primary_topic", "General Knowledge"),
                     "topics": res.get("topics", ["General Knowledge"]),
-                    "subtopic": res.get("subtopic"),
+                    "subtopic": res.get("subtopic") or subtopic,
                     "tags": clean_tags,
                     "question_hook": hook,
                     "curiosity_score": int(res.get("curiosity_score", 7)),
                     "temporal_nature": res.get("temporal_nature", "EVERGREEN")
                 }
-        except Exception:
-            pass
+            elif isinstance(llm, GeminiLLMProvider):
+                raise ValueError(f"Malformed AI response from Gemini (missing primary_topic or topics): {res}")
+        except Exception as e:
+            logger.error(f"[AutoTagger] AI tagging failed, falling back to rule-based result: {e}")
 
-        # Clean fallback to rule-based classification
-        return self.tag_question(
-            question_text=question_text,
-            answer_text=answer_text,
-            explanation=explanation,
-            doc_title=doc_title,
-            visual_clues=visual_clues,
-            audio_transcript=audio_transcript,
-            video_transcript=video_transcript
-        )
+        # Clean fallback to the rule-based result we already computed above
+        return rule_based_result
+
+    def _compute_topic_scores(
+        self,
+        q_clean: str,
+        a_clean: str,
+        exp_clean: str,
+        title_clean: str,
+        vis_clean: str,
+        audio_clean: str,
+        vid_clean: str
+    ) -> Dict[str, float]:
+        """Shared weighted keyword scoring, used by both tag_question() and the
+        confidence check in tag_question_with_ai()."""
+        topic_scores: Dict[str, float] = {}
+        for topic, keywords in self.taxonomy.items():
+            score = 0.0
+            for kw in keywords:
+                pattern = rf"\b{re.escape(kw)}\b"
+                if re.search(pattern, q_clean):
+                    score += 2.5
+                if re.search(pattern, a_clean):
+                    score += 2.0
+                if re.search(pattern, title_clean):
+                    score += 1.5
+                if re.search(pattern, exp_clean):
+                    score += 1.0
+                if vis_clean and re.search(pattern, vis_clean):
+                    score += 1.5
+                if audio_clean and re.search(pattern, audio_clean):
+                    score += 1.5
+                if vid_clean and re.search(pattern, vid_clean):
+                    score += 1.5
+            if score > 0:
+                topic_scores[topic] = score
+        return topic_scores
+
+    def _is_confident(self, topic_scores: Dict[str, float]) -> bool:
+        """
+        Decides whether the free rule-based pass is trustworthy enough to skip
+        the Gemini call entirely. Confident when the top-scoring topic clears
+        TAGGING_CONFIDENCE_THRESHOLD and isn't too close to the runner-up
+        (TAGGING_AMBIGUITY_RATIO) -- both tunable via .env without a code change.
+        """
+        if not topic_scores:
+            return False
+        sorted_scores = sorted(topic_scores.values(), reverse=True)
+        top_score = sorted_scores[0]
+        if top_score < settings.TAGGING_CONFIDENCE_THRESHOLD:
+            return False
+        if len(sorted_scores) > 1:
+            second_score = sorted_scores[1]
+            if top_score > 0 and (second_score / top_score) > settings.TAGGING_AMBIGUITY_RATIO:
+                return False
+        return True
 
     def _extract_entities(self, text: str) -> List[str]:
         """Extracts significant proper nouns, capitalized entities, and key multi-word phrases."""

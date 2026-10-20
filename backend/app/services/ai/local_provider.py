@@ -65,13 +65,25 @@ class LocalLLMProvider(LLMProvider):
         # Check if this is a validation call
         if "validation" in prompt.lower() or "validate" in prompt.lower():
             return self._mock_validation(prompt)
-            
+
         # Check if this is question extraction call
         if "extract questions" in prompt.lower() or "slide content" in prompt.lower():
             return self._mock_extraction(prompt)
 
+        # Check if this is a tagging/classification call (AutoTagger.tag_question_with_ai)
+        if "pedagogical quiz classifier" in prompt.lower() or "question_hook" in prompt.lower():
+            return self._mock_tagging(prompt)
+
         # Otherwise it's quiz question generation
         return self._mock_quiz_generation(prompt)
+
+    def _mock_tagging(self, prompt: str) -> Dict[str, Any]:
+        # Deliberately returns a shape missing enough structure that AutoTagger's
+        # "primary_topic" / "topics" check fails and it cleanly falls back to its
+        # own rule-based tagger -- this provider exists for fully offline/no-API-key
+        # operation, so real topic classification is the rule-based tagger's job,
+        # not this mock's.
+        return {"note": "local provider has no real tagging model; AutoTagger falls back to rule-based classification"}
 
     def _mock_validation(self, prompt: str) -> Dict[str, Any]:
         return {

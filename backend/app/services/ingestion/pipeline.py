@@ -138,7 +138,23 @@ class IngestionPipeline:
                 target_imgs = list(q.get("question_images") or q.get("image_refs") or [])
                 for rel_img_path in target_imgs:
                     disk_path = None
-                    if rel_img_path.startswith("/static/slides/"):
+                    img_bytes = None
+                    ext = None
+
+                    if rel_img_path.startswith("http://") or rel_img_path.startswith("https://"):
+                        # Media stored in Cloudflare R2 (or any other remote object store) --
+                        # the local disk copy may not exist on this instance, so fetch over HTTP.
+                        try:
+                            import httpx as _httpx
+                            async with _httpx.AsyncClient(timeout=30.0) as client:
+                                resp = await client.get(rel_img_path)
+                                resp.raise_for_status()
+                                img_bytes = resp.content
+                            ext = os.path.splitext(rel_img_path)[1].lower()
+                        except Exception as fetch_err:
+                            logger.warning(f"Failed to fetch remote image {rel_img_path}: {fetch_err}")
+                            continue
+                    elif rel_img_path.startswith("/static/slides/"):
                         sub = rel_img_path[len("/static/slides/"):]
                         cand = settings.SLIDES_DIR / sub
                         if cand.exists():
@@ -148,11 +164,17 @@ class IngestionPipeline:
                         if cand.exists():
                             disk_path = cand
 
-                    if disk_path and disk_path.exists():
+                    if img_bytes is None and disk_path and disk_path.exists():
                         try:
                             with open(disk_path, "rb") as f:
                                 img_bytes = f.read()
                             ext = disk_path.suffix.lower()
+                        except Exception as read_err:
+                            logger.warning(f"Failed to read local image {rel_img_path}: {read_err}")
+                            continue
+
+                    if img_bytes:
+                        try:
                             mime = "image/png" if ext == ".png" else ("image/jpeg" if ext in [".jpg", ".jpeg"] else "image/webp")
                             desc = await self.llm_provider.describe_image(img_bytes, mime_type=mime)
                             if desc and desc.strip():
@@ -177,7 +199,7 @@ class IngestionPipeline:
                     q.get("raw_media_refs")
                 )
 
-                tags_data = self.auto_tagger.tag_question(
+                tags_data = await self.auto_tagger.tag_question_with_ai(
                     question_text=q["question_text"],
                     answer_text=q["answer"],
                     explanation=q.get("explanation", ""),

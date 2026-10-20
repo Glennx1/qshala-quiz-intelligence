@@ -49,7 +49,17 @@ class PPTXParser:
             except Exception:
                 pass
 
-    def _save_media_file(self, filename: str, blob: bytes) -> Path:
+    def _save_media_file(self, filename: str, blob: bytes) -> Tuple[Path, str]:
+        """
+        Always writes a local disk copy (unchanged -- this is what the ingestion
+        pipeline's vision/OCR step reads back later). Additionally uploads to
+        Cloudflare R2 when configured, in which case the *public R2 URL* is
+        returned as the servable path instead of the local "/static/slides/..."
+        one. The frontend already passes any absolute http(s) URL straight
+        through (see resolveMediaUrl in frontend/src/lib/api.ts), so no frontend
+        changes are needed for this to work.
+        Returns (local_path, servable_url).
+        """
         local_path = self.output_media_dir / filename
         if self.write_to_disk:
             with open(local_path, "wb") as f:
@@ -61,7 +71,18 @@ class PPTXParser:
                         f.write(blob)
                 except Exception:
                     pass
-        return local_path
+
+        servable_url = f"/static/slides/{self.document_id}/media/{filename}"
+        try:
+            from backend.app.services.storage.r2_storage import get_media_storage
+            r2 = get_media_storage()
+            if r2 is not None:
+                r2_key = f"slides/{self.document_id}/media/{filename}"
+                servable_url = r2.upload_bytes(r2_key, blob)
+        except Exception as e:
+            logger.warning(f"R2 upload failed for {filename}, falling back to local URL: {e}")
+
+        return local_path, servable_url
 
     def _classify_media_type(self, ext: str) -> str:
         ext_lower = ext.lower()
@@ -225,9 +246,8 @@ class PPTXParser:
                         seen_img_hashes.add(img_hash)
 
                         img_filename = f"slide_{slide_idx}_img_{img_counter}{ext}"
-                        img_path = self._save_media_file(img_filename, image.blob)
+                        img_path, rel_path = self._save_media_file(img_filename, image.blob)
 
-                        rel_path = f"/static/slides/{self.document_id}/media/{img_filename}"
                         image_paths.append(rel_path)
                         seen_media_names.add(img_filename)
 
@@ -282,9 +302,8 @@ class PPTXParser:
                                     continue
 
                                 mime_type = getattr(target_part, "content_type", None) or mimetypes.guess_type(part_name)[0] or "application/octet-stream"
-                                local_file = self._save_media_file(part_name, raw_data)
+                                local_file, rel_url = self._save_media_file(part_name, raw_data)
 
-                                rel_url = f"/static/slides/{self.document_id}/media/{part_name}"
                                 media_dict = {
                                     "filename": part_name,
                                     "slide_number": slide_idx,
@@ -315,9 +334,8 @@ class PPTXParser:
                         if z_item["media_type"] == "image" and not self._is_valid_quiz_image(z_item["raw_bytes"], Path(z_item["filename"]).suffix):
                             continue
 
-                        local_file = self._save_media_file(z_item["filename"], z_item["raw_bytes"])
+                        local_file, rel_url = self._save_media_file(z_item["filename"], z_item["raw_bytes"])
 
-                        rel_url = f"/static/slides/{self.document_id}/media/{z_item['filename']}"
                         item_record = {
                             "filename": z_item["filename"],
                             "slide_number": slide_idx,

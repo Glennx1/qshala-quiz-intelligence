@@ -10,8 +10,41 @@ logger = logging.getLogger(__name__)
 
 class GeminiLLMProvider(LLMProvider):
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or settings.GEMINI_API_KEY
-        self.model = "gemini-1.5-flash"
+        key = api_key or settings.GEMINI_API_KEY or ""
+        key = key.strip()
+        if (key.startswith('"') and key.endswith('"')) or (key.startswith("'") and key.endswith("'")):
+            key = key[1:-1].strip()
+        self.api_key = key
+        self.model = settings.GEMINI_MODEL or "gemini-2.5-flash"
+
+    def _extract_text(self, data: Dict[str, Any]) -> str:
+        candidates = data.get("candidates", [])
+        if not candidates:
+            feedback = data.get("promptFeedback", {})
+            block_reason = feedback.get("blockReason")
+            if block_reason:
+                raise ValueError(f"Gemini API blocked the request: {block_reason} (feedback: {feedback})")
+            raise ValueError(f"Gemini API returned no candidates: {data}")
+
+        first_candidate = candidates[0]
+        content = first_candidate.get("content", {})
+        parts = content.get("parts", [])
+        if not parts:
+            finish_reason = first_candidate.get("finishReason")
+            raise ValueError(f"Gemini candidate has no parts (finishReason: {finish_reason}): {first_candidate}")
+
+        # In Gemini 2.5 Flash, reasoning/thoughts are returned as parts with 'thought': True.
+        # The final output is in the non-thought part.
+        for part in reversed(parts):
+            if "text" in part and not part.get("thought", False):
+                return part["text"]
+
+        # Fallback to the last part with text if all had thought flag or flag wasn't set
+        for part in reversed(parts):
+            if "text" in part:
+                return part["text"]
+
+        raise ValueError(f"No text part found in Gemini candidate parts: {parts}")
 
     async def generate_text(self, prompt: str, system_instruction: Optional[str] = None) -> str:
         if not self.api_key:
@@ -26,9 +59,11 @@ class GeminiLLMProvider(LLMProvider):
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(url, json=payload)
+            if resp.is_error:
+                logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
             resp.raise_for_status()
             data = resp.json()
-            return data["candidates"][0]["content"]["parts"][0]["text"]
+            return self._extract_text(data)
 
     async def generate_json(self, prompt: str, system_instruction: Optional[str] = None) -> Dict[str, Any]:
         if not self.api_key:
@@ -44,12 +79,23 @@ class GeminiLLMProvider(LLMProvider):
         if system_instruction:
             payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
 
+        logger.info(f"[GeminiLLMProvider] Sending generate_json request to model '{self.model}'")
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(url, json=payload)
+            if resp.is_error:
+                logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
             resp.raise_for_status()
             data = resp.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-            return json.loads(text)
+            text = self._extract_text(data)
+            logger.info(f"[GeminiLLMProvider] Received response from model '{self.model}': {text}")
+            clean_text = text.strip()
+            if clean_text.startswith("```json"):
+                clean_text = clean_text[7:]
+            elif clean_text.startswith("```"):
+                clean_text = clean_text[3:]
+            if clean_text.endswith("```"):
+                clean_text = clean_text[:-3]
+            return json.loads(clean_text.strip())
 
     async def generate_multimodal(
         self,
@@ -77,9 +123,11 @@ class GeminiLLMProvider(LLMProvider):
 
         async with httpx.AsyncClient(timeout=90.0) as client:
             resp = await client.post(url, json=payload)
+            if resp.is_error:
+                logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
             resp.raise_for_status()
             data = resp.json()
-            return data["candidates"][0]["content"]["parts"][0]["text"]
+            return self._extract_text(data)
 
     async def describe_image(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> str:
         b64_data = base64.b64encode(image_bytes).decode("utf-8")
@@ -102,7 +150,11 @@ class GeminiLLMProvider(LLMProvider):
 
 class GeminiEmbeddingProvider(EmbeddingProvider):
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or settings.GEMINI_API_KEY
+        key = api_key or settings.GEMINI_API_KEY or ""
+        key = key.strip()
+        if (key.startswith('"') and key.endswith('"')) or (key.startswith("'") and key.endswith("'")):
+            key = key[1:-1].strip()
+        self.api_key = key
         self.model = "text-embedding-004"
 
     async def get_embedding(self, text: str) -> List[float]:
@@ -115,11 +167,18 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
             "content": {"parts": [{"text": text}]}
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            return data["embedding"]["values"]
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url, json=payload)
+                if resp.is_error:
+                    logger.error(f"[GeminiEmbeddingProvider] API error ({resp.status_code}): {resp.text}")
+                resp.raise_for_status()
+                data = resp.json()
+                return data["embedding"]["values"]
+        except Exception as e:
+            logger.warning(f"[GeminiEmbeddingProvider] API call failed ({e}), falling back to local deterministic embedding.")
+            from backend.app.services.ai.local_provider import LocalEmbeddingProvider
+            return await LocalEmbeddingProvider(dim=settings.EMBEDDING_DIM).get_embedding(text)
 
     async def get_embeddings(self, texts: List[str]) -> List[List[float]]:
         # Batch or loop

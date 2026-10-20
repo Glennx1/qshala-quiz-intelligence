@@ -125,6 +125,16 @@ class Settings(BaseSettings):
     # Vercel Blob Object Storage
     BLOB_READ_WRITE_TOKEN: Optional[str] = None
 
+    # Cloudflare R2 Object Storage (S3-compatible). Preferred media store when configured;
+    # falls back to Vercel Blob, then local disk, when any of these are missing.
+    R2_ACCOUNT_ID: Optional[str] = None
+    R2_ACCESS_KEY_ID: Optional[str] = None
+    R2_SECRET_ACCESS_KEY: Optional[str] = None
+    R2_BUCKET_NAME: Optional[str] = None
+    # Public base URL for the bucket (R2.dev dev URL or a custom domain). Required to
+    # construct a servable https URL for uploaded media.
+    R2_PUBLIC_BASE_URL: Optional[str] = None
+
     # Azure AD / Microsoft Graph / SharePoint Integration
     AZURE_TENANT_ID: Optional[str] = None
     AZURE_CLIENT_ID: Optional[str] = None
@@ -140,13 +150,64 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: Optional[str] = None
     OPENAI_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
-    
+
+    # Which Gemini model to call for tagging/generation. Overridable without a code change
+    # in case Google renames/retires the default (gemini-2.5-flash is GA as of Oct 2026).
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+
     # Embedding config
     EMBEDDING_DIM: int = 768  # 768 for Gemini / all-mpnet, 1536 for OpenAI
-    
+
     # Validation thresholds
     DUPLICATE_SIMILARITY_THRESHOLD: float = 0.92
     MIN_GROUNDING_SCORE: float = 0.70
+
+    # Hybrid tagging thresholds: the free rule-based tagger runs first on every question.
+    # If its top-scoring topic clears CONFIDENCE_THRESHOLD and isn't too close to the
+    # runner-up (AMBIGUITY_RATIO), we skip the Gemini call entirely for that question.
+    # Only ambiguous/low-confidence questions are escalated to the AI, which keeps
+    # per-question AI cost down at high ingestion volume (e.g. SharePoint bulk sync).
+    TAGGING_CONFIDENCE_THRESHOLD: float = 4.0
+    TAGGING_AMBIGUITY_RATIO: float = 0.65
+
+    # Early-volume override: when True, every question is sent to Gemini regardless of
+    # how confident the rule-based pass is -- the confidence gate above is skipped
+    # entirely. Use this while ingestion volume is still low (first few hundred
+    # questions) and accuracy matters more than API cost. Once you've accumulated
+    # enough Gemini-tagged questions to train your own local classifier on them, flip
+    # this back to False to re-enable the cost-saving hybrid gate.
+    FORCE_AI_TAGGING: bool = True
+
+    @field_validator("FORCE_AI_TAGGING", mode="before")
+    @classmethod
+    def parse_force_ai_tagging(cls, v):
+        if v == "" or v is None:
+            return True
+        if isinstance(v, bool):
+            return v
+        return str(v).strip().lower() in {"1", "true", "yes", "on"}
+
+    @field_validator("GEMINI_MODEL", mode="before")
+    @classmethod
+    def parse_gemini_model(cls, v):
+        if v == "" or v is None:
+            return "gemini-2.5-flash"
+        return str(v)
+
+    @field_validator("TAGGING_CONFIDENCE_THRESHOLD", mode="before")
+    @classmethod
+    def parse_tagging_confidence(cls, v):
+        if v == "" or v is None:
+            return 4.0
+        return float(v)
+
+    @field_validator("TAGGING_AMBIGUITY_RATIO", mode="before")
+    @classmethod
+    def parse_tagging_ambiguity(cls, v):
+        if v == "" or v is None:
+            return 0.65
+        return float(v)
+
     @field_validator("EMBEDDING_DIM", mode="before")
     @classmethod
     def parse_embedding_dim(cls, v):
@@ -185,6 +246,8 @@ class Settings(BaseSettings):
     @field_validator("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
                      "BLOB_READ_WRITE_TOKEN", "AZURE_TENANT_ID", "AZURE_CLIENT_ID",
                      "AZURE_CLIENT_SECRET", "SHAREPOINT_SITE_ID", "SHAREPOINT_DRIVE_ID",
+                     "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY",
+                     "R2_BUCKET_NAME", "R2_PUBLIC_BASE_URL",
                      mode="before")
     @classmethod
     def parse_empty_keys(cls, v):
