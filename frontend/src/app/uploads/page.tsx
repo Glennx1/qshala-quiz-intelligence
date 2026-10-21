@@ -87,20 +87,20 @@ export default function UploadPage() {
     setUploading(true);
     const mbSize = (file.size / (1024 * 1024)).toFixed(1);
 
-    // Vercel serverless functions have a strict 4.5 MB request ceiling.
-    // For any file > 3.5 MB (or > 100 MB on localhost), use chunked sliced upload
-    // which breaks the presentation into 3 MB pieces so it NEVER trips the payload limit!
+    // Backend runs on Render now (not Vercel serverless), so there's no 4.5 MB payload
+    // ceiling to dodge. Small/medium decks go up in one request; large decks still use
+    // chunked upload so a dropped connection only costs one 20 MB slice, not the whole file.
     const isLocalhost =
       typeof window !== 'undefined' &&
       (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-    const directUploadLimit = isLocalhost ? 100 * 1024 * 1024 : 3.5 * 1024 * 1024;
+    const directUploadLimit = isLocalhost ? 100 * 1024 * 1024 : 20 * 1024 * 1024;
 
     try {
       let doc: DocumentItem;
 
       if (file.size > directUploadLimit) {
         setPipelineProgress({
-          step: `Uploading ${file.name} (${mbSize} MB) in 3MB slices...`,
+          step: `Uploading ${file.name} (${mbSize} MB) in 20MB slices...`,
           percentage: 5,
           slides: 0,
           questions: 0,

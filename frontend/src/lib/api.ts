@@ -115,7 +115,8 @@ export const api = {
     onProgress?: (percentage: number, currentChunk: number, totalChunks: number) => void,
     title?: string,
     year?: number,
-    chunkSize: number = 3 * 1024 * 1024 // 3 MB per slice (comfortably under Vercel's 4.5 MB payload limit)
+    chunkSize: number = 20 * 1024 * 1024 // 20 MB per slice -- backend now runs on Render (no 4.5 MB Vercel ceiling),
+    // so chunking here is purely for resilience: a dropped connection only loses one slice, not the whole file
   ): Promise<DocumentItem> => {
     const uploadId =
       typeof crypto !== 'undefined' && crypto.randomUUID
