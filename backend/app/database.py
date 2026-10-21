@@ -58,7 +58,12 @@ def get_vector_column_type(dim: int = 768):
 engine = None
 if is_postgres:
     try:
-        engine = create_engine(raw_db_url, echo=False)
+        engine = create_engine(
+            raw_db_url,
+            echo=False,
+            pool_pre_ping=True,   # test each connection before use; Neon pooler can drop idle SSL conns
+            pool_recycle=280,     # recycle connections before Neon/pgbouncer idle timeout kicks in
+        )
         with engine.connect() as conn:
             pass
     except Exception as exc:
