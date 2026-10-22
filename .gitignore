@@ -64,3 +64,6 @@ yarn-error.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# Evaluation results
+backend/eval_data/results/

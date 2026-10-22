@@ -1,0 +1,282 @@
+{
+  "version": "v3",
+  "level1": [
+    {
+      "name": "Markets & Investing",
+      "level2": [
+        {
+          "code": "EQ",
+          "name": "Equities & Trading",
+          "description": "Stocks, IPOs, brokers, exchanges, trading mechanics"
+        },
+        {
+          "code": "QA",
+          "name": "Quant & Algo Trading",
+          "description": "Quant firms, algorithmic and high-frequency trading"
+        },
+        {
+          "code": "MF",
+          "name": "Mutual Funds & ETFs",
+          "description": "Funds, SIPs, ETFs, fund houses"
+        },
+        {
+          "code": "CM",
+          "name": "Commodities, Forex & Crypto",
+          "description": "Gold, oil, currencies as assets, crypto"
+        },
+        {
+          "code": "MC",
+          "name": "Market Concepts (Varsity)",
+          "description": "Finance and market terms explained in Zerodha Varsity: volatility, benchmark, chart patterns"
+        },
+        {
+          "code": "IB",
+          "name": "Investing Books & Legends",
+          "description": "Famous investors, trading and finance books"
+        }
+      ]
+    },
+    {
+      "name": "Banking, Payments & Insurance",
+      "level2": [
+        {
+          "code": "BP",
+          "name": "Banking Products & Services",
+          "description": "Bank products, deposits, credit scores, cheques, ATMs"
+        },
+        {
+          "code": "RB",
+          "name": "RBI & Regulation",
+          "description": "RBI, regulators, rules, central banking"
+        },
+        {
+          "code": "FT",
+          "name": "Fintech & UPI",
+          "description": "UPI, wallets, payment apps, fintech products"
+        },
+        {
+          "code": "IR",
+          "name": "Insurance & Risk",
+          "description": "Life, health and general insurance"
+        },
+        {
+          "code": "FC",
+          "name": "Fraud & Cyber-safety",
+          "description": "Scams, money mules, helplines, online safety"
+        },
+        {
+          "code": "FH",
+          "name": "Financial History",
+          "description": "Origins of money, banks, currencies and financial contracts"
+        }
+      ]
+    },
+    {
+      "name": "Economy & Policy",
+      "level2": [
+        {
+          "code": "IE",
+          "name": "Indian Economy",
+          "description": "Indian sectors, industries, economic milestones"
+        },
+        {
+          "code": "GT",
+          "name": "Global Economy & Geopolitics",
+          "description": "Tariffs, trade, sanctions, OPEC, sovereign lending, development philosophies"
+        },
+        {
+          "code": "IC",
+          "name": "Inflation & Consumer Economics",
+          "description": "Inflation, pricing, shrinkflation, spending"
+        },
+        {
+          "code": "GS",
+          "name": "Govt Schemes & Public Finance",
+          "description": "Budgets, schemes, public services, subsidies, government boards"
+        }
+      ]
+    },
+    {
+      "name": "Brands, Marketing & Design",
+      "level2": [
+        {
+          "code": "CA",
+          "name": "Campaigns & Advertising",
+          "description": "Ad campaigns, marketing stunts, social media marketing"
+        },
+        {
+          "code": "CP",
+          "name": "Collaborations & Product Drops",
+          "description": "Brand tie-ups, limited editions, new product lines"
+        },
+        {
+          "code": "BH",
+          "name": "Brand Heritage & Identity",
+          "description": "Logos, typefaces, naming, brand stories and symbols"
+        },
+        {
+          "code": "CF",
+          "name": "Consumer Culture & FMCG",
+          "description": "Everyday consumer brands and habits"
+        }
+      ]
+    },
+    {
+      "name": "Companies & Founders",
+      "level2": [
+        {
+          "code": "SV",
+          "name": "Startups & Venture",
+          "description": "Startups, funding, incubators, startup vocabulary"
+        },
+        {
+          "code": "FS",
+          "name": "Founder Stories & Corporate History",
+          "description": "Company origins, founders, pivots, histories"
+        },
+        {
+          "code": "SG",
+          "name": "Scandals & Governance",
+          "description": "Corporate scandals, collapses, trade secrets, governance"
+        },
+        {
+          "code": "BT",
+          "name": "Business Terms & Careers",
+          "description": "Business jargon, jobs, internships"
+        },
+        {
+          "code": "BL",
+          "name": "Business Leaders & Executives",
+          "description": "CEOs, CFOs, executives, billionaires, advisers"
+        }
+      ]
+    },
+    {
+      "name": "Technology & Digital",
+      "level2": [
+        {
+          "code": "AI",
+          "name": "AI & Deep Tech",
+          "description": "AI products and companies, semiconductors, robotics"
+        },
+        {
+          "code": "ID",
+          "name": "Internet, Data & Privacy",
+          "description": "Cookies, privacy, platforms, ad-tech, web services"
+        },
+        {
+          "code": "CT",
+          "name": "Consumer Tech & Gadgets",
+          "description": "Devices, apps, consumer tech products"
+        }
+      ]
+    },
+    {
+      "name": "Sports & Entertainment Business",
+      "level2": [
+        {
+          "code": "LT",
+          "name": "Leagues, Transfers & Valuation",
+          "description": "League formats, transfers, player valuation"
+        },
+        {
+          "code": "IPL",
+          "name": "Cricket & IPL Business",
+          "description": "Cricket boards, IPL, franchises, media rights"
+        },
+        {
+          "code": "MS",
+          "name": "Media, Film & Streaming",
+          "description": "Film, TV, OTT, music, newspapers"
+        },
+        {
+          "code": "SE",
+          "name": "Sponsorship & Endorsements",
+          "description": "Brand deals, endorsements, sponsor partnerships, celebrity-fronted brands"
+        },
+        {
+          "code": "PC",
+          "name": "Celebrities & Pop Culture",
+          "description": "Celebrities, cameos, pop culture moments"
+        }
+      ]
+    },
+    {
+      "name": "Cities, Civic & Infrastructure",
+      "level2": [
+        {
+          "code": "TR",
+          "name": "City Infrastructure & Transit",
+          "description": "Metro, roads, airports, civic bodies"
+        },
+        {
+          "code": "LB",
+          "name": "Local Business & Food",
+          "description": "City-specific businesses, eateries, landmarks of commerce"
+        },
+        {
+          "code": "UP",
+          "name": "Urban Policy & Governance",
+          "description": "City governance and urban policy"
+        }
+      ]
+    },
+    {
+      "name": "Culture, Geography & Society",
+      "level2": [
+        {
+          "code": "PL",
+          "name": "Places, Heritage & Traditions",
+          "description": "Places, landmarks, history, traditions, religion and heritage"
+        },
+        {
+          "code": "FA",
+          "name": "Food, Agriculture & GI Products",
+          "description": "Food, crops, GI-tagged products, agriculture"
+        },
+        {
+          "code": "WO",
+          "name": "Language & Word Origins",
+          "description": "Where everyday words and terms come from"
+        },
+        {
+          "code": "ED",
+          "name": "Environment & Disasters",
+          "description": "Weather, cyclones, climate, environment"
+        },
+        {
+          "code": "SC",
+          "name": "Social Impact & CSR",
+          "description": "CSR, accessibility, social causes"
+        }
+      ]
+    }
+  ],
+  "entity_types": [
+    "COMPANY",
+    "PERSON",
+    "TERM",
+    "PRODUCT_OR_OBJECT",
+    "BOOK",
+    "ORGANISATION",
+    "POLICY",
+    "NUMBER",
+    "PLACE",
+    "EVENT"
+  ],
+  "geography": [
+    "IN",
+    "INTL",
+    "MIXED"
+  ],
+  "shelf_life": [
+    "EVERGREEN",
+    "REVIEW_YEARLY",
+    "TIME_SENSITIVE"
+  ],
+  "sensitivity": [
+    "NONE",
+    "POLITICAL",
+    "MATURE_REFERENCE"
+  ]
+}

@@ -1,0 +1,462 @@
+{
+  "version": "v5.1",
+  "level1": [
+    {
+      "name": "Markets & Investing",
+      "level2": [
+        {
+          "code": "ST",
+          "name": "Stock Markets",
+          "description": "Stocks, exchanges (NSE/BSE), brokers, share trading mechanics, listed-company share moves. IPOs and listings are IPOs; index membership is Market Indices"
+        },
+        {
+          "code": "QT",
+          "name": "Quant Trading",
+          "description": "Quantitative and algorithmic trading, HFT firms, quant strategies"
+        },
+        {
+          "code": "IF",
+          "name": "Investment Funds",
+          "description": "Mutual funds, ETFs, SIPs, fund houses, fund managers"
+        },
+        {
+          "code": "CM",
+          "name": "Commodities",
+          "description": "Gold, silver, oil, forex and commodity futures as investable assets. Crypto is Cryptocurrency"
+        },
+        {
+          "code": "MC",
+          "name": "Market Concepts",
+          "description": "General finance and investing terms (Varsity-level): benchmarks, alpha/beta, volatility, liquidity, retracements. Chart patterns are Technical Analysis; options and futures are Derivatives"
+        },
+        {
+          "code": "FB",
+          "name": "Finance Books",
+          "description": "Famous investors, finance and trading books, biographies of market legends. Management and company books are Business Books"
+        },
+        {
+          "code": "DV",
+          "name": "Derivatives",
+          "description": "Options, futures, hedging, margin, implied volatility, derivative strategies and contracts"
+        },
+        {
+          "code": "TA",
+          "name": "Technical Analysis",
+          "description": "Candlesticks, chart patterns, indicators, support and resistance, trading signals"
+        },
+        {
+          "code": "BN",
+          "name": "Bonds",
+          "description": "Government and corporate bonds, T-bills, yields, credit ratings, junk bonds, sovereign and green bonds"
+        },
+        {
+          "code": "CY",
+          "name": "Cryptocurrency",
+          "description": "Bitcoin, Dogecoin, crypto exchanges, hacks and regulation, blockchain and NFTs as assets"
+        },
+        {
+          "code": "IP",
+          "name": "IPOs",
+          "description": "IPOs, listings, prospectuses, listing-day moves, anchor investors, SME listings"
+        },
+        {
+          "code": "MI",
+          "name": "Market Indices",
+          "description": "Sensex, Nifty, S&P 500, index constituents, tickers and ticker symbols, market-cap milestones"
+        },
+        {
+          "code": "BH",
+          "name": "Behavioural Finance",
+          "description": "Cognitive biases in investing: herd behaviour, ostrich effect, loss aversion, FOMO, investor psychology"
+        }
+      ]
+    },
+    {
+      "name": "Banking & Money",
+      "level2": [
+        {
+          "code": "BK",
+          "name": "Banking",
+          "description": "Bank products, deposits, credit scores, ATMs, cheques, specific banks and their branding"
+        },
+        {
+          "code": "CB",
+          "name": "Central Banking",
+          "description": "RBI, SEBI, financial regulators, monetary policy, regulatory decisions"
+        },
+        {
+          "code": "DP",
+          "name": "Digital Payments",
+          "description": "UPI, wallets, fintech apps, payment platforms, expense-splitting tools"
+        },
+        {
+          "code": "IN",
+          "name": "Insurance",
+          "description": "Life, health, and general insurance products, their history and regulation"
+        },
+        {
+          "code": "CS",
+          "name": "Cyber Safety",
+          "description": "Financial fraud, scams, money mules, phishing, online safety helplines"
+        },
+        {
+          "code": "MH",
+          "name": "Money History",
+          "description": "Origins and history of money, barter, historical financial instruments and contracts (hundi, bills of exchange). Specific banknotes, coins and their imagery are Coins and Notes"
+        },
+        {
+          "code": "PF",
+          "name": "Personal Finance",
+          "description": "Saving, budgeting, credit scores, PAN and KYC, tax-saving, retirement, emergency funds, financial literacy"
+        },
+        {
+          "code": "LN",
+          "name": "Lending",
+          "description": "Loans, NBFCs, credit cards, microfinance, buy-now-pay-later, NPAs, lending frameworks"
+        },
+        {
+          "code": "CN",
+          "name": "Coins and Notes",
+          "description": "Specific banknotes and coins, commemorative coins, their imagery and design, mints"
+        }
+      ]
+    },
+    {
+      "name": "Economy & Policy",
+      "level2": [
+        {
+          "code": "IE",
+          "name": "Indian Economy",
+          "description": "Indian industries, sectors, economic milestones and regional hubs. Factories and production are Manufacturing"
+        },
+        {
+          "code": "GT",
+          "name": "Global Trade",
+          "description": "International trade, tariffs, sanctions, geopolitics, OPEC, Belt & Road, development philosophies"
+        },
+        {
+          "code": "CP",
+          "name": "Consumer Prices",
+          "description": "Inflation, shrinkflation, pricing dynamics, consumer spending trends"
+        },
+        {
+          "code": "GP",
+          "name": "Government Policy",
+          "description": "Union budgets, government schemes, subsidies, public services, regulatory boards, ministries. Tax rules are Taxation"
+        },
+        {
+          "code": "TX",
+          "name": "Taxation",
+          "description": "Income tax, GST, corporate tax, tax history and quirks, tax exemptions and rulings"
+        },
+        {
+          "code": "MA",
+          "name": "Macroeconomics",
+          "description": "Recession, stagflation, GDP, business cycles, rating upgrades, economic concepts and indicators"
+        },
+        {
+          "code": "EG",
+          "name": "Energy",
+          "description": "Power generation, coal, oil and gas, solar and renewables, hydrogen, nuclear, energy companies"
+        },
+        {
+          "code": "AG",
+          "name": "Agriculture",
+          "description": "Farming, crops, agri-commodities, exports of produce, cooperatives, boards for crops"
+        },
+        {
+          "code": "EH",
+          "name": "Economic History",
+          "description": "History of trade, colonial-era commerce, historic economic events and crises (tulip mania, Dutch banks, East India Company era)"
+        },
+        {
+          "code": "LJ",
+          "name": "Labour and Jobs",
+          "description": "Employment, gig work, PF and EPFO rules, layoffs, strikes, salaries, workplace laws"
+        },
+        {
+          "code": "MF",
+          "name": "Manufacturing",
+          "description": "Factories, production hubs, supply chains, joint ventures to make goods, PLI schemes"
+        },
+        {
+          "code": "IU",
+          "name": "Infrastructure",
+          "description": "Railways, airports, highways, ports, power and telecom networks, large public projects"
+        }
+      ]
+    },
+    {
+      "name": "Brands & Marketing",
+      "level2": [
+        {
+          "code": "AD",
+          "name": "Advertising",
+          "description": "Ad campaigns, marketing stunts, creative ads, social media marketing, tribute ads"
+        },
+        {
+          "code": "BC",
+          "name": "Brand Collabs",
+          "description": "Consumer-facing brand tie-ups, limited editions, product drops, co-branded products. Company-to-company MoUs and joint ventures are Partnerships"
+        },
+        {
+          "code": "BI",
+          "name": "Brand Identity",
+          "description": "Visual and verbal identity of a brand: logos, brand names and their meaning, typefaces, mascot design, design symbols. NOT who founded it or when (that is Company Origins)"
+        },
+        {
+          "code": "CR",
+          "name": "Consumer Brands",
+          "description": "Everyday FMCG brands, retail products, consumer habits and food and beverage brands. Fashion and apparel brands are Fashion"
+        },
+        {
+          "code": "SN",
+          "name": "Slogans",
+          "description": "Taglines, jingles, catchphrases and campaign phrases"
+        },
+        {
+          "code": "RT",
+          "name": "Retail",
+          "description": "Retail chains, e-commerce, quick commerce, store formats, shopping events and sales"
+        },
+        {
+          "code": "FS",
+          "name": "Fashion",
+          "description": "Fashion and apparel brands, luxury houses, fast fashion, footwear, textiles as fashion"
+        },
+        {
+          "code": "LX",
+          "name": "Luxury",
+          "description": "Luxury goods, premium experiences, hospitality awards, high-end products and pricing"
+        }
+      ]
+    },
+    {
+      "name": "Companies & Business",
+      "level2": [
+        {
+          "code": "SU",
+          "name": "Startups",
+          "description": "Startup ecosystem, funding rounds, incubators, unicorns, venture capital"
+        },
+        {
+          "code": "CO",
+          "name": "Company Origins",
+          "description": "Founding stories, company and brand histories (who founded it, when, where, how it started), heritage brands, pivots, founder journeys, founder-led ventures of celebrities"
+        },
+        {
+          "code": "SG",
+          "name": "Corporate Scandals",
+          "description": "Corporate scandals, collapses, trade-secret theft, governance failures, corporate crime"
+        },
+        {
+          "code": "BT",
+          "name": "Business Jargon",
+          "description": "Business terminology, career concepts, financial districts, workplace vocabulary"
+        },
+        {
+          "code": "BL",
+          "name": "Business Leaders",
+          "description": "CEOs, executives, billionaires, corporate advisers, leadership appointments"
+        },
+        {
+          "code": "AQ",
+          "name": "Acquisitions",
+          "description": "Acquisitions, mergers, stake purchases, buyouts, delisting. Tie-ups without a stake purchase are Partnerships"
+        },
+        {
+          "code": "LD",
+          "name": "Legal Disputes",
+          "description": "Trademark fights, court rulings, antitrust, intellectual property cases involving companies"
+        },
+        {
+          "code": "RA",
+          "name": "Rankings and Awards",
+          "description": "Rich lists, company rankings, market-cap rankings, awards, indices published by organisations"
+        },
+        {
+          "code": "AU",
+          "name": "Automobiles",
+          "description": "Carmakers, EVs, two-wheelers, auto sales and launches, mobility companies"
+        },
+        {
+          "code": "TV",
+          "name": "Travel Industry",
+          "description": "Airlines, airports, hotels, travel apps, tourism businesses"
+        },
+        {
+          "code": "HC",
+          "name": "Healthcare",
+          "description": "Hospitals, pharma, healthcare startups, drug pricing, health insurance products as business"
+        },
+        {
+          "code": "AC",
+          "name": "Accounting",
+          "description": "Auditing, balance sheets, financial statements, ESOPs, valuation and accounting terms"
+        },
+        {
+          "code": "RE",
+          "name": "Real Estate",
+          "description": "Property developers, land, housing, REITs, real estate platforms and deals"
+        },
+        {
+          "code": "PN",
+          "name": "Partnerships",
+          "description": "Company-to-company MoUs, joint ventures, platform tie-ups, collaborations and distribution deals that are not acquisitions"
+        },
+        {
+          "code": "ER",
+          "name": "Earnings and Results",
+          "description": "Quarterly results, profits and losses, revenue and volume growth, share of profit from a business unit"
+        },
+        {
+          "code": "BB",
+          "name": "Business Books",
+          "description": "Management books, company histories, memoirs, authors and titles about business and leadership"
+        }
+      ]
+    },
+    {
+      "name": "Technology",
+      "level2": [
+        {
+          "code": "AI",
+          "name": "Artificial Intelligence",
+          "description": "AI products, generative AI companies, AI-built or AI-written platforms (e.g. an AI encyclopedia), chatbots, deep tech, semiconductors, robotics. If AI is the core of the product, choose this over Internet Platforms"
+        },
+        {
+          "code": "WB",
+          "name": "Internet Platforms",
+          "description": "Cookies, online privacy, how the web works, ad-tech, data policies, non-AI web platforms and digital services. Social apps are Social Media"
+        },
+        {
+          "code": "TP",
+          "name": "Tech Products",
+          "description": "Devices, apps, consumer tech gadgets, software products, browsers"
+        },
+        {
+          "code": "DI",
+          "name": "Digital Public Infrastructure",
+          "description": "India Stack rails other than UPI itself: Aadhaar, DigiLocker, Account Aggregator, ONDC, OCEN, ULI, FASTag, DigiYatra"
+        },
+        {
+          "code": "SM",
+          "name": "Social Media",
+          "description": "Social apps, creator economy, viral campaigns and features on social platforms"
+        },
+        {
+          "code": "SD",
+          "name": "Space and Defence",
+          "description": "ISRO, satellites, space business, defence production and contracts"
+        },
+        {
+          "code": "TC",
+          "name": "Telecom",
+          "description": "Telecom operators, spectrum, satellite internet, mobile networks and tariffs"
+        }
+      ]
+    },
+    {
+      "name": "Sports & Entertainment",
+      "level2": [
+        {
+          "code": "SL",
+          "name": "Sports Leagues",
+          "description": "League formats, transfers, player valuations, franchise sports, non-cricket sporting events"
+        },
+        {
+          "code": "CK",
+          "name": "Cricket Business",
+          "description": "BCCI, IPL, cricket franchises, media rights, cricket-specific deals and governance"
+        },
+        {
+          "code": "EN",
+          "name": "Entertainment",
+          "description": "Film, TV, OTT, music, celebrities, pop culture moments, streaming platforms and releases. News outlets and publications are Business Media"
+        },
+        {
+          "code": "SP",
+          "name": "Sponsorships",
+          "description": "Brand endorsements, sponsor partnerships, celebrity-fronted brands, athlete brand deals"
+        },
+        {
+          "code": "BM",
+          "name": "Business Media",
+          "description": "Newspapers, magazines, news apps, business channels, podcasts and publications"
+        }
+      ]
+    },
+    {
+      "name": "Culture & Society",
+      "level2": [
+        {
+          "code": "PL",
+          "name": "Heritage",
+          "description": "Historical places, landmarks, traditions, monuments, cultural heritage, religious sites"
+        },
+        {
+          "code": "FC",
+          "name": "Food Culture",
+          "description": "Food heritage, regional cuisine, dishes, sweets, restaurants and food trends. Farming, crops and agri-commodities are Agriculture"
+        },
+        {
+          "code": "WO",
+          "name": "Word Origins",
+          "description": "Etymology and origins of everyday words, terms, and phrases"
+        },
+        {
+          "code": "UL",
+          "name": "Urban Life",
+          "description": "City infrastructure, metro/transit, local businesses, eateries, civic landmarks. National railways, airports and highways are Infrastructure"
+        },
+        {
+          "code": "SI",
+          "name": "Social Impact",
+          "description": "CSR initiatives, accessibility, social causes, sustainability, inclusive design"
+        },
+        {
+          "code": "EV",
+          "name": "Environment",
+          "description": "Weather events, cyclones, climate, pollution, environmental data"
+        },
+        {
+          "code": "ED",
+          "name": "Education",
+          "description": "Universities, institutes, edtech, scholarships, education policy and campus stories"
+        },
+        {
+          "code": "EF",
+          "name": "Events and Festivals",
+          "description": "Festivals, fairs, sporting and cultural events, conferences, tournaments and the business around them"
+        }
+      ]
+    }
+  ],
+  "entity_types": [
+    "COMPANY",
+    "PERSON",
+    "TERM",
+    "PRODUCT_OR_OBJECT",
+    "BOOK",
+    "ORGANISATION",
+    "POLICY",
+    "NUMBER",
+    "PLACE",
+    "EVENT"
+  ],
+  "geography": [
+    "IN",
+    "INTL",
+    "MIXED"
+  ],
+  "shelf_life": [
+    "EVERGREEN",
+    "REVIEW_YEARLY",
+    "TIME_SENSITIVE"
+  ],
+  "sensitivity": [
+    "NONE",
+    "POLITICAL",
+    "MATURE_REFERENCE"
+  ]
+}

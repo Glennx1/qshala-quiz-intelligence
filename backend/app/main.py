@@ -24,7 +24,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from backend.app.config import settings
 from backend.app.database import engine, Base
-from backend.app.routers import documents, questions, quizzes, stats, jobs, sharepoint
+from backend.app.routers import documents, questions, quizzes, stats, jobs, sharepoint, qshala_tagging
+
+# Register ALL SQLAlchemy models here so Base.metadata.create_all sees them before
+# the first create_all call below. Importing the module is enough; the class
+# definitions attach themselves to Base.metadata.
+from backend.app.models.question import Question  # noqa: F401
+from backend.app.models.qshala_tag import (  # noqa: F401
+    QshalaQuestionMetadata, QshalaTag, QshalaTagChange,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -116,6 +124,8 @@ app.include_router(questions.router, prefix=settings.API_V1_STR)
 app.include_router(quizzes.router, prefix=settings.API_V1_STR)
 app.include_router(jobs.router, prefix=settings.API_V1_STR)
 app.include_router(sharepoint.router, prefix=settings.API_V1_STR)
+app.include_router(qshala_tagging.router, prefix=settings.API_V1_STR)
+app.include_router(qshala_tagging.router)  # Also mount at /qshala/* directly
 
 @app.get("/")
 @app.get("/api")

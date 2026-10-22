@@ -1,0 +1,48 @@
+{
+  "n": 145,
+  "rules_only": {
+    "l1_strict": 0.0,
+    "l2_strict": 0.0,
+    "l2_lenient": 0.0,
+    "geo_accuracy": 16.551724137931036,
+    "shelf_accuracy": 20.689655172413794,
+    "sens_accuracy": 0.6896551724137931
+  },
+  "generic_auto_tagger": {
+    "l1_match_against_gold_l1": 0.0,
+    "l2_match": 0.0
+  },
+  "tfidf_nearest_neighbour_leave_one_out": {
+    "description": "Leave-one-out TF-IDF (1,2-grams) cosine similarity on question_text + answer",
+    "all_145": {
+      "name": "ALL (145)",
+      "n": 145,
+      "l1_strict": 31.03,
+      "l2_strict": 24.14,
+      "l2_lenient": 33.1,
+      "l1_correct": 45,
+      "l2_strict_correct": 35,
+      "l2_lenient_correct": 48
+    },
+    "verified_20": {
+      "name": "VERIFIED (20)",
+      "n": 20,
+      "l1_strict": 15.0,
+      "l2_strict": 10.0,
+      "l2_lenient": 25.0,
+      "l1_correct": 3,
+      "l2_strict_correct": 2,
+      "l2_lenient_correct": 5
+    },
+    "silver_125": {
+      "name": "SILVER (125)",
+      "n": 125,
+      "l1_strict": 33.6,
+      "l2_strict": 26.4,
+      "l2_lenient": 34.4,
+      "l1_correct": 42,
+      "l2_strict_correct": 33,
+      "l2_lenient_correct": 43
+    }
+  }
+}

@@ -300,3 +300,99 @@ export interface IngestionStatus {
   questions_extracted: number;
   error?: string | null;
 }
+
+// ---------------------------------------------------------------- QShala tagging
+// Mirrors backend/app/models/qshala_tag.py (QshalaTag). One row per tagging run.
+// `source` is RULE | LLM | NEIGHBOUR | HUMAN; `status` is draft | confirmed | superseded.
+export interface QshalaTag {
+  id: string;
+  question_id: string;
+  source: 'RULE' | 'LLM' | 'NEIGHBOUR' | 'HUMAN';
+  status: 'draft' | 'confirmed' | 'superseded';
+  model_version: string | null;
+  taxonomy_version: string;
+
+  topic_l1: string | null;
+  subtopic_l2: string | null;
+  keywords_l3: string[];
+  secondary_l2: string[];
+  entity_type: string | null;
+  city_name: string | null;
+  geo_region: string | null;
+  india_international: 'IN' | 'INTL' | 'MIXED' | null;
+  shelf_life: 'EVERGREEN' | 'REVIEW_YEARLY' | 'TIME_SENSITIVE' | null;
+  sensitivity: 'NONE' | 'POLITICAL' | 'MATURE_REFERENCE' | null;
+  fit: 'good' | 'weak' | 'none' | null;
+  search_summary: string | null;
+
+  confidence: number | null;
+  verified_by: string | null;
+  verified_at: string | null;
+  verification_notes: string | null;
+  fact_check_url: string | null;
+
+  tokens_in: number | null;
+  tokens_out: number | null;
+  thinking_tokens: number | null;
+  latency_ms: number | null;
+  created_at: string | null;
+}
+
+export interface QshalaTagHistory {
+  current: QshalaTag | null;
+  history: QshalaTag[];
+  changes: {
+    id: string;
+    change_type: 'PROMOTE' | 'SUPERSEDE' | 'HUMAN_OVERRIDE' | 'ROLLBACK';
+    actor: string | null;
+    reason: string | null;
+    from_tag_id: string | null;
+    to_tag_id: string | null;
+    changed_at: string | null;
+  }[];
+}
+
+export interface QshalaHumanTagInput {
+  subtopic_l2: string;
+  secondary_l2?: string[];
+  keywords_l3?: string[];
+  entity_type?: string;
+  india_international?: 'IN' | 'INTL' | 'MIXED';
+  city_name?: string;
+  geo_region?: string;
+  shelf_life?: 'EVERGREEN' | 'REVIEW_YEARLY' | 'TIME_SENSITIVE';
+  sensitivity?: 'NONE' | 'POLITICAL' | 'MATURE_REFERENCE';
+  fit?: 'good' | 'weak' | 'none';
+  search_summary?: string;
+  fact_check_url?: string;
+  actor: string;
+  notes?: string;
+}
+
+export interface QshalaTaxonomyDomain {
+  l1: string;
+  subtopics: {
+    l2: string;
+    description: string;
+  }[];
+}
+
+export interface QshalaTaxonomy {
+  version: string;
+  domains: QshalaTaxonomyDomain[];
+  l2_to_l1: Record<string, string>;
+  l2_descriptions: Record<string, string>;
+}
+
+export interface QshalaSearchResponse {
+  total: number;
+  items: {
+    question: {
+      id: string;
+      question_text: string;
+      answer: string;
+      document_id?: string;
+    };
+    tag: QshalaTag;
+  }[];
+}

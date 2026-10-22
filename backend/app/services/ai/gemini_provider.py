@@ -97,6 +97,79 @@ class GeminiLLMProvider(LLMProvider):
                 clean_text = clean_text[:-3]
             return json.loads(clean_text.strip())
 
+    async def generate_json_schema(
+        self,
+        prompt: str,
+        schema: Dict[str, Any],
+        system_instruction: Optional[str] = None,
+        model: Optional[str] = None,
+        thinking_level: Optional[str] = None,
+        temperature: float = 0.0,
+    ) -> tuple[Dict[str, Any], Dict[str, int]]:
+        """Generate JSON constrained by `schema` (OpenAPI-style, upper-case types, enums supported).
+
+        Supports per-call model override (so the tagger can run on 3.5 Flash-Lite while the generator
+        stays on 2.5 Flash) and a thinking level ('minimal', 'low', 'medium', 'high', or None for default).
+
+        Returns (parsed_json, usage) where usage = {'in', 'out', 'think', 'cached'} (token counts).
+        """
+        if not self.api_key:
+            raise ValueError("GEMINI_API_KEY is not configured")
+
+        chosen_model = model or self.model
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{chosen_model}:generateContent?key={self.api_key}"
+        gen_cfg: Dict[str, Any] = {
+            "response_mime_type": "application/json",
+            "response_schema": schema,
+            "temperature": temperature,
+        }
+        if thinking_level is not None:
+            # Gemini 3.x uses thinking_level; 2.5 uses thinking_budget. Pass thinking_level if the model name
+            # suggests 3.x, otherwise thinking_budget=0 for minimal. Caller can set thinking_level=None to skip.
+            if any(tag in chosen_model for tag in ("3.1", "3.5", "3.6", "3.8", "4-")):
+                gen_cfg["thinking_config"] = {"thinking_level": thinking_level.upper()}
+            else:
+                gen_cfg["thinking_config"] = {"thinking_budget": 0 if thinking_level == "low" else 128}
+
+        payload: Dict[str, Any] = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": gen_cfg,
+        }
+        if system_instruction:
+            payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
+
+        logger.info(f"[GeminiLLMProvider] generate_json_schema → {chosen_model}")
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            resp = await client.post(url, json=payload)
+            if resp.is_error:
+                # If the model rejects thinking_config (older SDK/model), retry once without it.
+                if "thinking" in resp.text.lower() and "thinking_config" in gen_cfg:
+                    gen_cfg.pop("thinking_config", None)
+                    resp = await client.post(url, json=payload)
+                if resp.is_error:
+                    logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
+            resp.raise_for_status()
+            data = resp.json()
+
+        text = self._extract_text(data)
+        clean = text.strip()
+        if clean.startswith("```json"):
+            clean = clean[7:]
+        elif clean.startswith("```"):
+            clean = clean[3:]
+        if clean.endswith("```"):
+            clean = clean[:-3]
+        parsed = json.loads(clean.strip())
+
+        um = data.get("usageMetadata", {}) or {}
+        usage = {
+            "in": um.get("promptTokenCount", 0) or 0,
+            "out": um.get("candidatesTokenCount", 0) or 0,
+            "think": um.get("thoughtsTokenCount", 0) or 0,
+            "cached": um.get("cachedContentTokenCount", 0) or 0,
+        }
+        return parsed, usage
+
     async def generate_multimodal(
         self,
         prompt: str,

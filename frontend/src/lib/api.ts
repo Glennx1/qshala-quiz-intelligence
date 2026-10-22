@@ -463,3 +463,58 @@ export async function downloadQuizFile(quiz: Quiz, format: 'json' | 'csv' | 'ppt
   setTimeout(() => window.URL.revokeObjectURL(url), 5000);
 }
 
+
+// ---------------------------------------------------------------- QShala tagging
+// Thin wrappers over backend/app/routers/qshala_tagging.py.
+import type { QshalaTag, QshalaTagHistory, QshalaHumanTagInput, QshalaTaxonomy, QshalaSearchResponse } from './types';
+
+export async function runQshalaTagger(questionId: string, actor = 'web'): Promise<QshalaTag> {
+  const base = getApiBase();
+  const r = await fetch(`${base}/qshala/tag/${encodeURIComponent(questionId)}?actor=${encodeURIComponent(actor)}`, { method: 'POST' });
+  if (!r.ok) throw new Error(`Tagger failed (${r.status})`);
+  return r.json();
+}
+
+export async function getQshalaTagHistory(questionId: string): Promise<QshalaTagHistory> {
+  const base = getApiBase();
+  const r = await fetch(`${base}/qshala/tag/${encodeURIComponent(questionId)}`);
+  if (!r.ok) throw new Error(`Failed to load tag history (${r.status})`);
+  return r.json();
+}
+
+export async function submitQshalaHumanTag(questionId: string, body: QshalaHumanTagInput): Promise<QshalaTag> {
+  const base = getApiBase();
+  const r = await fetch(`${base}/qshala/tag/${encodeURIComponent(questionId)}/human`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`Save failed (${r.status})`);
+  return r.json();
+}
+
+export async function getQshalaReviewQueue(limit = 50): Promise<QshalaTag[]> {
+  const base = getApiBase();
+  const r = await fetch(`${base}/qshala/review-queue?limit=${limit}`);
+  if (!r.ok) throw new Error(`Review queue load failed (${r.status})`);
+  return r.json();
+}
+
+
+export async function getQshalaTaxonomy(): Promise<QshalaTaxonomy> {
+  const base = getApiBase();
+  const r = await fetch(`${base}/qshala/taxonomy`);
+  if (!r.ok) throw new Error(`Failed to load taxonomy (${r.status})`);
+  return r.json();
+}
+
+export async function searchQshalaQuestions(params: Record<string, any> = {}): Promise<QshalaSearchResponse> {
+  const base = getApiBase();
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') {
+      qs.append(k, String(v));
+    }
+  }
+  const r = await fetch(`${base}/qshala/questions?${qs.toString()}`);
+  if (!r.ok) throw new Error(`Search failed (${r.status})`);
+  return r.json();
+}

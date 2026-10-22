@@ -9,8 +9,12 @@ from backend.app.services.ingestion.pptx_parser import PPTXParser
 from backend.app.services.ingestion.pdf_parser import PDFParser
 from backend.app.services.ingestion.slide_classifier import SlideClassifier
 from backend.app.services.ingestion.question_extractor import QuestionExtractor
-from backend.app.services.tagging.auto_tagger import AutoTagger
+from backend.app.services.tagging.auto_tagger import AutoTagger  # Kept for backward compatibility
+from backend.app.services.tagging.qshala_tagger import QshalaTagger
 from backend.app.services.tagging.difficulty_engine import DifficultyEngine
+
+# Feature toggle: set to False to revert to legacy AutoTagger writing topic tags on upload
+USE_QSHALA_TAGGER: bool = True
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
 
@@ -25,6 +29,7 @@ class IngestionPipeline:
         self.classifier = SlideClassifier()
         self.extractor = QuestionExtractor()
         self.auto_tagger = AutoTagger()
+        self.qshala_tagger = QshalaTagger()
         self.difficulty_engine = DifficultyEngine()
         self.deduplicator = Deduplicator()
         self.embedding_provider = get_embedding_provider()
@@ -199,16 +204,28 @@ class IngestionPipeline:
                     q.get("raw_media_refs")
                 )
 
-                tags_data = await self.auto_tagger.tag_question_with_ai(
-                    question_text=q["question_text"],
-                    answer_text=q["answer"],
-                    explanation=q.get("explanation", ""),
-                    doc_title=doc.title,
-                    visual_clues=visual_clues_str or q.get("visual_clues", "") or "",
-                    audio_transcript=q.get("audio_transcript", ""),
-                    video_transcript=q.get("video_transcript", ""),
-                    subtopic=q.get("subtopic")
-                )
+                if not USE_QSHALA_TAGGER:
+                    tags_data = await self.auto_tagger.tag_question_with_ai(
+                        question_text=q["question_text"],
+                        answer_text=q["answer"],
+                        explanation=q.get("explanation", ""),
+                        doc_title=doc.title,
+                        visual_clues=visual_clues_str or q.get("visual_clues", "") or "",
+                        audio_transcript=q.get("audio_transcript", ""),
+                        video_transcript=q.get("video_transcript", ""),
+                        subtopic=q.get("subtopic")
+                    )
+                else:
+                    # Legacy AutoTagger bypassed: QshalaTagger tags will be populated below
+                    tags_data = {
+                        "primary_topic": None,
+                        "topics": [],
+                        "subtopic": q.get("subtopic"),
+                        "tags": [],
+                        "question_hook": "DIRECT_TRIVIA",
+                        "curiosity_score": 7,
+                        "temporal_nature": "EVERGREEN"
+                    }
                 # 2. Difficulty & Grade evaluation (multimodal questions set to 'Unrated')
                 diff_data = self.difficulty_engine.evaluate(
                     question_text=q["question_text"],
@@ -331,6 +348,27 @@ class IngestionPipeline:
                 )
                 db.add(q_obj)
                 question_models.append(q_obj)
+
+            # Auto-tag newly ingested questions with QshalaTagger (v5.1 multi-tag)
+            if USE_QSHALA_TAGGER:
+                for q_m in question_models:
+                    try:
+                        q_tag = await self.qshala_tagger.tag(
+                            db=db,
+                            question_id=q_m.id,
+                            question_text=q_m.question_text,
+                            answer=q_m.answer,
+                            actor="deck_upload",
+                            commit=False
+                        )
+                        if q_tag and q_tag.topic_l1:
+                            q_m.topic = q_tag.topic_l1
+                            q_m.subtopic = q_tag.subtopic_l2
+                            q_m.topics = [q_tag.topic_l1]
+                        if q_tag and q_tag.keywords_l3:
+                            q_m.tags = q_tag.keywords_l3
+                    except Exception as q_tag_err:
+                        logger.warning(f"QshalaTagger failed during ingestion for question {q_m.id}: {q_tag_err}")
 
             doc.question_count = len(question_models)
             doc.processing_status = "COMPLETED"

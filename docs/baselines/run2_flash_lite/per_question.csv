@@ -1,0 +1,146 @@
+﻿id,verified,image_hint,ambiguous,pred_l2,gold_l2,l1_strict,l2_strict,l2_lenient,entity,geo,shelf,sens,kw_format,kw_answer,secondary_l2,fit,status,confidence,tokens_in,tokens_out,thinking,latency_ms
+zvq-pre-001,False,True,True,Brand Identity,Money History,False,False,False,False,True,True,True,True,False,,weak,draft,0.5,1278,150,0,2553
+zvq-pre-002,False,False,False,Banking,Banking,True,True,True,True,True,True,True,True,True,,good,draft,0.7,1286,168,0,1992
+zvq-pre-003,False,False,True,Sponsorships,Sponsorships,True,True,True,True,True,False,True,True,True,Cricket Business|Advertising,good,draft,0.75,1282,170,0,2515
+zvq-pre-004,False,False,True,Tech Products,Tech Products,True,True,True,True,True,True,True,True,True,Startups|Company Origins,good,confirmed,0.9,1279,175,0,1895
+zvq-pre-005,False,False,False,Global Trade,Global Trade,True,True,True,False,True,True,False,True,True,,good,draft,0.7,1290,141,0,1791
+zvq-pre-006,False,True,True,Finance Books,Finance Books,True,True,True,True,True,True,True,True,True,Market Concepts,weak,draft,0.5,1334,160,0,2208
+zvq-pre-007,False,False,True,Internet Platforms,Artificial Intelligence,True,False,True,False,True,True,True,True,True,Artificial Intelligence|Tech Products,good,confirmed,0.9,1262,174,0,1762
+zvq-pre-008,False,False,True,Entertainment,Entertainment,True,True,True,True,True,True,True,True,True,Advertising|Sponsorships,good,confirmed,0.9,1301,170,0,1907
+zvq-pre-009,False,False,True,Brand Identity,Company Origins,False,False,True,True,True,True,True,True,True,Company Origins|Consumer Brands,good,confirmed,0.9,1269,174,0,2062
+zvq-pre-010,False,False,True,Brand Collabs,Advertising,True,False,True,True,True,True,True,True,True,Advertising,good,draft,0.7,1240,153,0,1855
+zvq-pre-011,False,False,True,Digital Payments,Digital Payments,True,True,True,False,True,True,True,True,False,Government Policy|Company Origins,good,confirmed,0.9,1331,184,0,1770
+zvq-pre-012,False,False,True,Brand Identity,Company Origins,False,False,False,True,True,True,True,True,True,Consumer Brands|Sponsorships,good,confirmed,0.9,1307,170,0,1638
+zvq-pre-013,False,False,True,Company Origins,Company Origins,True,True,True,True,True,True,True,True,True,Consumer Brands|Food Culture,good,confirmed,0.9,1244,176,0,1676
+zvq-pre-014,False,False,True,Entertainment,Entertainment,True,True,True,False,True,True,True,True,True,Commodities,good,confirmed,0.9,1281,173,0,2129
+zvq-pre-015,False,True,True,Stock Markets,Stock Markets,True,True,True,True,True,False,True,True,True,Startups,weak,draft,0.5,1279,144,0,1816
+zvq-pre-016,False,False,True,Brand Identity,Brand Identity,True,True,True,False,True,True,True,True,True,Banking,good,draft,0.7,1268,158,0,1673
+zvq-pre-017,False,False,True,Government Policy,Government Policy,True,True,True,False,True,False,True,True,True,Tech Products|Startups,good,confirmed,0.9,1295,183,0,1990
+zvq-pre-018,False,False,True,Business Leaders,Business Leaders,True,True,True,True,True,True,True,True,True,,good,confirmed,0.9,1317,142,0,1502
+zvq-pre-019,False,True,True,Global Trade,Global Trade,True,True,True,True,True,True,True,True,False,Government Policy,weak,draft,0.5,1332,166,0,1705
+zvq-pre-020,False,False,True,Company Origins,Stock Markets,False,False,True,True,True,True,True,True,True,Startups|Digital Payments,good,confirmed,0.9,1297,174,0,2359
+zvq-pre-021,False,False,True,Heritage,Heritage,True,True,True,True,True,True,True,True,True,Money History,good,draft,0.7,1324,173,0,1664
+zvq-pre-022,False,False,True,Word Origins,Money History,False,False,False,True,True,True,True,True,True,Money History|Heritage,good,draft,0.7,1294,169,0,2137
+zvq-pre-023,False,False,True,Food Culture,Food Culture,True,True,True,True,True,False,True,True,True,Heritage,good,confirmed,0.9,1326,170,0,2129
+zvq-pre-024,False,False,True,Company Origins,Company Origins,True,True,True,True,True,True,True,True,True,Entertainment,good,confirmed,0.9,1288,168,0,2788
+zvq-pre-025,False,True,True,Company Origins,Company Origins,True,True,True,True,True,True,True,True,True,Indian Economy|Heritage,weak,draft,0.5,1295,174,0,1631
+zvq-pre-026,False,False,True,Consumer Brands,Brand Identity,True,False,False,True,True,False,True,True,True,Indian Economy|Brand Identity,good,draft,0.75,1326,191,0,2030
+zvq-pre-027,False,False,True,Banking,Money History,True,False,True,True,True,False,True,True,True,Company Origins,good,confirmed,0.9,1299,172,0,1539
+zvq-pre-028,False,True,True,Social Impact,Social Impact,True,True,True,True,True,True,True,True,True,Heritage,weak,draft,0.5,1305,122,0,1635
+zvq-pre-029,False,False,False,Food Culture,Food Culture,True,True,True,True,True,True,True,True,True,Government Policy,good,draft,0.7,1286,163,0,1682
+zvq-pre-030,False,True,True,Advertising,Advertising,True,True,True,True,True,False,True,True,True,Consumer Brands,weak,draft,0.5,1267,154,0,1990
+zvq-pre-031,False,False,True,Startups,Startups,True,True,True,True,False,True,True,True,True,Company Origins,good,confirmed,0.9,1332,166,0,1766
+zvq-pre-032,False,False,True,Banking,Advertising,False,False,True,True,True,False,True,True,True,Brand Collabs,good,draft,0.7,1281,171,0,1724
+zvq-pre-033,False,False,True,Stock Markets,Entertainment,False,False,True,False,True,True,True,True,True,,good,confirmed,0.9,1318,156,0,1738
+zvq-pre-034,False,False,True,Consumer Brands,Company Origins,False,False,False,True,True,True,True,True,True,Sponsorships|Business Leaders,good,confirmed,0.9,1279,163,0,1603
+zvq-pre-035,False,False,True,Banking,Company Origins,False,False,False,True,True,True,True,True,True,Brand Identity|Company Origins,good,draft,0.75,1295,102,0,5342
+zvq-pre-036,False,False,True,Word Origins,Market Concepts,False,False,True,True,False,True,True,True,True,Market Concepts,good,draft,0.7,1261,162,0,1741
+zvq-pre-037,False,False,True,Consumer Brands,Consumer Brands,True,True,True,True,True,True,True,True,True,Brand Identity,good,confirmed,0.9,1289,169,0,1738
+zvq-pre-038,False,False,True,Word Origins,Word Origins,True,True,True,True,True,True,True,True,True,Business Jargon,good,draft,0.7,1272,160,0,1860
+zvq-pre-039,False,True,True,Banking,Banking,True,True,True,True,True,False,True,True,True,,weak,draft,0.5,1260,106,0,1737
+zvq-pre-040,False,True,True,Central Banking,Central Banking,True,True,True,True,True,True,True,True,True,Indian Economy,weak,draft,0.5,1343,178,0,2052
+zvq-pre-041,False,True,True,Advertising,Advertising,True,True,True,True,True,False,True,True,True,Brand Identity,weak,draft,0.5,1260,113,0,1699
+zvq-pre-042,False,False,True,Digital Payments,Digital Payments,True,True,True,False,True,True,True,True,True,Government Policy,good,confirmed,0.9,1323,176,0,2167
+zvq-pre-043,False,False,False,Environment,Environment,True,True,True,True,True,True,True,True,True,Food Culture|Indian Economy,good,draft,0.7,1304,173,0,2173
+zvq-pre-044,False,False,True,Sponsorships,Entertainment,True,False,False,True,True,False,True,True,True,Entertainment|Social Impact,good,draft,0.7,1287,183,0,2303
+zvq-pre-045,False,True,True,Business Jargon,Business Jargon,True,True,True,True,True,True,True,True,True,Urban Life,weak,draft,0.5,1286,164,0,1864
+zvq-pre-046,False,False,True,Sports Leagues,Sports Leagues,True,True,True,True,True,True,True,True,True,,good,draft,0.75,1316,109,0,2300
+zvq-pre-047,False,True,True,Advertising,Advertising,True,True,True,True,True,False,True,True,True,Startups|Artificial Intelligence,weak,draft,0.5,1290,169,0,4380
+zvq-pre-048,False,False,True,Banking,Money History,True,False,True,False,True,True,True,True,True,Money History,good,confirmed,0.9,1278,115,0,2212
+zvq-pre-049,False,True,True,Heritage,Heritage,True,True,True,True,True,True,True,True,True,Money History|Company Origins,weak,draft,0.5,1323,162,0,2188
+zvq-pre-050,False,False,True,Startups,Startups,True,True,True,True,True,True,True,True,True,Company Origins,good,confirmed,0.9,1301,167,0,7500
+zvq-pre-051,False,False,True,Banking,Money History,True,False,True,True,True,True,True,True,True,Company Origins|Heritage,good,confirmed,0.9,1275,168,0,2088
+zvq-pre-052,False,False,True,Business Leaders,Entertainment,False,False,False,True,True,True,True,True,True,Stock Markets,good,confirmed,0.9,1272,166,0,2623
+zvq-pre-053,False,False,True,Brand Collabs,Brand Collabs,True,True,True,True,True,True,True,True,True,Consumer Brands,good,confirmed,0.9,1259,164,0,1728
+zvq-pre-054,False,False,True,Investment Funds,Money History,False,False,True,True,True,True,True,True,True,,good,draft,0.7,1286,155,0,1968
+zvq-pre-055,False,False,True,Tech Products,Artificial Intelligence,True,False,True,False,True,True,True,True,True,Artificial Intelligence,good,draft,0.75,1324,165,0,1945
+zvq-pre-056,False,True,True,Company Origins,Company Origins,True,True,True,True,True,True,True,True,True,,weak,draft,0.5,1332,150,0,1836
+zvq-pre-057,False,False,True,Food Culture,Food Culture,True,True,True,True,True,True,True,True,True,Consumer Brands,good,confirmed,0.9,1263,189,0,1764
+zvq-pre-058,False,False,True,Artificial Intelligence,Artificial Intelligence,True,True,True,True,True,False,True,True,True,Business Jargon,good,confirmed,0.9,1304,172,0,1927
+zvq-pre-059,False,True,True,Startups,Startups,True,True,True,True,True,True,True,True,True,Company Origins,weak,draft,0.5,1285,156,0,2136
+zvq-pre-060,False,False,True,Banking,Banking,True,True,True,True,True,True,True,True,True,Money History,good,draft,0.7,1329,164,0,1904
+zvq-pre-061,False,False,True,Consumer Brands,Sponsorships,False,False,False,True,True,True,True,True,True,Indian Economy,good,draft,0.7,1248,163,0,2568
+zvq-pre-062,False,False,True,Government Policy,Government Policy,True,True,True,True,True,True,True,True,True,Money History,good,confirmed,0.9,1296,169,0,2520
+zvq-pre-063,False,False,True,Insurance,Insurance,True,True,True,True,True,True,True,True,True,Digital Payments|Government Policy,good,confirmed,0.9,1276,166,0,1841
+zvq-pre-064,False,True,True,Cyber Safety,Cyber Safety,True,True,True,True,False,True,True,True,True,Digital Payments,weak,draft,0.5,1272,154,0,2005
+zvq-pre-065,False,False,False,Business Leaders,Business Leaders,True,True,True,True,False,True,True,True,True,Tech Products,good,draft,0.75,1302,158,0,2539
+zvq-pre-066,False,False,True,Central Banking,Central Banking,True,True,True,True,True,True,True,True,True,Heritage|Government Policy,good,draft,0.75,1301,168,0,2083
+zvq-pre-067,False,False,True,Sponsorships,Sponsorships,True,True,True,True,True,False,True,True,True,Brand Identity|Consumer Brands,good,confirmed,0.9,1276,186,0,2064
+zvq-pre-068,False,True,True,Government Policy,Government Policy,True,True,True,True,True,True,True,True,True,Indian Economy,weak,draft,0.5,1276,155,0,16417
+zvq-pre-069,False,False,True,Company Origins,Company Origins,True,True,True,True,True,True,True,True,True,Consumer Brands|Indian Economy,good,confirmed,0.9,1338,169,0,2169
+zvq-pre-070,False,False,True,Food Culture,Food Culture,True,True,True,True,True,True,True,True,True,Indian Economy|Environment,weak,draft,0.5,1312,174,0,1761
+zvq-pre-071,False,False,True,Digital Payments,Digital Payments,True,True,True,True,True,True,True,True,True,,good,draft,0.7,1301,150,0,22859
+zvq-pre-072,False,False,True,Word Origins,Word Origins,True,True,True,True,True,True,True,True,True,Money History|Banking,good,draft,0.7,1310,166,0,2185
+zvq-pre-073,False,False,True,Digital Payments,Digital Payments,True,True,True,True,True,True,True,True,True,Investment Funds|Startups,good,draft,0.75,1330,169,0,33609
+zvq-pre-074,False,False,True,Business Leaders,Entertainment,False,False,True,True,True,True,True,True,True,Entertainment|Startups,good,confirmed,0.9,1308,176,0,2213
+zvq-pre-075,False,False,False,Market Concepts,Market Concepts,True,True,True,True,True,True,True,True,True,Finance Books,good,draft,0.7,1332,174,0,29783
+zvq-fin-001,False,False,True,Consumer Prices,Global Trade,True,False,False,True,True,True,True,True,False,Global Trade|Government Policy,good,confirmed,0.9,1341,168,0,26905
+zvq-fin-002,False,False,True,Entertainment,Entertainment,True,True,True,False,False,True,True,True,False,Heritage,good,confirmed,0.9,1302,163,0,34633
+zvq-fin-003,False,False,True,Startups,Startups,True,True,True,True,True,False,True,True,True,Indian Economy|Tech Products,good,confirmed,0.9,1290,175,0,2187
+zvq-fin-004,False,False,True,Finance Books,Business Leaders,False,False,False,True,True,True,True,True,False,Company Origins,good,confirmed,0.9,1250,163,0,1980
+zvq-fin-005,False,True,True,Consumer Brands,Brand Collabs,True,False,False,True,False,False,True,True,True,Brand Collabs,weak,draft,0.5,1263,157,0,1601
+zvq-fin-006,False,False,True,Market Concepts,Market Concepts,True,True,True,True,False,True,True,True,True,,good,draft,0.7,1291,148,0,2110
+zvq-fin-007,False,False,True,Heritage,Heritage,True,True,True,True,True,True,True,True,True,Word Origins|Indian Economy,good,confirmed,0.9,1264,180,0,2299
+zvq-fin-008,False,False,True,Heritage,Heritage,True,True,True,True,True,True,True,True,True,,good,confirmed,0.9,1267,143,0,20811
+zvq-fin-009,False,False,True,Finance Books,Company Origins,False,False,False,True,True,True,True,True,True,Tech Products,good,confirmed,0.9,1254,113,0,12059
+zvq-fin-010,False,False,True,Stock Markets,Stock Markets,True,True,True,False,True,True,True,True,True,Company Origins,good,confirmed,0.9,1299,169,0,15035
+zvq-fin-011,False,False,True,Entertainment,Entertainment,True,True,True,True,True,True,True,True,True,Business Leaders,good,confirmed,0.9,1253,160,0,1582
+zvq-fin-012,False,False,False,Word Origins,Word Origins,True,True,True,True,True,True,True,True,True,Heritage,good,confirmed,0.9,1265,161,0,21973
+zvq-fin-013,False,False,True,Central Banking,Central Banking,True,True,True,True,True,True,True,True,True,Government Policy|Business Leaders,good,draft,0.75,1306,175,0,2105
+zvq-fin-014,False,False,True,Banking,Money History,True,False,True,False,True,True,True,True,True,Company Origins,good,confirmed,0.9,1256,119,0,1874
+zvq-fin-015,False,False,True,Environment,Environment,True,True,True,True,False,True,True,True,True,Tech Products|Indian Economy,good,draft,0.75,1281,170,0,1881
+zvq-fin-016,False,False,False,Market Concepts,Market Concepts,True,True,True,True,False,True,True,True,True,Word Origins,good,draft,0.7,1255,147,0,2107
+zvq-fin-017,False,False,True,Artificial Intelligence,Artificial Intelligence,True,True,True,True,True,False,True,True,True,,good,draft,0.7,1263,144,0,2088
+zvq-fin-018,False,True,True,Brand Identity,Money History,False,False,False,True,True,True,True,True,False,Money History,weak,draft,0.5,1293,161,0,2905
+zvq-fin-019,False,False,True,Brand Identity,Business Jargon,False,False,False,True,True,True,True,True,True,Banking,good,draft,0.7,1273,162,0,1696
+zvq-fin-020,False,False,True,Food Culture,Food Culture,True,True,True,True,True,False,True,True,True,Consumer Brands|Heritage,good,draft,0.7,1260,179,0,1721
+zvq-fin-021,False,False,True,Money History,Money History,True,True,True,True,True,True,True,True,True,,good,draft,0.7,1248,141,0,16632
+zvq-fin-022,False,False,True,Indian Economy,Indian Economy,True,True,True,True,True,False,True,True,True,Consumer Brands|Urban Life,good,confirmed,0.9,1286,169,0,1842
+zvq-fin-023,False,False,True,Cricket Business,Cricket Business,True,True,True,True,True,True,True,True,False,Sports Leagues,good,confirmed,0.9,1293,174,0,20192
+zvq-fin-024,False,False,True,Word Origins,Word Origins,True,True,True,True,True,True,True,True,True,Internet Platforms,good,confirmed,0.9,1253,160,0,10992
+zvq-fin-025,False,False,False,Global Trade,Global Trade,True,True,True,True,True,True,True,True,True,Commodities,good,confirmed,0.9,1290,169,0,2116
+zvq-fin-026,False,False,True,Entertainment,Entertainment,True,True,True,True,True,False,True,True,True,Brand Identity,good,draft,0.7,1248,160,0,5675
+zvq-fin-027,False,False,True,Brand Identity,Advertising,True,False,False,True,False,False,True,True,True,Company Origins|Consumer Brands,good,confirmed,0.9,1277,165,0,5480
+zvq-fin-028,False,False,True,Company Origins,Company Origins,True,True,True,True,True,True,True,True,True,Corporate Scandals|Finance Books,good,draft,0.7,1249,176,0,2035
+zvq-fin-029,False,True,False,Money History,Money History,True,True,True,True,True,True,True,True,True,,weak,draft,0.5,1328,163,0,2138
+zvq-fin-030,False,True,True,Sports Leagues,Advertising,False,False,False,False,True,True,True,True,True,Sponsorships|Entertainment,weak,draft,0.5,1331,181,0,2220
+zvq-fin-031,False,True,True,Finance Books,Finance Books,True,True,True,False,True,True,True,True,True,,weak,draft,0.5,1308,148,0,2299
+zvq-fin-032,False,False,True,Brand Identity,Heritage,False,False,False,True,False,True,True,True,True,Heritage|Consumer Brands,good,confirmed,0.9,1307,177,0,2128
+zvq-fin-033,False,False,True,Company Origins,Global Trade,False,False,True,True,True,True,True,True,True,Consumer Brands|Indian Economy,good,confirmed,0.9,1283,177,0,2381
+zvq-fin-034,False,False,True,Commodities,Commodities,True,True,True,True,True,True,True,True,True,Money History,good,draft,0.7,1250,163,0,1999
+zvq-fin-035,False,False,True,Word Origins,Word Origins,True,True,True,True,True,True,True,True,True,Stock Markets,good,draft,0.7,1289,172,0,1668
+zvq-fin-036,False,False,True,Company Origins,Business Leaders,True,False,True,True,True,True,True,True,True,Business Leaders,good,confirmed,0.9,1260,152,0,1894
+zvq-fin-037,False,True,True,Advertising,Advertising,True,True,True,True,False,False,True,True,True,,weak,draft,0.5,1267,140,0,1893
+zvq-fin-038,False,False,True,Commodities,Government Policy,False,False,False,True,True,True,True,True,True,Government Policy|Indian Economy,good,confirmed,0.9,1261,190,0,1896
+zvq-fin-039,False,False,False,Business Leaders,Business Leaders,True,True,True,True,True,False,True,True,True,Consumer Brands,good,draft,0.7,1246,116,0,1790
+zvq-fin-040,False,False,True,Entertainment,Entertainment,True,True,True,False,True,True,True,True,False,Heritage,good,confirmed,0.9,1270,157,0,2088
+zvq-fin-041,False,True,False,Advertising,Advertising,True,True,True,True,True,True,True,True,True,Tech Products,weak,draft,0.5,1253,82,0,1768
+zvq-fin-042,False,True,True,Urban Life,Heritage,True,False,True,True,True,True,True,True,True,Heritage|Banking,weak,draft,0.5,1289,154,0,2172
+zvq-fin-043,False,False,True,Sponsorships,Advertising,False,False,False,True,True,True,True,True,True,Entertainment,good,draft,0.7,1298,175,0,8419
+zvq-fin-044,False,False,True,Company Origins,Company Origins,True,True,True,True,True,True,True,True,True,Business Leaders|Brand Identity,good,confirmed,0.9,1279,109,0,2001
+zvq-fin-045,False,False,True,Money History,Money History,True,True,True,False,False,True,True,True,True,Word Origins,good,draft,0.7,1260,153,0,2253
+zvq-fin-046,False,False,True,Social Impact,Social Impact,True,True,True,True,True,False,True,True,True,,good,confirmed,0.9,1239,148,0,1901
+zvq-fin-047,False,False,True,Company Origins,Corporate Scandals,True,False,True,True,True,False,True,True,True,Startups|Corporate Scandals,good,confirmed,0.9,1264,180,0,38639
+zvq-fin-048,False,False,True,Company Origins,Money History,False,False,False,True,True,True,True,True,True,Business Leaders|Heritage,good,confirmed,0.9,1270,186,0,2125
+zvq-fin-049,False,False,True,Business Leaders,Business Leaders,True,True,True,True,True,False,True,True,True,Artificial Intelligence|Company Origins,good,draft,0.75,1263,169,0,2165
+zvq-fin-050,False,True,True,Corporate Scandals,Advertising,False,False,False,True,True,False,False,True,False,Advertising|Company Origins,weak,draft,0.5,1292,165,0,1759
+zvq-blr-001,True,False,True,Banking,Banking,True,True,True,True,True,True,True,True,True,Brand Identity,good,draft,0.75,1300,169,0,1965
+zvq-blr-002,True,False,False,Market Concepts,Market Concepts,True,True,True,True,False,True,True,True,True,,good,confirmed,0.9,1273,139,0,1949
+zvq-blr-003,True,True,True,Cyber Safety,Cyber Safety,True,True,True,True,True,False,True,True,True,Banking,weak,draft,0.5,1302,160,0,1984
+zvq-blr-004,True,False,True,Internet Platforms,Internet Platforms,True,True,True,False,False,False,True,True,True,Advertising,good,draft,0.7,1266,161,0,1856
+zvq-blr-005,True,False,False,Finance Books,Finance Books,True,True,True,True,False,True,True,True,True,Market Concepts,good,confirmed,0.9,1290,167,0,3226
+zvq-blr-006,True,False,True,Urban Life,Urban Life,True,True,True,True,True,False,True,True,True,Entertainment,good,confirmed,0.9,1316,160,0,2296
+zvq-blr-007,True,False,False,Advertising,Advertising,True,True,True,True,True,True,True,True,False,Consumer Brands|Brand Identity,good,confirmed,0.9,1322,183,0,2180
+zvq-blr-008,True,False,True,Insurance,Insurance,True,True,True,True,True,True,True,True,True,Money History,good,draft,0.7,1287,157,0,1998
+zvq-blr-009,True,False,True,Advertising,Advertising,True,True,True,True,True,True,True,True,True,Consumer Brands,good,draft,0.7,1305,165,0,2265
+zvq-blr-010,True,False,True,Global Trade,Global Trade,True,True,True,True,False,True,False,True,True,Government Policy,good,draft,0.7,1290,102,0,2082
+zvq-blr-011,True,False,True,Quant Trading,Quant Trading,True,True,True,True,True,False,True,True,True,Stock Markets,good,draft,0.7,1276,151,0,2212
+zvq-blr-012,True,False,True,Cyber Safety,Cyber Safety,True,True,True,True,True,True,False,True,True,Central Banking,good,draft,0.75,1293,110,0,1860
+zvq-blr-013,True,False,False,Sports Leagues,Sports Leagues,True,True,True,True,True,False,True,True,True,,good,draft,0.7,1305,153,0,2102
+zvq-blr-014,True,False,False,Brand Identity,Brand Identity,True,True,True,True,True,True,True,True,True,Company Origins,good,confirmed,0.9,1254,160,0,1848
+zvq-blr-015,True,False,True,Company Origins,Corporate Scandals,True,False,False,True,True,True,True,True,True,Corporate Scandals|Brand Identity,good,confirmed,0.9,1294,176,0,1864
+zvq-blr-016,True,False,True,Global Trade,Global Trade,True,True,True,True,True,True,True,True,True,,good,confirmed,0.9,1286,145,0,1873
+zvq-blr-017,True,False,True,Company Origins,Company Origins,True,True,True,True,True,True,True,True,True,Business Leaders|Startups,good,confirmed,0.9,1289,186,0,2010
+zvq-blr-018,True,False,True,Consumer Prices,Consumer Prices,True,True,True,True,True,True,True,True,True,Market Concepts,good,draft,0.75,1267,166,0,1873
+zvq-blr-019,True,False,True,Business Jargon,Startups,True,False,True,True,True,True,True,True,True,,good,draft,0.7,1272,135,0,2053
+zvq-blr-020,True,False,True,Brand Collabs,Brand Collabs,True,True,True,False,True,False,True,True,True,Consumer Brands,good,confirmed,0.9,1243,116,0,3861

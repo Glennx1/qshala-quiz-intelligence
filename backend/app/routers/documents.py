@@ -14,9 +14,22 @@ from backend.app.config import settings
 logger = logging.getLogger(__name__)
 
 # Determine environment: Vercel serverless has a hard 4.5 MB request ceiling.
-# Local development and dedicated servers can accept large decks directly.
+# Off Vercel (Railway, a VM, local dev) the app streams the upload straight to disk,
+# so the ceiling is configurable via the MAX_UPLOAD_MB env var (default 2048 MB = 2 GB).
+# Both the direct and chunked upload paths enforce this same ceiling.
 is_vercel = bool(os.environ.get("VERCEL"))
-MAX_FILE_SIZE_BYTES = (4 * 1024 * 1024 + 512 * 1024) if is_vercel else (1024 * 1024 * 1024)  # 4.5 MB on Vercel, 1 GB locally
+
+def _max_upload_bytes() -> int:
+    if is_vercel:
+        return 4 * 1024 * 1024 + 512 * 1024  # 4.5 MB hard platform limit on Vercel serverless
+    try:
+        mb = int(os.environ.get("MAX_UPLOAD_MB", "2048"))
+    except (TypeError, ValueError):
+        mb = 2048
+    return max(mb, 1) * 1024 * 1024
+
+MAX_FILE_SIZE_BYTES = _max_upload_bytes()
+MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024)
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -56,16 +69,17 @@ async def upload_document(
                     buffer.close()
                     if os.path.exists(storage_path):
                         os.remove(storage_path)
-                    limit_desc = "4.5 MB on Vercel Serverless" if is_vercel else "1 GB"
+                    limit_desc = "4.5 MB on Vercel Serverless" if is_vercel else f"{MAX_FILE_SIZE_MB:.0f} MB"
                     logger.warning(f"[UPLOAD] file exceeds size limit: {file_size} > {MAX_FILE_SIZE_BYTES}")
                     raise HTTPException(
                         status_code=413,
                         detail=(
                             f"File exceeds maximum allowed upload size ({limit_desc}). "
                             f"Received {file_size / (1024 * 1024):.1f} MB. "
-                            f"To upload via Vercel, run 'python scripts/optimize_qshala_deck.py -i <deck.pptx>' "
-                            f"to strip heavy media, or run 'python scripts/ingest_large_corpus.py -p <deck.pptx>' "
-                            f"to ingest directly into the knowledge vault."
+                            + ("To upload via Vercel, run 'python scripts/optimize_qshala_deck.py -i <deck.pptx>' "
+                               "to strip heavy media, or raise MAX_UPLOAD_MB on the backend and upload directly."
+                               if is_vercel else
+                               "Raise the MAX_UPLOAD_MB environment variable on the backend to allow a larger file.")
                         )
                     )
                 buffer.write(chunk)
@@ -177,6 +191,25 @@ async def upload_document_chunk(
             with open(part_file, "rb") as infile:
                 shutil.copyfileobj(infile, outfile)
             file_size += os.path.getsize(part_file)
+
+    # Enforce the same ceiling as the direct path (chunked bypasses Vercel's limit but
+    # must still respect MAX_UPLOAD_MB so a runaway upload can't fill the disk).
+    if file_size > MAX_FILE_SIZE_BYTES:
+        for p in (storage_path,):
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+        try:
+            shutil.rmtree(chunk_dir)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=413,
+            detail=(f"Reassembled file ({file_size / (1024 * 1024):.1f} MB) exceeds the maximum "
+                    f"upload size ({MAX_FILE_SIZE_MB:.0f} MB). Raise MAX_UPLOAD_MB on the backend.")
+        )
 
     # Clean up chunk directory
     try:
