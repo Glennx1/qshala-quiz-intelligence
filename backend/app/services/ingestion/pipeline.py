@@ -1,4 +1,5 @@
 import os
+import re
 import asyncio
 import logging
 import gc
@@ -40,7 +41,7 @@ from backend.app.services.ingestion.question_extractor import QuestionExtractor
 from backend.app.services.ingestion.deck_metadata import annotate_questions
 from backend.app.models.question_meta import QuestionEditHistory
 from backend.app.services.ingestion import progress
-from backend.app.services.ingestion.vision_resize import shrink_for_vision, shrink_for_vision_subprocess
+from backend.app.services.ingestion.vision_resize import shrink_for_vision, shrink_for_vision_subprocess, is_significant_visual_image, is_significant_file
 from backend.app.services.tagging.qshala_tagger import safe_error
 from backend.app.services.question_meta_service import (
     upsert_deck_metadata, deck_row_to_info, ensure_question_metadata, apply_tag_to_meta,
@@ -61,8 +62,34 @@ def _trim_memory():
 
 # Feature toggle: set to False to revert to legacy AutoTagger writing topic tags on upload
 USE_QSHALA_TAGGER: bool = True
-VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "1"))   # parallel image-description calls (1 on 512 MB instances)
-TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "3"))   # parallel Gemini tagging calls per deck
+VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "3"))   # parallel image-description calls (fast 3x concurrency)
+TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "6"))   # parallel Gemini tagging calls per deck
+ENABLE_VISION_INGESTION: bool = os.getenv("ENABLE_VISION_INGESTION", "true").strip().lower() in ("1", "true", "yes", "on")
+
+VISUAL_TRIGGER_PATTERNS = [
+    r"\b(this|the)\s+(photo|picture|image|logo|diagram|painting|sculpture|caricature|portrait|flag|map|sign|banner|stamp|poster)\b",
+    r"\b(in|on)\s+the\s+(picture|photo|image|screen|slide)\b",
+    r"\b(seen|shown|pictured|depicted|displayed)\s+(here|below|above|on\s+the\s+screen)\b",
+    r"\bidentify\s+(this|the|whom|who|what)\b",
+    r"\bwhose\s+(logo|photo|portrait|picture|flag|face|signature|shadow|silhouette)\b",
+    r"\bwhat\s+(is\s+this|brand|company|person|monument|landmark|animal|logo)\b",
+    r"\bconnect\s+these\b",
+    r"\bvisual\s+clue\b",
+    r"\blook\s+at\s+the\b",
+]
+_VISUAL_TRIGGER_REGEX = re.compile("|".join(VISUAL_TRIGGER_PATTERNS), re.IGNORECASE)
+
+def is_image_dependent_question(q: Dict[str, Any]) -> bool:
+    """Returns True only if the question's text references visual assets or lacks enough context without them."""
+    text = (q.get("question_text") or "").strip()
+    if not text:
+        return True
+    words = text.split()
+    if len(words) < 15:
+        return True
+    if _VISUAL_TRIGGER_REGEX.search(text):
+        return True
+    return False
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
 
@@ -278,6 +305,11 @@ class IngestionPipeline:
                         except Exception as fetch_err:
                             logger.warning(f"Failed to fetch remote image {rel_img_path}: {fetch_err}")
 
+                    if disk_path and not is_significant_file(str(disk_path)):
+                        return None
+                    if img_bytes and not is_significant_visual_image(img_bytes):
+                        return None
+
                     if disk_path or img_bytes:
                         try:
                             mime = "image/png" if ext == ".png" else ("image/jpeg" if ext in [".jpg", ".jpeg"] else "image/webp")
@@ -305,7 +337,12 @@ class IngestionPipeline:
                 return desc
 
             async def _describe_images(q):
+                if not ENABLE_VISION_INGESTION or not is_image_dependent_question(q):
+                    q["visual_clues"] = None
+                    return None
+
                 visual_clues_list = []
+                # Prioritize question_images over broad image_refs
                 target_imgs = list(q.get("question_images") or q.get("image_refs") or [])
                 for rel_img_path in target_imgs:
                     desc = await _describe_one_image(rel_img_path)
@@ -317,22 +354,30 @@ class IngestionPipeline:
                 return visual_clues_str
 
             vision_sem = asyncio.Semaphore(VISION_CONCURRENCY)
-            _img_total = sum(1 for _q in raw_questions if (_q.get("question_images") or _q.get("image_refs")))
+            candidate_questions = [
+                q for q in raw_questions
+                if (q.get("question_images") or q.get("image_refs")) and is_image_dependent_question(q)
+            ] if ENABLE_VISION_INGESTION else []
+            _img_total = len(candidate_questions)
             _img_done = {"n": 0}
 
             async def _describe_guarded(q):
+                if not ENABLE_VISION_INGESTION or not is_image_dependent_question(q) or not (q.get("question_images") or q.get("image_refs")):
+                    q["visual_clues"] = None
+                    return None
                 async with vision_sem:
                     raise_if_cancelled(document_id)
                     out = await _describe_images(q)
-                    if q.get("question_images") or q.get("image_refs"):
-                        _img_done["n"] += 1
-                        progress.update(INGESTION_STATUS_REGISTRY[document_id],
-                                        detail=f"Describing question images with AI ({_img_done['n']}/{_img_total})")
+                    _img_done["n"] += 1
+                    progress.update(INGESTION_STATUS_REGISTRY[document_id],
+                                    detail=f"Describing question images with AI ({_img_done['n']}/{_img_total})")
                     return out
 
             INGESTION_STATUS_REGISTRY[document_id]["current_step"] = "5. Reading question images"
             if _img_total:
-                progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Describing images for {_img_total} questions with AI")
+                progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Describing images for {_img_total} visual questions with AI")
+            else:
+                progress.event(INGESTION_STATUS_REGISTRY[document_id], "Questions have self-contained text (skipped AI image reading)")
             await asyncio.gather(*[_describe_guarded(q) for q in raw_questions])
             _vision_cache.clear()
             _trim_memory()

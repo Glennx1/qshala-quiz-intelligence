@@ -17,9 +17,9 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-MAX_SIDE: int = 1600
-JPEG_QUALITY: int = 82
-MIN_BYTES: int = 60 * 1024  # don't bother re-encoding small images
+MAX_SIDE: int = int(os.getenv("VISION_MAX_SIDE", "1024"))
+JPEG_QUALITY: int = int(os.getenv("VISION_JPEG_QUALITY", "75"))
+MIN_BYTES: int = int(os.getenv("VISION_MIN_BYTES", str(15 * 1024)))
 
 # Decoding a picture costs width x height x 4 bytes of RAM (an 8192x4608 PNG is ~150 MB).
 # On a 512 MB server that is the difference between working and being killed, so:
@@ -150,3 +150,43 @@ async def shrink_for_vision_subprocess(
         return shrink_for_vision(data, mime_type)
 
     return b"", mime_type
+
+def is_significant_visual_image(data: bytes, min_side: int = 120, min_bytes: int = 8 * 1024) -> bool:
+    """Inspects image header to discard tiny icons, bullets, and divider bars without decoding pixels."""
+    if not data or len(data) < min_bytes:
+        return False
+    try:
+        img = Image.open(io.BytesIO(data))
+        w, h = img.size
+        if w < min_side or h < min_side:
+            return False
+        aspect = max(w, h) / max(1, min(w, h))
+        if aspect > 5.0:  # Thin lines or banner strips
+            return False
+        return True
+    except Exception:
+        return True
+
+
+def is_significant_file(file_path: str, min_side: int = 120, min_bytes: int = 8 * 1024) -> bool:
+    """Checks if a file on disk is a meaningful quiz visual clue (not a layout icon or divider)."""
+    try:
+        if not os.path.exists(file_path) or os.path.getsize(file_path) < min_bytes:
+            return False
+        with open(file_path, "rb") as f:
+            header = f.read(4096)
+        img = Image.open(io.BytesIO(header))
+        w, h = img.size
+        if w < min_side or h < min_side:
+            return False
+        aspect = max(w, h) / max(1, min(w, h))
+        if aspect > 5.0:
+            return False
+        return True
+    except Exception:
+        try:
+            with open(file_path, "rb") as f:
+                return is_significant_visual_image(f.read(), min_side, min_bytes)
+        except Exception:
+            return True
+

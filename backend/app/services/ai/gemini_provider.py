@@ -257,9 +257,44 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
             return await LocalEmbeddingProvider(dim=settings.EMBEDDING_DIM).get_embedding(text)
 
     async def get_embeddings(self, texts: List[str]) -> List[List[float]]:
-        # Batch or loop
-        res = []
-        for text in texts:
-            emb = await self.get_embedding(text)
-            res.append(emb)
-        return res
+        if not texts:
+            return []
+        if not self.api_key:
+            from backend.app.services.ai.local_provider import LocalEmbeddingProvider
+            local_p = LocalEmbeddingProvider(dim=settings.EMBEDDING_DIM)
+            return [await local_p.get_embedding(t) for t in texts]
+
+        # Use batchEmbedContents endpoint in chunks of up to 96
+        chunk_size = 96
+        results: List[List[float]] = []
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:batchEmbedContents?key={self.api_key}"
+
+        for i in range(0, len(texts), chunk_size):
+            chunk = texts[i:i + chunk_size]
+            payload = {
+                "requests": [
+                    {
+                        "model": f"models/{self.model}",
+                        "content": {"parts": [{"text": t}]}
+                    }
+                    for t in chunk
+                ]
+            }
+            try:
+                async with httpx.AsyncClient(timeout=45.0) as client:
+                    resp = await client.post(url, json=payload)
+                    if resp.is_error:
+                        logger.warning(f"[GeminiEmbeddingProvider] batchEmbedContents error ({resp.status_code}), falling back to serial")
+                        for t in chunk:
+                            results.append(await self.get_embedding(t))
+                    else:
+                        data = resp.json()
+                        embs = data.get("embeddings", [])
+                        for e in embs:
+                            results.append(e["values"])
+            except Exception as batch_err:
+                logger.warning(f"[GeminiEmbeddingProvider] batchEmbedContents failed ({batch_err}), falling back to serial")
+                for t in chunk:
+                    results.append(await self.get_embedding(t))
+
+        return results
