@@ -16,6 +16,7 @@ The tagger uses whichever Gemini model is in settings.QSHALA_TAGGER_MODEL (defau
 from __future__ import annotations
 
 import asyncio
+import os
 import hashlib
 import json
 import logging
@@ -257,6 +258,26 @@ def retry_after_seconds(e: BaseException) -> Optional[float]:
         return None
 
 
+# ---------------------------------------------------------------------- rate limiter
+
+_limiter = {"next": 0.0, "lock": None}
+
+
+async def _wait_for_slot(rpm: float) -> None:
+    """Space Gemini calls so we stay under `rpm` requests per minute (0 = no limit). Shared by every upload."""
+    if not rpm or rpm <= 0:
+        return
+    import time
+    if _limiter["lock"] is None:
+        _limiter["lock"] = asyncio.Lock()
+    async with _limiter["lock"]:
+        now = time.monotonic()
+        start = max(now, _limiter["next"])
+        _limiter["next"] = start + 60.0 / rpm
+    if start > now:
+        await asyncio.sleep(start - now)
+
+
 # ---------------------------------------------------------------------- the core call
 
 def _canonical_hash(question_text: str, answer: str) -> str:
@@ -347,6 +368,7 @@ class QshalaTagger:
     def __init__(self, provider: Optional[GeminiLLMProvider] = None, model: Optional[str] = None,
                  thinking_level: Optional[str] = None):
         self.provider = provider or GeminiLLMProvider()
+        self.rpm = float(os.getenv("QSHALA_TAGGER_RPM", "12"))   # free tier allows 15/min; raise on a paid key (0 = off)
         self.model = model or getattr(settings, "QSHALA_TAGGER_MODEL", None) or "gemini-3.5-flash-lite"
         self.thinking_level = thinking_level or "low"
 
@@ -392,6 +414,7 @@ class QshalaTagger:
         max_attempts = 6
         for attempt in range(max_attempts):
             try:
+                await _wait_for_slot(self.rpm)
                 llm_out, usage, latency_ms = await _call_llm(
                     self.provider, self.model, question_text, answer, rules,
                     thinking_level=self.thinking_level, visual_clues=visual_clues, deck_year=deck_year)

@@ -77,6 +77,7 @@ def _ingest(filename: str, tag: str):
         db.close()
     pipe = IngestionPipeline()
     pipe.qshala_tagger.provider = FakeGemini()
+    pipe.qshala_tagger.rpm = 0
     asyncio.run(pipe.run(doc_id))
     return doc_id
 
@@ -187,6 +188,7 @@ def test_tagger_failure_still_stores_question_as_uncategorised():
     try:
         pipe = IngestionPipeline()
         pipe.qshala_tagger.provider = Broken()
+        pipe.qshala_tagger.rpm = 0
         asyncio.run(pipe.run(doc_id))
         assert INGESTION_STATUS_REGISTRY[doc_id]["status"] == "COMPLETED"
         db = SessionLocal()
@@ -244,6 +246,7 @@ def test_rate_limit_is_retried_and_api_key_never_leaks():
         db.close()
         pipe = IngestionPipeline()
         pipe.qshala_tagger.provider = Flaky()
+        pipe.qshala_tagger.rpm = 0
         asyncio.run(pipe.run(doc))
         db = SessionLocal()
         q = db.query(Question).filter(Question.document_id == doc).one()
@@ -256,3 +259,27 @@ def test_rate_limit_is_retried_and_api_key_never_leaks():
             db = SessionLocal()
             purge_document(db, doc)
             db.close()
+
+
+def test_rate_limiter_spaces_calls():
+    from backend.app.services.tagging import qshala_tagger as qt
+
+    waits = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(t, *a, **k):
+        waits.append(round(t, 1))
+
+    async def go():
+        qt._limiter.update(next=0.0, lock=None)
+        for _ in range(3):
+            await qt._wait_for_slot(12)      # 12 per minute = one every 5 seconds
+        await qt._wait_for_slot(0)           # 0 disables the limit
+
+    asyncio.sleep = fake_sleep
+    try:
+        asyncio.run(go())
+    finally:
+        asyncio.sleep = real_sleep
+        qt._limiter.update(next=0.0, lock=None)
+    assert len(waits) == 2 and 4.5 <= waits[0] <= 5.0 and 9.5 <= waits[1] <= 10.0
