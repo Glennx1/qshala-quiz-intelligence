@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from backend.app.main import app
 from backend.app.database import SessionLocal
 from backend.app.models.question import Question
-from backend.app.models.qshala_tag import QshalaTag, QshalaTagChange
+from backend.app.models.qshala_tag import QshalaTag, QshalaTagChange, QshalaQuestionMetadata
 
 
 @pytest.fixture
@@ -180,18 +180,59 @@ def test_batch_tag_skips_human_confirmed(client):
 
 def test_search_vault_endpoint(client):
     """Test GET /qshala/search with free text and filters."""
-    # Test free text search
-    res = client.get("/qshala/search?q=Epipremnum")
-    assert res.status_code == 200
-    data = res.json()
-    assert "total" in data
-    assert "results" in data
-    assert data["total"] >= 1
-    hit = data["results"][0]
-    assert hit["id"] == "zvq-blr-001"
-    assert hit["answer"] == "Money plant"
-    assert hit["subtopic_l2"] == "Banking"
-    # Verify rich base-excel metadata is present
-    assert "quiz_name" in hit
-    assert "round_stage" in hit
-    assert "source_presentation" in hit
+    db = SessionLocal()
+    try:
+        # Seed test question and rich presentation metadata
+        q = Question(
+            id="zvq-blr-001",
+            question_text="Epipremnum aureum, is the botanical name for an evergreen vine that is symbolic of wealth, growth and positivity in many Asian cultures. In 2002, Karnataka Bank adopted the common English name of this plant to brand its automated electronic banking infrastructure. Which plant?",
+            answer="Money plant",
+            topic="Banking & Money",
+            document_id="test-doc-vault"
+        )
+        db.merge(q)
+
+        meta = QshalaQuestionMetadata(
+            question_id="zvq-blr-001",
+            quiz_name="Zircon Vault Quiz 2026",
+            round_stage="Prelims",
+            source_presentation="zvq_prelims_blr.pptx"
+        )
+        db.merge(meta)
+
+        t = QshalaTag(
+            id="test-tag-vault-1",
+            question_id="zvq-blr-001",
+            source="LLM",
+            status="draft",
+            topic_l1="Banking & Money",
+            subtopic_l2="Banking",
+            confidence=0.75,
+            search_summary="Karnataka Bank named its automated banking after Epipremnum aureum, the money plant."
+        )
+        db.merge(t)
+        db.commit()
+
+        # Test free text search
+        res = client.get("/qshala/search?q=Epipremnum")
+        assert res.status_code == 200
+        data = res.json()
+        assert "total" in data
+        assert "results" in data
+        assert data["total"] >= 1
+        hit = data["results"][0]
+        assert hit["id"] == "zvq-blr-001"
+        assert hit["answer"] == "Money plant"
+        assert hit["subtopic_l2"] == "Banking"
+        # Verify rich base-excel metadata is present
+        assert "quiz_name" in hit
+        assert "round_stage" in hit
+        assert "source_presentation" in hit
+    finally:
+        db.query(QshalaQuestionMetadata).filter(QshalaQuestionMetadata.question_id == "zvq-blr-001").delete()
+        db.query(QshalaTagChange).filter(QshalaTagChange.question_id == "zvq-blr-001").delete()
+        db.query(QshalaTag).filter(QshalaTag.question_id == "zvq-blr-001").delete()
+        db.query(Question).filter(Question.id == "zvq-blr-001").delete()
+        db.commit()
+        db.close()
+

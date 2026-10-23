@@ -183,30 +183,59 @@ def human_tag(question_id: str, body: HumanTagIn, db: Session = Depends(get_db))
 
 
 @router.post("/batch-tag")
-async def batch_tag(body: BatchTagIn, db: Session = Depends(get_db)):
-    """Chunked batch tagging for a presentation deck or explicit question IDs.
+async def batch_tag(
+    body: Optional[BatchTagIn] = None,
+    limit: int = Query(100, le=500),
+    force: bool = Query(False),
+    actor: str = Query("system"),
+    db: Session = Depends(get_db)
+):
+    """Chunked batch tagging for a presentation deck, question IDs, or all untagged questions.
 
     Guarantees:
     - Never overwrites HUMAN-confirmed rows.
     - Isolates failures per question.
     - Honors throttling between API calls.
-    - Returns progress counters for incremental UI polling.
+    - Returns progress counters for incremental UI polling and batch scripts.
     """
-    query = db.query(Question)
-    if body.document_id:
-        query = query.filter(Question.document_id == body.document_id)
-    elif body.question_ids:
-        query = query.filter(Question.id.in_(body.question_ids))
+    if body and (body.document_id or body.question_ids):
+        query = db.query(Question)
+        if body.document_id:
+            query = query.filter(Question.document_id == body.document_id)
+        elif body.question_ids:
+            query = query.filter(Question.id.in_(body.question_ids))
+        total_matching = query.count()
+        questions = query.order_by(Question.id.asc()).offset(body.offset).limit(body.chunk_size).all()
+        actor_name = body.actor
+        throttle_seconds = body.throttle_seconds
+        doc_id = body.document_id
+        offset_val = body.offset
+        chunk_val = body.chunk_size
     else:
-        raise HTTPException(400, "Either document_id or question_ids must be provided")
-
-    total_matching = query.count()
-    questions = query.order_by(Question.id.asc()).offset(body.offset).limit(body.chunk_size).all()
+        if force:
+            query = db.query(Question)
+        else:
+            tagged = db.query(QshalaTag.question_id).distinct()
+            query = db.query(Question).filter(~Question.id.in_(tagged))
+        total_matching = query.count()
+        questions = query.order_by(Question.id.asc()).limit(limit).all()
+        actor_name = actor
+        throttle_seconds = 0.0
+        doc_id = None
+        offset_val = 0
+        chunk_val = limit
 
     tagger = QshalaTagger()
     results = []
 
     for q in questions:
+        if not q.question_text or not q.answer:
+            results.append({
+                "question_id": q.id,
+                "status": "SKIPPED_EMPTY_TEXT_OR_ANSWER"
+            })
+            continue
+
         # Never overwrite a human-confirmed tag!
         curr = QshalaTagger.current(db, q.id)
         if curr and curr.source == "HUMAN" and curr.status == "confirmed":
@@ -223,7 +252,7 @@ async def batch_tag(body: BatchTagIn, db: Session = Depends(get_db)):
                 question_id=q.id,
                 question_text=q.question_text,
                 answer=q.answer,
-                actor=body.actor,
+                actor=actor_name,
                 commit=True
             )
             results.append({
@@ -238,16 +267,26 @@ async def batch_tag(body: BatchTagIn, db: Session = Depends(get_db)):
                 "error": str(exc)
             })
 
-        if body.throttle_seconds > 0:
-            await asyncio.sleep(body.throttle_seconds)
+        if throttle_seconds > 0:
+            await asyncio.sleep(throttle_seconds)
+
+    out_tagged = sum(1 for r in results if r["status"] == "TAGGED")
+    out_skipped = sum(1 for r in results if "SKIPPED" in r["status"])
+    out_failed = sum(1 for r in results if r["status"] == "FAILED")
+    errors = [{"question_id": r["question_id"], "error": r.get("error")} for r in results if r["status"] == "FAILED"]
 
     return {
-        "document_id": body.document_id,
-        "offset": body.offset,
-        "chunk_size": body.chunk_size,
+        "document_id": doc_id,
+        "offset": offset_val,
+        "chunk_size": chunk_val,
         "total": total_matching,
+        "total_questions": len(questions),
         "processed": len(results),
-        "remaining": max(0, total_matching - (body.offset + len(results))),
+        "tagged": out_tagged,
+        "skipped": out_skipped,
+        "failed": out_failed,
+        "remaining": max(0, total_matching - (offset_val + len(results))),
+        "errors": errors,
         "results": results
     }
 
