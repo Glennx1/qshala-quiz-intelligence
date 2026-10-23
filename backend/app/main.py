@@ -56,6 +56,15 @@ async def lifespan(app: FastAPI):
     try:
         db = SessionLocal()
         doc_count = db.query(Document).count()
+        # Nothing can still be processing right after a start: those uploads died with the old process.
+        stuck = db.query(Document).filter(Document.processing_status == "PROCESSING").all()
+        for d in stuck:
+            d.processing_status = "FAILED"
+            d.processing_error = ("Processing stopped because the server restarted, most likely because the deck is "
+                                  "too large for the server's memory. Compress the pictures and upload it again.")
+        if stuck:
+            db.commit()
+            logger.warning(f"Marked {len(stuck)} interrupted upload(s) as FAILED")
         db.close()
         if doc_count == 0:
             logger.info("Knowledge base is empty. Running automatic seeding of sample decks...")

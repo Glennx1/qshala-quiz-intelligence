@@ -2,6 +2,8 @@ import os
 import re
 import uuid
 import zipfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import hashlib
 import mimetypes
@@ -38,6 +40,11 @@ class PPTXParser:
         self.write_to_disk = write_to_disk
         # Optional zero-arg callable; when it returns True parsing aborts (user cancelled).
         self.should_cancel = None
+        # Media uploads to R2 run in a small thread pool (one slow network call per image used to be serial).
+        self._executor: Optional[ThreadPoolExecutor] = None
+        self._pending: List[Any] = []
+        self._zip: Optional[zipfile.ZipFile] = None
+        self._zip_lock = threading.Lock()
         self.output_dir = settings.SLIDES_DIR / document_id
         self.output_media_dir = self.output_dir / "media"
         # Mirror extracted media to Next.js public directory if it exists for Edge CDN delivery
@@ -80,11 +87,56 @@ class PPTXParser:
             r2 = get_media_storage()
             if r2 is not None:
                 r2_key = f"slides/{self.document_id}/media/{filename}"
-                servable_url = r2.upload_bytes(r2_key, blob)
+                # The public URL is predictable, so the upload can finish in the background.
+                servable_url = f"{r2.public_base_url}/{r2_key.lstrip('/')}"
+                if self._executor is None:
+                    self._executor = ThreadPoolExecutor(max_workers=8)
+                self._pending.append((filename, self._executor.submit(self._upload_with_retry, r2, r2_key, blob)))
         except Exception as e:
             logger.warning(f"R2 upload failed for {filename}, falling back to local URL: {e}")
 
         return local_path, servable_url
+
+    @staticmethod
+    def _upload_with_retry(r2, key: str, blob: bytes, attempts: int = 3):
+        import time as _t
+        for i in range(attempts):
+            try:
+                return r2.upload_bytes(key, blob)
+            except Exception:
+                if i == attempts - 1:
+                    raise
+                _t.sleep(1.0 * (i + 1))
+
+    def _finish_uploads(self) -> None:
+        failed = 0
+        for name, fut in self._pending:
+            try:
+                fut.result()
+            except Exception as e:
+                failed += 1
+                logger.warning(f"R2 upload failed for {name} after retries: {e}")
+        self._pending = []
+        if self._executor is not None:
+            self._executor.shutdown(wait=True)
+            self._executor = None
+        if failed:
+            logger.warning(f"{failed} media file(s) did not reach R2 for document {self.document_id}")
+
+    def _read_zip(self, name: str) -> bytes:
+        """Read one media file from the deck on demand (the whole media folder is no longer held in memory)."""
+        with self._zip_lock:
+            if self._zip is None:
+                self._zip = zipfile.ZipFile(self.file_path, "r")
+            return self._zip.read(name)
+
+    def _close_zip(self) -> None:
+        with self._zip_lock:
+            if self._zip is not None:
+                try:
+                    self._zip.close()
+                finally:
+                    self._zip = None
 
     def _classify_media_type(self, ext: str) -> str:
         ext_lower = ext.lower()
@@ -131,8 +183,7 @@ class PPTXParser:
             with zipfile.ZipFile(self.file_path, "r") as z:
                 # Find all media files in archive
                 media_entries = {
-                    name: z.read(name)
-                    for name in z.namelist()
+                    name for name in z.namelist()
                     if name.startswith("ppt/media/") and not name.endswith("/")
                 }
 
@@ -156,7 +207,6 @@ class PPTXParser:
                         clean_target = target.replace("../", "ppt/")
                         if clean_target in media_entries:
                             mapped_media_keys.add(clean_target)
-                            data = media_entries[clean_target]
                             ext = Path(clean_target).suffix.lower()
                             media_type = self._classify_media_type(ext)
                             mime, _ = mimetypes.guess_type(clean_target)
@@ -165,14 +215,14 @@ class PPTXParser:
                                 "filename": Path(clean_target).name,
                                 "slide_number": slide_num,
                                 "media_type": media_type,
-                                "raw_bytes": data,
+                                "zip_name": clean_target,
                                 "mime_type": mime or "application/octet-stream",
                                 "source": "zip_rel"
                             }
                             slide_media_map.setdefault(slide_num, []).append(item)
 
                 # Any unmapped media is placed under slide 1 as general presentation media
-                for key, data in media_entries.items():
+                for key in sorted(media_entries):
                     if key not in mapped_media_keys:
                         ext = Path(key).suffix.lower()
                         media_type = self._classify_media_type(ext)
@@ -181,7 +231,7 @@ class PPTXParser:
                             "filename": Path(key).name,
                             "slide_number": 1,
                             "media_type": media_type,
-                            "raw_bytes": data,
+                            "zip_name": key,
                             "mime_type": mime or "application/octet-stream",
                             "source": "zip_unmapped"
                         }
@@ -193,6 +243,13 @@ class PPTXParser:
         return slide_media_map
 
     def parse(self) -> List[Dict[str, Any]]:
+        try:
+            return self._parse_impl()
+        finally:
+            self._finish_uploads()
+            self._close_zip()
+
+    def _parse_impl(self) -> List[Dict[str, Any]]:
         prs = Presentation(self.file_path)
         slides_data = []
         zip_media = self.extract_media_from_zip()
@@ -267,7 +324,6 @@ class PPTXParser:
                             "filename": img_filename,
                             "slide_number": slide_idx,
                             "media_type": "image",
-                            "raw_bytes": image.blob,
                             "mime_type": f"image/{image.ext}",
                             "local_path": str(img_path) if self.write_to_disk else None,
                             "rel_url": rel_path
@@ -320,7 +376,6 @@ class PPTXParser:
                                     "filename": part_name,
                                     "slide_number": slide_idx,
                                     "media_type": media_type,
-                                    "raw_bytes": raw_data,
                                     "mime_type": mime_type,
                                     "local_path": str(local_file) if self.write_to_disk else None,
                                     "rel_url": rel_url
@@ -343,16 +398,20 @@ class PPTXParser:
                 for z_item in zip_media[slide_idx]:
                     if z_item["filename"] not in seen_media_names:
                         seen_media_names.add(z_item["filename"])
-                        if z_item["media_type"] == "image" and not self._is_valid_quiz_image(z_item["raw_bytes"], Path(z_item["filename"]).suffix):
+                        try:
+                            z_bytes = self._read_zip(z_item["zip_name"])
+                        except Exception as zerr:
+                            logger.warning(f"Could not read {z_item['zip_name']} from the deck: {zerr}")
+                            continue
+                        if z_item["media_type"] == "image" and not self._is_valid_quiz_image(z_bytes, Path(z_item["filename"]).suffix):
                             continue
 
-                        local_file, rel_url = self._save_media_file(z_item["filename"], z_item["raw_bytes"])
+                        local_file, rel_url = self._save_media_file(z_item["filename"], z_bytes)
 
                         item_record = {
                             "filename": z_item["filename"],
                             "slide_number": slide_idx,
                             "media_type": z_item["media_type"],
-                            "raw_bytes": z_item["raw_bytes"],
                             "mime_type": z_item["mime_type"],
                             "local_path": str(local_file) if self.write_to_disk else None,
                             "rel_url": rel_url
@@ -363,7 +422,7 @@ class PPTXParser:
                         elif z_item["media_type"] == "video":
                             video_items.append(item_record)
                         elif z_item["media_type"] == "image":
-                            img_hash = hashlib.md5(z_item["raw_bytes"]).hexdigest()
+                            img_hash = hashlib.md5(z_bytes).hexdigest()
                             if img_hash not in seen_img_hashes:
                                 seen_img_hashes.add(img_hash)
                                 image_paths.append(rel_url)

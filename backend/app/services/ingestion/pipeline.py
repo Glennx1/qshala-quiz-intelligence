@@ -30,6 +30,7 @@ from backend.app.services.tagging.difficulty_engine import DifficultyEngine
 
 # Feature toggle: set to False to revert to legacy AutoTagger writing topic tags on upload
 USE_QSHALA_TAGGER: bool = True
+VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "4"))   # parallel image-description calls
 TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "3"))   # parallel Gemini tagging calls per deck
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
@@ -161,10 +162,8 @@ class IngestionPipeline:
                 "current_step": "5. Multimodal visual inspection & intelligent tagging"
             })
 
-            enriched_questions = []
-            for q in raw_questions:
-                raise_if_cancelled(document_id)
-                # 0. Multimodal Visual Clues Inspection
+            # Describe question images in parallel (each is a separate vision call; they used to run one by one).
+            async def _describe_images(q):
                 visual_clues_list = []
                 # Inspect question images first (and clue images)
                 target_imgs = list(q.get("question_images") or q.get("image_refs") or [])
@@ -216,6 +215,22 @@ class IngestionPipeline:
 
                 visual_clues_str = "\n".join(visual_clues_list) if visual_clues_list else None
                 q["visual_clues"] = visual_clues_str
+                return visual_clues_str
+
+            vision_sem = asyncio.Semaphore(VISION_CONCURRENCY)
+
+            async def _describe_guarded(q):
+                async with vision_sem:
+                    raise_if_cancelled(document_id)
+                    return await _describe_images(q)
+
+            INGESTION_STATUS_REGISTRY[document_id]["current_step"] = "5. Reading question images"
+            await asyncio.gather(*[_describe_guarded(q) for q in raw_questions])
+
+            enriched_questions = []
+            for q in raw_questions:
+                raise_if_cancelled(document_id)
+                visual_clues_str = q.get("visual_clues")
 
                 # 1. Multi-topic and entity tagging (including visual clues)
                 is_multimodal = bool(
