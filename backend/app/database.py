@@ -54,6 +54,55 @@ def get_vector_column_type(dim: int = 768):
             return VectorType()
     return VectorType()
 
+def _ensure_vector_index(engine) -> None:
+    """Enables pgvector and creates an ANN index on questions.embedding.
+
+    Search ranks every candidate by vector distance on this column, on every
+    request. Without an index Postgres has to sequentially scan the whole
+    table to do that -- fine for a handful of rows, but it gets slower (and
+    pulls more into memory) as the question bank grows. HNSW is tried first
+    (better recall, no retraining needed as data grows); if the pgvector
+    version installed on the server is too old to support it, IVFFlat is used
+    instead. Either way this is best-effort: if it fails (missing privileges,
+    extension unavailable, etc.) dense search simply falls back to scoring
+    candidates in Python, same as it always has.
+    """
+    if not (is_postgres and PG_VECTOR_AVAILABLE):
+        return
+
+    try:
+        with engine.connect() as conn:
+            conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector;")
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"Could not enable the pgvector extension ({e}); dense search will fall back to in-app scoring.")
+        return
+
+    try:
+        with engine.connect() as conn:
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_questions_embedding_hnsw "
+                "ON questions USING hnsw (embedding vector_cosine_ops) "
+                "WITH (m = 16, ef_construction = 64);"
+            )
+            conn.commit()
+        logger.info("pgvector HNSW index ready on questions.embedding")
+        return
+    except Exception as e:
+        logger.debug(f"HNSW index creation failed ({e}), trying IVFFlat instead.")
+
+    try:
+        with engine.connect() as conn:
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_questions_embedding_ivfflat "
+                "ON questions USING ivfflat (embedding vector_cosine_ops) "
+                "WITH (lists = 100);"
+            )
+            conn.commit()
+        logger.info("pgvector IVFFlat index ready on questions.embedding")
+    except Exception as e:
+        logger.warning(f"Could not create a vector index on questions.embedding ({e}); dense search will fall back to in-app scoring.")
+
 # Database engine with automatic fallback
 engine = None
 if is_postgres:
@@ -89,6 +138,7 @@ def ensure_schema_columns():
         # Create all tables that do not exist yet (including sharepoint and job tables)
         import backend.app.models  # noqa: F401
         Base.metadata.create_all(bind=engine)
+        _ensure_vector_index(engine)
 
         with engine.connect() as conn:
             # Check if questions table exists

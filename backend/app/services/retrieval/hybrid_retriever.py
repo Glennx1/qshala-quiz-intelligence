@@ -1,11 +1,13 @@
 import json
 import re
 import logging
+from collections import OrderedDict
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Set
 import numpy as np
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, not_
+from backend.app.database import is_postgres, PG_VECTOR_AVAILABLE
 from backend.app.models.question import Question
 from backend.app.models.document import Document, Slide
 from backend.app.services.ai.factory import get_embedding_provider
@@ -25,10 +27,40 @@ class HybridRetriever:
     - Reciprocal Rank Fusion (RRF)
     """
 
+    # Shared across requests in this process -- HybridRetriever is re-built
+    # per request, so the cache lives on the class rather than the instance.
+    # Repeated search terms then skip the live embedding API call entirely.
+    _embedding_cache: "OrderedDict[str, List[float]]" = OrderedDict()
+    _EMBED_CACHE_MAX = 256
+    _DENSE_POOL_SIZE = 60
+
     def __init__(self, db: Session):
         self.db = db
         self.embedding_provider = get_embedding_provider()
         self.expansions = self._load_synonym_expansions()
+
+    async def _get_query_embedding(self, query: str) -> List[float]:
+        """Embeds the query, reusing a recent result for the same text.
+
+        Search is expected to be the dominant, latency-sensitive traffic on
+        this service, and the same handful of queries get typed a lot -- this
+        avoids hitting the embedding API (and its latency/cost) more than
+        once per distinct query within the cache window.
+        """
+        cache_key = query.strip().lower()
+        cached = HybridRetriever._embedding_cache.get(cache_key)
+        if cached is not None:
+            HybridRetriever._embedding_cache.move_to_end(cache_key)
+            return cached
+
+        embedding = await self.embedding_provider.get_embedding(query)
+
+        HybridRetriever._embedding_cache[cache_key] = embedding
+        HybridRetriever._embedding_cache.move_to_end(cache_key)
+        while len(HybridRetriever._embedding_cache) > HybridRetriever._EMBED_CACHE_MAX:
+            HybridRetriever._embedding_cache.popitem(last=False)
+
+        return embedding
 
     def _load_synonym_expansions(self) -> Dict[str, List[str]]:
         expansions = {
@@ -163,6 +195,33 @@ class HybridRetriever:
 
         return results
 
+    def _join_query(self):
+        return self.db.query(Question, Document, Slide).\
+            join(Document, Question.document_id == Document.id).\
+            outerjoin(Slide, Question.slide_id == Slide.id)
+
+    def _apply_grade_filter(self, query_builder, grade_min: Optional[int], grade_max: Optional[int]):
+        if grade_min is not None and grade_max is not None:
+            query_builder = query_builder.filter(
+                and_(
+                    Question.grade_min <= (grade_max + 1),
+                    Question.grade_max >= (grade_min - 1)
+                )
+            )
+        return query_builder
+
+    def _apply_topic_filter(self, query_builder, topic: Optional[str]):
+        if topic:
+            query_builder = query_builder.filter(
+                or_(
+                    Question.topic.ilike(f"%{topic}%"),
+                    Question.subtopic.ilike(f"%{topic}%"),
+                    Question.question_text.ilike(f"%{topic}%"),
+                    Question.visual_clues.ilike(f"%{topic}%")
+                )
+            )
+        return query_builder
+
     async def search(
         self,
         query: str,
@@ -175,53 +234,57 @@ class HybridRetriever:
     ) -> List[Dict[str, Any]]:
         """
         Executes hybrid dense + sparse retrieval with Reciprocal Rank Fusion (RRF) and Tag-Overlap Boost.
-        """
-        # Step 1: Dense Query Embedding
-        query_emb = await self.embedding_provider.get_embedding(query)
 
-        # Step 2: Build candidate pool
-        query_builder = self.db.query(Question, Document, Slide).\
-            join(Document, Question.document_id == Document.id).\
-            outerjoin(Slide, Question.slide_id == Slide.id)
+        The dense candidate pool is ranked by Postgres itself (pgvector's
+        cosine_distance, backed by the HNSW/IVFFlat index on
+        questions.embedding) when running on Postgres, so only the nearest
+        _DENSE_POOL_SIZE rows are ever pulled into this process -- memory and
+        latency stay flat regardless of how many questions are in the vault.
+        On SQLite (local/dev, no pgvector) it falls back to the original
+        in-process scan over the filtered candidate set.
+        """
+        pool_size = self._DENSE_POOL_SIZE
+
+        # Step 1: Dense Query Embedding (cached -- a repeated search term
+        # skips the live embedding API call).
+        query_emb = await self._get_query_embedding(query)
 
         clean_tags = [t.strip().lstrip("#").lower() for t in (tags or []) if isinstance(t, str) and t.strip()]
 
-        # If both topic and tags are provided, match questions matching topic OR any tag
-        if topic and clean_tags:
-            query_builder = query_builder.filter(
-                or_(
-                    Question.topic.ilike(f"%{topic}%"),
-                    Question.subtopic.ilike(f"%{topic}%"),
-                    Question.question_text.ilike(f"%{topic}%"),
-                    Question.visual_clues.ilike(f"%{topic}%")
-                )
-            )
-        elif topic:
-            query_builder = query_builder.filter(
-                or_(
-                    Question.topic.ilike(f"%{topic}%"),
-                    Question.subtopic.ilike(f"%{topic}%"),
-                    Question.question_text.ilike(f"%{topic}%"),
-                    Question.visual_clues.ilike(f"%{topic}%")
-                )
-            )
+        use_pg_ann = is_postgres and PG_VECTOR_AVAILABLE and query_emb
+        candidate_distances: Dict[str, float] = {}
 
-        if grade_min is not None and grade_max is not None:
-            query_builder = query_builder.filter(
-                and_(
-                    Question.grade_min <= (grade_max + 1),
-                    Question.grade_max >= (grade_min - 1)
-                )
+        if use_pg_ann:
+            # Step 2 (Postgres): let the database find the nearest questions --
+            # nothing else is loaded into this process.
+            distance_col = Question.embedding.cosine_distance(query_emb)
+            query_builder = self._apply_topic_filter(
+                self._apply_grade_filter(self._join_query(), grade_min, grade_max),
+                topic
+            ).add_columns(distance_col.label("_distance")).order_by(distance_col).limit(pool_size)
+
+            rows = query_builder.all()
+            candidates = [(q, doc, slide) for (q, doc, slide, _dist) in rows]
+            candidate_distances = {q.id: float(_dist) for (q, doc, slide, _dist) in rows if _dist is not None}
+
+            # If the filtered search found nothing, relax to the nearest
+            # questions overall (same "give up on filters" fallback as before).
+            if not candidates:
+                rows = self._join_query().add_columns(distance_col.label("_distance")).\
+                    order_by(distance_col).limit(pool_size).all()
+                candidates = [(q, doc, slide) for (q, doc, slide, _dist) in rows]
+                candidate_distances = {q.id: float(_dist) for (q, doc, slide, _dist) in rows if _dist is not None}
+        else:
+            # Step 2 (fallback): no pgvector available -- score every matching
+            # row in Python, same as this always did.
+            query_builder = self._apply_topic_filter(
+                self._apply_grade_filter(self._join_query(), grade_min, grade_max),
+                topic
             )
+            candidates = query_builder.all()
 
-        candidates = query_builder.all()
-
-        # If strict search returned nothing, relax
-        if not candidates:
-            candidates = self.db.query(Question, Document, Slide).\
-                join(Document, Question.document_id == Document.id).\
-                outerjoin(Slide, Question.slide_id == Slide.id).\
-                limit(60).all()
+            if not candidates:
+                candidates = self._join_query().limit(pool_size).all()
 
         if not candidates:
             return []
@@ -230,15 +293,22 @@ class HybridRetriever:
         expanded_keywords = self._expand_query(f"{query} {topic or ''} {tag_query_str}")
 
         # Path A: Dense Vector similarities
-        candidate_embs = []
-        for q, doc, slide in candidates:
-            emb = q.embedding
-            if isinstance(emb, list) and len(emb) == len(query_emb):
-                candidate_embs.append(emb)
-            else:
-                candidate_embs.append([0.0] * len(query_emb))
+        if candidate_distances:
+            # pgvector's cosine_distance is (1 - cosine_similarity); convert back.
+            # A candidate with no stored embedding (no distance returned) scores
+            # as fully dissimilar rather than being dropped -- it can still
+            # surface via the keyword/tag path below.
+            dense_scores = np.array([1.0 - candidate_distances.get(q.id, 1.0) for q, doc, slide in candidates])
+        else:
+            candidate_embs = []
+            for q, doc, slide in candidates:
+                emb = q.embedding
+                if isinstance(emb, list) and len(emb) == len(query_emb):
+                    candidate_embs.append(emb)
+                else:
+                    candidate_embs.append([0.0] * len(query_emb))
+            dense_scores = batch_cosine_similarities(query_emb, candidate_embs)
 
-        dense_scores = batch_cosine_similarities(query_emb, candidate_embs)
         dense_ranked_indices = list(np.argsort(-dense_scores))
         dense_rank_map = {idx: rank + 1 for rank, idx in enumerate(dense_ranked_indices)}
 
