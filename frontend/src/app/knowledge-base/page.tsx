@@ -20,7 +20,8 @@ import {
   Image as ImageIcon,
   Copy,
   X,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Star
 } from 'lucide-react';
 import { api, resolveMediaUrl, getFallbackMediaUrl } from '../../lib/api';
 import { HistoricalQuestion, TopicItem, DocumentItem } from '../../lib/types';
@@ -401,18 +402,15 @@ function KnowledgeBaseContent() {
             <table className="w-full text-left text-[13px] border-collapse">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/60 font-semibold text-[12px] uppercase tracking-wider text-slate-600">
-                  <th className="py-3 px-4 w-5/12">Question & Clues</th>
+                  <th className="py-3 px-4 w-6/12">Question</th>
                   <th className="py-3 px-4">Topics</th>
-                  <th className="py-3 px-4">Format / Hook</th>
-                  <th className="py-3 px-4">Difficulty & Depth</th>
-                  <th className="py-3 px-4">Origin Presentation</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {questions.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-12 text-center text-slate-400">
+                    <td colSpan={3} className="py-12 text-center text-slate-400">
                       {activeTab === 'duplicates'
                         ? 'No possible duplicates pending review!'
                         : 'No questions match your current search and filters.'}
@@ -449,8 +447,16 @@ function KnowledgeBaseContent() {
                             </div>
                           )}
 
-                          <div className="font-semibold text-[13.5px] text-slate-900 leading-snug">
-                            {q.question_text}
+                          <div className="flex items-start gap-1.5">
+                            {q.question_label && (
+                              <span className="mt-0.5 shrink-0 rounded bg-slate-100 border border-slate-200 px-1.5 py-0.5 text-[10.5px] font-bold text-slate-600">
+                                {q.question_label}
+                              </span>
+                            )}
+                            <div className="font-semibold text-[13.5px] text-slate-900 leading-snug">
+                              {q.question_text}
+                            </div>
+                            {q.star_marked && <Star className="mt-0.5 h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-500" aria-label="Star marked" />}
                           </div>
                           <div className="mt-1 text-[12px] text-slate-600 font-normal">
                             Answer: <span className="font-semibold text-slate-800">{q.answer}</span>
@@ -482,14 +488,15 @@ function KnowledgeBaseContent() {
                                   type="button"
                                   onClick={() => setPreviewImage(imgUrl)}
                                   className="relative rounded-md overflow-hidden border border-slate-200 hover:border-blue-400 bg-white transition-all cursor-pointer group shadow-xs"
-                                  title="Click to view clue image"
+                                  title="Question image: click to view"
                                 >
                                   <img
                                     src={getImageSrc(imgUrl)}
                                     onError={() => handleImgError(imgUrl)}
-                                    alt={`Clue ${i + 1}`}
+                                    alt={`Question image ${i + 1}`}
                                     className="h-9 w-13 object-cover group-hover:scale-105 transition-transform"
                                   />
+                                  <span className="absolute inset-x-0 bottom-0 bg-sky-700/80 text-center text-[8px] font-bold uppercase leading-3 text-white">Question</span>
                                 </button>
                               ))}
                               {cleanAnsImgs.slice(0, 2).map((imgUrl, i) => (
@@ -498,14 +505,15 @@ function KnowledgeBaseContent() {
                                   type="button"
                                   onClick={() => setPreviewImage(imgUrl)}
                                   className="relative rounded-md overflow-hidden border border-emerald-300 ring-1 ring-emerald-400/50 hover:border-emerald-500 bg-white transition-all cursor-pointer group shadow-xs"
-                                  title="Click to view answer reveal image"
+                                  title="Answer image: click to view"
                                 >
                                   <img
                                     src={getImageSrc(imgUrl)}
                                     onError={() => handleImgError(imgUrl)}
-                                    alt={`Answer ${i + 1}`}
+                                    alt={`Answer image ${i + 1}`}
                                     className="h-9 w-13 object-cover group-hover:scale-105 transition-transform"
                                   />
+                                  <span className="absolute inset-x-0 bottom-0 bg-emerald-700/80 text-center text-[8px] font-bold uppercase leading-3 text-white">Answer</span>
                                 </button>
                               ))}
                             </div>
@@ -603,17 +611,6 @@ function KnowledgeBaseContent() {
                                 {cleanQImgs.length + cleanAnsImgs.length} Images
                               </button>
                             )}
-                          {q.visual_clues && (
-                            <button
-                              type="button"
-                              onClick={() => setSelectedQuestionForMedia(q)}
-                              className="inline-flex items-center gap-1 rounded bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-indigo-800 max-w-[200px] truncate cursor-pointer"
-                              title={q.visual_clues}
-                            >
-                              <span className="text-[10px] font-bold">OCR</span>
-                              <span className="truncate">{q.visual_clues}</span>
-                            </button>
-                          )}
                           {q.audio_transcript && (
                             <button
                               type="button"
@@ -640,118 +637,57 @@ function KnowledgeBaseContent() {
                               <span className="truncate">{q.video_transcript ? `Video: ${q.video_transcript}` : 'Video Clue'}</span>
                             </button>
                           )}
-                          {q.source_slide_range && (
-                            <span className="rounded bg-slate-100 border border-slate-200 px-1.5 py-0.5 text-[10.5px] font-medium text-slate-600">
-                              {q.source_slide_range}
-                            </span>
-                          )}
-                          {q.question_hook && q.question_hook !== 'DIRECT_TRIVIA' && q.question_hook !== 'STORY_NARRATIVE' && (
-                            <span className="rounded bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 text-[10.5px] font-semibold text-indigo-700">
-                              {q.question_hook.replace(/_/g, ' ')}
-                            </span>
-                          )}
-                          {q.tags && q.tags.filter((t: string) => !t.toLowerCase().includes('storyteller')).map((tag: string) => (
+                          {(q.repeated_count ?? 0) > 0 && (
                             <button
-                              key={tag}
                               type="button"
-                              onClick={() => setTagFilter(tagFilter.toLowerCase() === tag.toLowerCase() ? '' : tag)}
-                              className={`rounded px-1.5 py-0.5 text-[10.5px] font-medium transition-colors cursor-pointer ${
-                                tagFilter.toLowerCase() === tag.toLowerCase()
-                                  ? 'bg-indigo-600 text-white font-semibold'
-                                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                              }`}
-                              title={`Filter by #${tag}`}
+                              onClick={() => setSelectedQuestionForTags(q)}
+                              className="rounded bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-700 flex items-center gap-1 cursor-pointer"
+                              title={(q.repeated || []).map((r) => r.label).join('\n')}
                             >
-                              #{tag}
-                            </button>
-                          ))}
-                          <button
-                            type="button"
-                            onClick={() => setSelectedQuestionForTags(q)}
-                            className="inline-flex items-center gap-0.5 rounded border border-dashed border-slate-300 hover:border-indigo-400 bg-white hover:bg-indigo-50/50 px-1.5 py-0.5 text-[10.5px] font-medium text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer"
-                            title="Add or edit tags for this question"
-                          >
-                            <Plus className="h-2.5 w-2.5" />
-                            <span>Tag</span>
-                          </button>
-                          {q.occurrence_count && q.occurrence_count > 1 && (
-                            <span className="rounded bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-700 flex items-center gap-1">
                               <Layers className="h-2.5 w-2.5" />
-                              Appears in {q.occurrence_count} decks
-                            </span>
+                              Repeated ×{q.repeated_count}
+                            </button>
                           )}
                         </div>
                       </td>
 
                       {/* Topics */}
                       <td className="py-3.5 px-4 align-top">
-                        <div className="flex flex-col gap-1">
-                          <span className="rounded-md bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-800 w-fit">
-                            {q.topic}
-                          </span>
-                          {q.subtopic && (
-                            <span className="text-[11px] text-slate-500 font-medium">
-                              {q.subtopic}
-                            </span>
+                        <div className="flex flex-col gap-2">
+                          {(q.topic_paths && q.topic_paths.length > 0) ? (
+                            <>
+                              {q.topic_paths.slice(0, 3).map((p, pi) => (
+                                <div key={pi} className="flex flex-col gap-1">
+                                  <div className="flex flex-wrap items-center gap-1 text-[11px]">
+                                    <span className="rounded-md bg-amber-50 border border-amber-200 px-2 py-0.5 font-semibold text-amber-800">{p.l1}</span>
+                                    {p.l2 && <><span className="text-slate-300">›</span><span className="font-medium text-slate-600">{p.l2}</span></>}
+                                  </div>
+                                  {p.keywords && p.keywords.length > 0 && (
+                                    <div className="flex flex-wrap gap-1">
+                                      {p.keywords.slice(0, 5).map((k) => (
+                                        <button
+                                          key={k}
+                                          type="button"
+                                          onClick={() => setTagFilter(tagFilter.toLowerCase() === k.toLowerCase() ? '' : k)}
+                                          className={`rounded px-1.5 py-0.5 text-[10.5px] font-medium cursor-pointer ${tagFilter.toLowerCase() === k.toLowerCase() ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                          title={`Filter by ${k}`}
+                                        >
+                                          {k}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                              {q.topic_paths.length > 3 && <span className="text-[11px] text-slate-400">+{q.topic_paths.length - 3} more</span>}
+                            </>
+                          ) : (
+                            <>
+                              <span className="rounded-md bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-800 w-fit">{q.topic}</span>
+                              {q.subtopic && <span className="text-[11px] text-slate-500 font-medium">{q.subtopic}</span>}
+                            </>
                           )}
                         </div>
-                      </td>
-
-                      {/* Format / Hook */}
-                      <td className="py-3.5 px-4 text-slate-600 align-top">
-                        <div className="font-semibold text-[12.5px] text-slate-800">
-                          {q.question_hook ? q.question_hook.replace(/_/g, ' ') : 'DIRECT TRIVIA'}
-                        </div>
-                        <div className="text-[11px] text-slate-400 font-normal">
-                          {q.question_type || 'Slide Q&A'}
-                        </div>
-                      </td>
-
-                      {/* Difficulty & Depth */}
-                      <td className="py-3.5 px-4 align-top">
-                        <div className="flex items-center gap-1.5">
-                          <span
-                            className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${
-                              q.difficulty === 'Easy'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : q.difficulty === 'Hard'
-                                ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                                : 'bg-blue-50 text-blue-700 border border-blue-200'
-                            }`}
-                          >
-                            {q.difficulty}
-                          </span>
-                          {q.difficulty_score !== undefined && (
-                            <span className="text-[11px] font-mono text-slate-400">
-                              {q.difficulty_score.toFixed(2)}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[11px] text-slate-500 font-normal mt-1">
-                          {q.cognitive_level || 'Recall'}
-                        </div>
-                      </td>
-
-                      {/* Source Presentation Deck */}
-                      <td className="py-3.5 px-4 text-slate-500 text-[12px] align-top">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedDeckId(selectedDeckId === q.document_id ? '' : q.document_id)}
-                          className="text-left group/deck hover:text-blue-600 cursor-pointer block"
-                          title={`Click to filter questions from: ${q.document_title || 'this presentation'}`}
-                        >
-                          <div className={`font-semibold truncate max-w-[170px] ${selectedDeckId === q.document_id ? 'text-blue-600 underline' : 'text-slate-800 group-hover/deck:text-blue-600'}`}>
-                            {q.document_title || 'Archive Deck'}
-                          </div>
-                          <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5">
-                            <span>{q.source_slide_range || (q.slide_number ? `Slide ${q.slide_number}` : 'Deck')}</span>
-                            {selectedDeckId === q.document_id && (
-                              <span className="rounded bg-blue-100 text-blue-700 font-bold text-[9.5px] px-1 py-0.2">
-                                Filtered
-                              </span>
-                            )}
-                          </div>
-                        </button>
                       </td>
 
                       <td className="py-3.5 px-4 text-right align-top">
@@ -768,10 +704,10 @@ function KnowledgeBaseContent() {
                               <button
                                 onClick={() => setSelectedQuestionForTags(q)}
                                 className="inline-flex items-center gap-1 text-[12px] font-semibold text-indigo-600 hover:text-indigo-700 cursor-pointer"
-                                title="Manage tags and categories"
+                                title="View and edit every tag on this question"
                               >
                                 <Tag className="h-3 w-3" />
-                                <span>Tags</span>
+                                <span>Edit tags</span>
                               </button>
                               <button
                                 onClick={() => handleViewSlide(q)}
@@ -941,6 +877,7 @@ function KnowledgeBaseContent() {
           onClose={() => setSelectedQuestionForTags(null)}
           question={selectedQuestionForTags}
           onSaved={handleQuestionTagsSaved}
+          onFilterDeck={(id) => setSelectedDeckId(id)}
           availableTopics={topicsList.map((t) => t.topic)}
         />
       )}

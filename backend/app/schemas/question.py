@@ -84,6 +84,7 @@ class QuestionUpdate(BaseModel):
     question_text: Optional[str] = None
     answer: Optional[str] = None
     explanation: Optional[str] = None
+    visual_clues: Optional[str] = None
 
 class QuestionSearchParams(BaseModel):
     query: Optional[str] = None

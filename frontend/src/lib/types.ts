@@ -77,6 +77,121 @@ export interface HistoricalQuestion {
   raw_media_refs?: string[];
   source_slide_range?: string | null;
   created_at: string;
+  // v6 tags shown in the list row (everything else is behind "Edit tags")
+  question_number?: number | null;
+  question_label?: string | null;
+  star_marked?: boolean;
+  topic_paths?: TopicPath[];
+  repeated?: RepeatEntry[];
+  repeated_count?: number;
+}
+
+/** One Theme > Subtopic > keywords path. A question can have several. */
+export interface TopicPath {
+  id?: string;
+  position?: number;
+  l1: string;
+  l2?: string | null;
+  keywords: string[];
+  source?: string;
+  is_custom?: boolean;
+}
+
+/** The "Repeated" tag: the same question found again in another quiz. */
+export interface RepeatEntry {
+  id: string;
+  document_id: string;
+  deck_title?: string | null;
+  quiz_name?: string | null;
+  round_number?: number | null;
+  question_in_round?: number | null;
+  question_number?: number | null;
+  slide_range?: string | null;
+  match_type?: string;
+  label: string;
+  found_at?: string | null;
+}
+
+export interface QuestionMeta {
+  question_number?: number | null;
+  round_number?: number | null;
+  question_in_round?: number | null;
+  question_label?: string;
+  question_format?: string | null;
+  star_marked: boolean;
+  answer_type?: string | null;
+  media_type?: string | null;
+  language?: string | null;
+  quiz_name?: string | null;
+  college_institution?: string | null;
+  city_name?: string | null;
+  round_stage?: string | null;
+  deck_year?: number | null;
+  primary_audience?: string | null;
+  secondary_audience?: string | null;
+  is_varsity: boolean;
+  relevant_year?: number | null;
+  geo_region?: string | null;
+  india_international?: string | null;
+  source_presentation?: string | null;
+  manual_fields: string[];
+}
+
+export interface DeckMeta {
+  document_id: string;
+  quiz_name?: string | null;
+  college?: string | null;
+  city?: string | null;
+  round_stage?: string | null;
+  deck_date?: string | null;
+  deck_year?: number | null;
+  language?: string | null;
+  primary_audience?: string | null;
+  is_varsity: boolean;
+  source_presentation?: string | null;
+  parsed_ok?: boolean;
+  manual_fields: string[];
+  questions_updated?: number;
+}
+
+export interface QuestionDetail {
+  id: string;
+  question_text: string;
+  answer: string;
+  difficulty: string;
+  difficulty_score?: number;
+  document: { id: string; title?: string | null; filename?: string | null };
+  source_slide_range?: string | null;
+  question_images: string[];
+  answer_images: string[];
+  visual_clues?: string | null;
+  meta: QuestionMeta;
+  deck: DeckMeta;
+  topic_paths: TopicPath[];
+  hashtags: string[];
+  repeated: RepeatEntry[];
+  topic: string;
+  subtopic?: string | null;
+}
+
+export interface EditHistoryItem {
+  id: string;
+  field: string;
+  old_value?: string | null;
+  new_value?: string | null;
+  kind: string;
+  actor?: string | null;
+  changed_at?: string | null;
+}
+
+export interface TaxonomyV6 {
+  version: string;
+  themes: { name: string; code: string; subtopics: { name: string; code: string; description: string }[] }[];
+  custom: { l1: string; l2?: string | null; count: number }[];
+  formats: string[];
+  answer_types: string[];
+  geographies: string[];
+  audiences: string[];
 }
 
 export interface SharePointSyncStatus {

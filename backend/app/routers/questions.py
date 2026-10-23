@@ -588,6 +588,8 @@ def update_question(
         q.answer = payload.answer.strip()
     if payload.explanation is not None:
         q.explanation = payload.explanation.strip()
+    if payload.visual_clues is not None:
+        q.visual_clues = payload.visual_clues.strip() or None
 
     db.commit()
     db.refresh(q)

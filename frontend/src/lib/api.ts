@@ -13,6 +13,12 @@ import {
   SharePointSyncStatus,
   SharePointFileItem,
   IngestionJobItem,
+  QuestionDetail,
+  TopicPath,
+  RepeatEntry,
+  EditHistoryItem,
+  TaxonomyV6,
+  DeckMeta,
 } from './types';
 
 export function getApiBase(): string {
@@ -423,6 +429,98 @@ export const api = {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tags, topics, topic, subtopic }),
+    });
+    return handleResponse<HistoricalQuestion>(res);
+  },
+
+  // ---- Edit Tags (v6)
+  getQuestionDetail: async (questionId: string): Promise<QuestionDetail> => {
+    const res = await fetch(`${getApiBase()}/questions/${questionId}/detail`, { cache: 'no-store' });
+    return handleResponse<QuestionDetail>(res);
+  },
+
+  updateQuestionMeta: async (questionId: string, changes: Record<string, any>): Promise<QuestionDetail> => {
+    const res = await fetch(`${getApiBase()}/questions/${questionId}/meta`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ changes, actor: 'web' }),
+    });
+    return handleResponse<QuestionDetail>(res);
+  },
+
+  updateTopicPaths: async (questionId: string, paths: TopicPath[]): Promise<QuestionDetail> => {
+    const res = await fetch(`${getApiBase()}/questions/${questionId}/topic-paths`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        paths: paths.map((p) => ({ l1: p.l1, l2: p.l2 || null, keywords: p.keywords })),
+        actor: 'web',
+      }),
+    });
+    return handleResponse<QuestionDetail>(res);
+  },
+
+  updateHashtags: async (questionId: string, hashtags: string[]): Promise<QuestionDetail> => {
+    const res = await fetch(`${getApiBase()}/questions/${questionId}/hashtags`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hashtags, actor: 'web' }),
+    });
+    return handleResponse<QuestionDetail>(res);
+  },
+
+  patchRepeat: async (
+    questionId: string,
+    repeatId: string,
+    body: { quiz_name?: string; round_number?: number; question_in_round?: number; question_number?: number }
+  ): Promise<RepeatEntry> => {
+    const res = await fetch(`${getApiBase()}/questions/${questionId}/repeats/${repeatId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, actor: 'web' }),
+    });
+    return handleResponse<RepeatEntry>(res);
+  },
+
+  deleteRepeat: async (questionId: string, repeatId: string): Promise<{ repeated: RepeatEntry[] }> => {
+    const res = await fetch(`${getApiBase()}/questions/${questionId}/repeats/${repeatId}?actor=web`, {
+      method: 'DELETE',
+    });
+    return handleResponse<{ repeated: RepeatEntry[] }>(res);
+  },
+
+  getQuestionHistory: async (questionId: string): Promise<EditHistoryItem[]> => {
+    const res = await fetch(`${getApiBase()}/questions/${questionId}/history`, { cache: 'no-store' });
+    return handleResponse<EditHistoryItem[]>(res);
+  },
+
+  retagQuestion: async (questionId: string, force = false): Promise<QuestionDetail> => {
+    const res = await fetch(`${getApiBase()}/questions/${questionId}/retag?force=${force}`, { method: 'POST' });
+    return handleResponse<QuestionDetail>(res);
+  },
+
+  getTaxonomyV6: async (): Promise<TaxonomyV6> => {
+    const res = await fetch(`${getApiBase()}/taxonomy`, { cache: 'no-store' });
+    return handleResponse<TaxonomyV6>(res);
+  },
+
+  updateDeckMeta: async (documentId: string, changes: Record<string, any>): Promise<DeckMeta> => {
+    const res = await fetch(`${getApiBase()}/documents/${documentId}/deck-meta`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ changes, actor: 'web' }),
+    });
+    return handleResponse<DeckMeta>(res);
+  },
+
+  updateQuestionContent: async (
+    questionId: string,
+    body: { difficulty?: string; visual_clues?: string }
+  ): Promise<HistoricalQuestion> => {
+    const res = await fetch(`${getApiBase()}/questions/${questionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     });
     return handleResponse<HistoricalQuestion>(res);
   },

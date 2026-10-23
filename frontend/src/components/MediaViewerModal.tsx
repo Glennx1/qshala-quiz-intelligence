@@ -70,6 +70,8 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
   const questionImages = rawQImages.filter(x => !isPlaceholderIcon(x));
   const answerImages = (question.answer_images || []).filter(x => !isPlaceholderIcon(x));
   const images = questionImages.concat(answerImages.filter(x => !questionImages.includes(x)));
+  const imageRole = (url: string) => (questionImages.includes(url) ? 'Question image' : 'Answer image');
+  const roleCls = (url: string) => (questionImages.includes(url) ? 'bg-sky-700 text-white' : 'bg-emerald-700 text-white');
   const hasImages = images.length > 0;
 
   const questionAudioList = question.question_audio && question.question_audio.length > 0
@@ -348,6 +350,8 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
                   </>
                 )}
 
+                <span className={`absolute left-2 top-2 rounded-md px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide shadow ${roleCls(images[activeImageIndex])}`}>{imageRole(images[activeImageIndex])}</span>
+
                 {!imageErrors[images[activeImageIndex]] && (
                   <button
                     type="button"
@@ -387,6 +391,7 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
                             onError={() => handleImageError(img)}
                           />
                         )}
+                        <span className={`absolute inset-x-0 bottom-0 text-center text-[8px] font-bold uppercase leading-3 ${roleCls(img)}`}>{questionImages.includes(img) ? 'Question' : 'Answer'}</span>
                       </button>
                     );
                   })}
