@@ -39,6 +39,32 @@ export default function UploadPage() {
 
   const fmtMB = (bytes: number) => (bytes / (1024 * 1024)).toFixed(1);
 
+  // Stopwatch for the whole run: starts when the upload starts, stops when ingestion ends
+  // (COMPLETED = fully tagged and stored, FAILED, or CANCELLED). uploadEndedAt splits it into phases.
+  const [timing, setTiming] = useState<{
+    startedAt: number;
+    uploadEndedAt: number | null;
+    finishedAt: number | null;
+  } | null>(null);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!timing || timing.finishedAt) return;
+    const id = setInterval(() => setTick((t) => t + 1), 500);
+    return () => clearInterval(id);
+  }, [timing]);
+
+  const fmtDuration = (ms: number) => {
+    const total = Math.max(0, Math.round(ms / 1000));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return h > 0
+      ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+      : `${m}:${String(s).padStart(2, '0')}`;
+  };
+  const stopClock = () =>
+    setTiming((t) => (t && !t.finishedAt ? { ...t, finishedAt: Date.now() } : t));
+
   const cleanSteps = [
     'Uploading',
     'Extracting slides',
@@ -81,6 +107,7 @@ export default function UploadPage() {
           clearInterval(interval);
           setActiveDocId(null);
           setCancelling(false);
+          stopClock();
           fetchDocuments();
         }
       } catch (e) {
@@ -96,11 +123,12 @@ export default function UploadPage() {
     abortRef.current = controller;
     uploadIdRef.current = null;
     setCancelling(false);
+    setTiming({ startedAt: Date.now(), uploadEndedAt: null, finishedAt: null });
     setUploading(true);
     const mbSize = fmtMB(file.size);
 
     // The backend runs on Render (not Vercel serverless), so there is no 4.5 MB payload ceiling.
-    // Decks up to 20 MB go up in one request; larger ones are sent as 20 MB slices so a dropped
+    // Decks up to 50 MB go up in one request; larger ones are sent as 50 MB slices so a dropped
     // connection only costs one slice, and Cancel can stop between/inside slices.
     const isLocalhost =
       typeof window !== 'undefined' &&
@@ -160,10 +188,12 @@ export default function UploadPage() {
       }
 
       setUploadDetail(null);
+      setTiming((t) => (t ? { ...t, uploadEndedAt: Date.now() } : t));
       setActiveDocId(doc.id);
       fetchDocuments();
     } catch (err: any) {
       if (isAbortError(err)) {
+        stopClock();
         setPipelineProgress({
           step: 'Upload cancelled. Nothing was kept on the server.',
           percentage: 0,
@@ -174,6 +204,7 @@ export default function UploadPage() {
       } else {
         alert(err.message || 'Upload failed');
         setPipelineProgress(null);
+        setTiming(null);
       }
     } finally {
       setUploading(false);
@@ -200,6 +231,7 @@ export default function UploadPage() {
         if (res.status === 'CANCELLED') {
           // nothing was running server-side, cleanup already done
           setActiveDocId(null);
+          stopClock();
           setPipelineProgress({
             step: 'Upload cancelled. Nothing was kept on the server.',
             percentage: 0,
@@ -394,6 +426,24 @@ export default function UploadPage() {
                   }}
                 />
               </div>
+            </div>
+          )}
+
+          {/* Stopwatch: ticks from upload start until tagging is fully done */}
+          {timing && (
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[12px]">
+              <span className="font-semibold text-slate-800 tabular-nums">
+                {timing.finishedAt
+                  ? pipelineProgress.status === 'COMPLETED'
+                    ? `Finished in ${fmtDuration(timing.finishedAt - timing.startedAt)}`
+                    : `Stopped after ${fmtDuration(timing.finishedAt - timing.startedAt)}`
+                  : `Elapsed ${fmtDuration(Date.now() - timing.startedAt)}`}
+              </span>
+              <span className="text-slate-500 font-normal tabular-nums">
+                {`Upload ${fmtDuration((timing.uploadEndedAt ?? timing.finishedAt ?? Date.now()) - timing.startedAt)}`}
+                {timing.uploadEndedAt &&
+                  ` · Extract, tag & index ${fmtDuration((timing.finishedAt ?? Date.now()) - timing.uploadEndedAt)}`}
+              </span>
             </div>
           )}
 
