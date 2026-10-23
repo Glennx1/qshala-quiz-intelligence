@@ -10,6 +10,35 @@ from backend.app.services.retrieval.hybrid_retriever import HybridRetriever
 
 router = APIRouter(prefix="/questions", tags=["Knowledge Base Questions"])
 
+
+def _enrich(db: Session, responses: List[QuestionResponse]) -> List[QuestionResponse]:
+    """Attach the v6 list-row fields (number, topic paths, Repeated) with three batched queries."""
+    if not responses:
+        return responses
+    from backend.app.models.qshala_tag import QshalaQuestionMetadata
+    from backend.app.services.ingestion.deck_metadata import question_label
+    from backend.app.services.question_meta_service import repeats_for_questions
+    from backend.app.services.tagging.topic_paths import paths_for_questions
+    ids = [r.id for r in responses]
+    metas = {m.question_id: m for m in db.query(QshalaQuestionMetadata)
+             .filter(QshalaQuestionMetadata.question_id.in_(ids)).all()}
+    paths = paths_for_questions(db, ids)
+    reps = repeats_for_questions(db, ids)
+    for r in responses:
+        m = metas.get(r.id)
+        if m is not None:
+            r.question_number = m.question_number
+            r.question_label = question_label(m.question_number, m.round_number, m.question_in_round) or None
+            r.star_marked = bool(m.star_marked)
+        r.topic_paths = paths.get(r.id, [])
+        r.repeated = reps.get(r.id, [])
+        r.repeated_count = len(r.repeated)
+    return responses
+
+
+def _enrich_one(db: Session, response: QuestionResponse) -> QuestionResponse:
+    return _enrich(db, [response])[0]
+
 def to_question_response(q: Question, doc: Optional[Document], slide: Optional[Slide]) -> QuestionResponse:
     dup_text = None
     dup_ans = None
@@ -361,7 +390,7 @@ async def search_questions(
             if r["question"].id not in seen_q_ids:
                 seen_q_ids.add(r["question"].id)
                 output.append(to_question_response(r["question"], r["document"], r["slide"]))
-        return output[:limit_int]
+        return _enrich(db, output[:limit_int])
 
     # Direct query with rich metadata filters
     q_builder = db.query(Question, Document, Slide).\
@@ -405,7 +434,7 @@ async def search_questions(
     output = []
     for q, doc, slide in items:
         output.append(to_question_response(q, doc, slide))
-    return output
+    return _enrich(db, output)
 
 @router.get("/duplicates", response_model=List[QuestionResponse])
 def list_duplicate_candidates(
@@ -423,7 +452,7 @@ def list_duplicate_candidates(
         order_by(desc(Question.duplicate_similarity)).\
         offset(offset).limit(limit).all()
 
-    return [to_question_response(q, doc, slide) for q, doc, slide in items]
+    return _enrich(db, [to_question_response(q, doc, slide) for q, doc, slide in items])
 
 @router.get("/{question_id}", response_model=QuestionResponse)
 def get_question(question_id: str, db: Session = Depends(get_db)):
@@ -436,7 +465,7 @@ def get_question(question_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Question not found")
 
     q, doc, slide = item
-    return to_question_response(q, doc, slide)
+    return _enrich_one(db, to_question_response(q, doc, slide))
 
 @router.post("/{question_id}/resolve-duplicate", response_model=QuestionResponse)
 def resolve_question_duplicate(
@@ -466,11 +495,25 @@ def resolve_question_duplicate(
         if q.duplicate_of_id:
             original = db.query(Question).filter(Question.id == q.duplicate_of_id).first()
             if original:
-                original.occurrence_count = (original.occurrence_count or 1) + 1
+                from backend.app.models.qshala_tag import QshalaQuestionMetadata
+                from backend.app.services.question_meta_service import add_repeat, meta_to_dict
+                dup_meta = db.query(QshalaQuestionMetadata).filter(QshalaQuestionMetadata.question_id == q.id).first()
+                rep = add_repeat(db, original, q.document_id, meta_to_dict(dup_meta), q.source_slide_range,
+                                 match_type="CONFIRMED")
+                if rep is not None:
+                    original.occurrence_count = (original.occurrence_count or 1) + 1
                 prov = list(original.provenance_decks or [])
                 if not any(p.get("document_id") == q.document_id for p in prov):
                     prov.append({"document_id": q.document_id, "slide_id": q.slide_id})
                     original.provenance_decks = prov
+                # The question is stored once: the extra copy goes, and the original carries the Repeated entry.
+                db.delete(q)
+                db.commit()
+                o_item = db.query(Question, Document, Slide).\
+                    outerjoin(Document, Question.document_id == Document.id).\
+                    outerjoin(Slide, Question.slide_id == Slide.id).\
+                    filter(Question.id == original.id).first()
+                return _enrich_one(db, to_question_response(*o_item))
     elif action in ["DISMISS_UNIQUE", "RESOLVE"]:
         q.duplicate_status = "RESOLVED"
     else:
@@ -478,7 +521,7 @@ def resolve_question_duplicate(
 
     db.commit()
     db.refresh(q)
-    return to_question_response(q, doc, slide)
+    return _enrich_one(db, to_question_response(q, doc, slide))
 
 @router.patch("/{question_id}", response_model=QuestionResponse)
 def update_question(
@@ -544,7 +587,7 @@ def update_question(
 
     db.commit()
     db.refresh(q)
-    return to_question_response(q, doc, slide)
+    return _enrich_one(db, to_question_response(q, doc, slide))
 
 @router.post("/{question_id}/tags", response_model=QuestionResponse)
 def add_question_tag(
@@ -572,7 +615,7 @@ def add_question_tag(
         db.commit()
         db.refresh(q)
 
-    return to_question_response(q, doc, slide)
+    return _enrich_one(db, to_question_response(q, doc, slide))
 
 @router.delete("/{question_id}/tags/{tag_name}", response_model=QuestionResponse)
 def delete_question_tag(
@@ -598,5 +641,5 @@ def delete_question_tag(
     q.tags = updated_tags
     db.commit()
     db.refresh(q)
-    return to_question_response(q, doc, slide)
+    return _enrich_one(db, to_question_response(q, doc, slide))
 

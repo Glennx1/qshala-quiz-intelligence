@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from backend.app.config import settings
 from backend.app.database import engine, Base
-from backend.app.routers import documents, questions, quizzes, stats, jobs, sharepoint, qshala_tagging
+from backend.app.routers import documents, questions, quizzes, stats, jobs, sharepoint, qshala_tagging, question_meta
 
 # Register ALL SQLAlchemy models here so Base.metadata.create_all sees them before
 # the first create_all call below. Importing the module is enough; the class
@@ -124,6 +124,7 @@ app.mount("/slides", MultiDirStaticFiles(directory=str(settings.SLIDES_DIR), fal
 app.include_router(stats.router, prefix=settings.API_V1_STR)
 app.include_router(documents.router, prefix=settings.API_V1_STR)
 app.include_router(questions.router, prefix=settings.API_V1_STR)
+app.include_router(question_meta.router, prefix=settings.API_V1_STR)
 app.include_router(quizzes.router, prefix=settings.API_V1_STR)
 app.include_router(jobs.router, prefix=settings.API_V1_STR)
 app.include_router(sharepoint.router, prefix=settings.API_V1_STR)

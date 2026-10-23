@@ -62,6 +62,13 @@ class QuestionResponse(QuestionBase):
     slide_number: Optional[int] = None
     duplicate_of_text: Optional[str] = None
     duplicate_of_answer: Optional[str] = None
+    # v6 tags shown in the list row (the full set is in GET /questions/{id}/detail)
+    question_number: Optional[int] = None
+    question_label: Optional[str] = None
+    star_marked: bool = False
+    topic_paths: List[Dict[str, Any]] = []
+    repeated: List[Dict[str, Any]] = []
+    repeated_count: int = 0
     model_config = ConfigDict(from_attributes=True)
 
 class DuplicateResolveRequest(BaseModel):

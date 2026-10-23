@@ -266,7 +266,9 @@ def update_question_metadata(db: Session, question_id: str, changes: Dict[str, A
         raise LookupError("Question not found")
     meta = db.query(QshalaQuestionMetadata).filter(QshalaQuestionMetadata.question_id == question_id).first()
     if meta is None:
-        meta = ensure_question_metadata(db, q, {}, None, None)
+        doc = db.query(Document).filter(Document.id == q.document_id).first()
+        deck = upsert_deck_metadata(db, doc) if doc else None
+        meta = ensure_question_metadata(db, q, {}, deck, doc)
     manual = set(meta.manual_fields or [])
     for field, raw in (changes or {}).items():
         if field not in QUESTION_EDITABLE:
