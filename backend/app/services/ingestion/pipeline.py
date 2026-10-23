@@ -20,6 +20,7 @@ from backend.app.services.ingestion.question_extractor import QuestionExtractor
 from backend.app.services.ingestion.deck_metadata import annotate_questions
 from backend.app.models.question_meta import QuestionEditHistory
 from backend.app.services.ingestion import progress
+from backend.app.services.ingestion.vision_resize import shrink_for_vision
 from backend.app.services.tagging.qshala_tagger import safe_error
 from backend.app.services.question_meta_service import (
     upsert_deck_metadata, deck_row_to_info, ensure_question_metadata, apply_tag_to_meta,
@@ -31,7 +32,7 @@ from backend.app.services.tagging.difficulty_engine import DifficultyEngine
 
 # Feature toggle: set to False to revert to legacy AutoTagger writing topic tags on upload
 USE_QSHALA_TAGGER: bool = True
-VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "4"))   # parallel image-description calls
+VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "2"))   # parallel image-description calls (lowered: full-res images held per in-flight call add up on 512 MB)
 TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "3"))   # parallel Gemini tagging calls per deck
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
@@ -228,7 +229,11 @@ class IngestionPipeline:
                     if img_bytes:
                         try:
                             mime = "image/png" if ext == ".png" else ("image/jpeg" if ext in [".jpg", ".jpeg"] else "image/webp")
-                            desc = await self.llm_provider.describe_image(img_bytes, mime_type=mime)
+                            # Shrink in memory only -- not touching the stored file -- so a deck
+                            # with many large pictures doesn't hold full-res bytes for every
+                            # concurrent vision call at once.
+                            vision_bytes, mime = await asyncio.to_thread(shrink_for_vision, img_bytes, mime)
+                            desc = await self.llm_provider.describe_image(vision_bytes, mime_type=mime)
                             if desc and desc.strip():
                                 visual_clues_list.append(desc.strip())
                         except Exception as vision_err:
