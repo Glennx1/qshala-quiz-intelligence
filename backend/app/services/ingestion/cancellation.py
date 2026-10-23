@@ -83,6 +83,8 @@ def purge_document(db, document_id: str) -> None:
     storage_path = doc.storage_path if doc else None
     if doc is not None:
         try:
+            from backend.app.services.question_meta_service import remove_repeats_for_document
+            remove_repeats_for_document(db, document_id)  # other questions stop listing this deck as a repeat
             db.delete(doc)  # slides + questions cascade
             db.commit()
         except Exception:

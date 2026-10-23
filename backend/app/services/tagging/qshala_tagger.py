@@ -15,6 +15,7 @@ The tagger uses whichever Gemini model is in settings.QSHALA_TAGGER_MODEL (defau
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -30,15 +31,17 @@ from backend.app.config import settings
 from backend.app.models.qshala_tag import QshalaTag, QshalaTagChange
 from backend.app.services.ai.gemini_provider import GeminiLLMProvider
 from backend.app.services.tagging import qshala_rules
+from backend.app.services.tagging import topic_paths
 
 logger = logging.getLogger(__name__)
 
-TAXONOMY_PATH = Path(__file__).resolve().parent / "qshala_taxonomy_v5_1.json"
-TAXONOMY_VERSION = "v5.1"
+TAXONOMY_PATH = Path(__file__).resolve().parent / "qshala_taxonomy_v6.json"
+TAXONOMY_VERSION = "v6"
 
 ENTITY_TYPES = ["COMPANY", "PERSON", "TERM", "PRODUCT_OR_OBJECT", "BOOK",
                 "ORGANISATION", "POLICY", "NUMBER", "PLACE", "EVENT"]
-GEOGRAPHY = ["IN", "INTL", "MIXED"]
+GEOGRAPHY = ["IN", "INTL", "MIXED"]            # v5.1 and earlier
+GEOGRAPHY_V6 = ["IN", "INTL", "NA"]             # v6: NA = cannot tell / not about a place
 SHELF_LIFE = ["EVERGREEN", "REVIEW_YEARLY", "TIME_SENSITIVE"]
 SENSITIVITY = ["NONE", "POLITICAL", "MATURE_REFERENCE"]
 FIT = ["good", "weak", "none"]
@@ -50,10 +53,13 @@ _TAX_CACHE: Dict[str, Any] = {}
 
 
 def set_taxonomy_version(version: str) -> None:
-    """Dynamically switch taxonomy version (v3, v4, v5, v5.1)."""
+    """Dynamically switch taxonomy version (v3, v4, v5, v5.1, v6)."""
     global TAXONOMY_PATH, TAXONOMY_VERSION
     v_clean = version.strip().lower()
-    if v_clean in ("v5.1", "5.1", "v5_1"):
+    if v_clean in ("v6", "6"):
+        TAXONOMY_PATH = Path(__file__).resolve().parent / "qshala_taxonomy_v6.json"
+        TAXONOMY_VERSION = "v6"
+    elif v_clean in ("v5.1", "5.1", "v5_1"):
         TAXONOMY_PATH = Path(__file__).resolve().parent / "qshala_taxonomy_v5_1.json"
         TAXONOMY_VERSION = "v5.1"
     elif v_clean in ("v5", "5"):
@@ -121,15 +127,60 @@ Subtopics, grouped by topic:
 """
 
 
+SYSTEM_PROMPT_V6_TEMPLATE = """You tag quiz questions for QShala, a quiz company in Bangalore. The questions come from live quiz decks (including the Zerodha Varsity Quiz) covering business, finance, technology, science, history, geography, politics, sports, entertainment and culture, mostly India-focused. Return the fields below for each question.
+
+topics: 1 to 3 entries. Each entry is one subtopic from the list below plus keywords for it. Choose a subtopic by what the question is ABOUT (its subject), not by where it is set or how it is asked. The first entry is the best fit. Add a second or third entry only when the question genuinely sits in more than one area (a cricket league's brand deal fits both Sports Business and Brand Collaborations). When two subtopics fit equally, choose the one a quizmaster would search for first.
+keywords (inside each entry): 3 to 6 search keywords in Title Case, most specific first: named people, companies, products, places, key terms and the answer; then one broader concept. No filler words and nothing generic like "Quiz" or "Question". Do not include facts the question does not support.
+geo_location: the place the question is about, as specific as is useful (a city, state or country, e.g. "Bengaluru, India" or "Japan"). Empty string if it is not about a place.
+india_international: IN if the subject is India-centred, INTL if it is outside India, NA if it cannot be determined or is not about a place.
+relevant_year: the year the question is about or tied to (2016 for demonetisation, 1947 for Independence). Use 0 if it is not tied to a particular year.
+fit: good = a subtopic fits well; weak = the best available fit is imperfect; none = nothing fits.
+search_summary: one sentence of at most 25 words saying what the question is about, naming the key entities and the answer.
+If the question refers to an image or video you cannot see, tag from the text you have and set fit to weak.
+
+Subtopics, grouped by theme:
+"""
+
+
 def _system_prompt() -> str:
+    if TAXONOMY_VERSION == "v6":
+        return SYSTEM_PROMPT_V6_TEMPLATE + _taxonomy_prompt_block()
     return SYSTEM_PROMPT_TEMPLATE + _taxonomy_prompt_block()
+
+
+def _tag_schema_v6() -> Dict[str, Any]:
+    tax = _load_taxonomy()
+    return {
+        "type": "OBJECT",
+        "properties": {
+            "topics": {
+                "type": "ARRAY", "minItems": 1, "maxItems": 3,
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "subtopic_l2": {"type": "STRING", "enum": tax["l2"]},
+                        "keywords": {"type": "ARRAY", "items": {"type": "STRING"}, "minItems": 3, "maxItems": 6},
+                    },
+                    "required": ["subtopic_l2", "keywords"],
+                },
+            },
+            "geo_location": {"type": "STRING"},
+            "india_international": {"type": "STRING", "enum": GEOGRAPHY_V6},
+            "relevant_year": {"type": "INTEGER"},
+            "fit": {"type": "STRING", "enum": FIT},
+            "search_summary": {"type": "STRING"},
+        },
+        "required": ["topics", "geo_location", "india_international", "relevant_year", "fit", "search_summary"],
+    }
 
 
 def _tag_schema() -> Dict[str, Any]:
     """OpenAPI-style schema for Gemini's response_schema. Upper-case types; strict enums.
 
-    We constrain the subtopic to the 41 L2 names so the model can't invent one.
+    We constrain the subtopic to the taxonomy's L2 names so the model can't invent one.
     """
+    if TAXONOMY_VERSION == "v6":
+        return _tag_schema_v6()
     tax = _load_taxonomy()
     return {
         "type": "OBJECT",
@@ -149,7 +200,20 @@ def _tag_schema() -> Dict[str, Any]:
     }
 
 
-def _user_prompt(question_text: str, answer: str, rules: qshala_rules.RuleSignals) -> str:
+def _user_prompt(question_text: str, answer: str, rules: qshala_rules.RuleSignals,
+                 visual_clues: str = "", deck_year: Optional[int] = None) -> str:
+    if TAXONOMY_VERSION == "v6":
+        parts = [f"QUESTION: {question_text}", f"ANSWER: {answer}"]
+        if visual_clues:
+            parts.append(f"VISUAL CLUES (from the question's images): {visual_clues[:600]}")
+        if deck_year:
+            parts.append(f"This question was used in a quiz held in {deck_year}. If it refers to a recent event, "
+                         f"the relevant year is probably close to that.")
+        if rules.brand_hints_l1:
+            parts.append(f"Rule hint: likely theme(s) {', '.join(rules.brand_hints_l1)}. Confirm or override from the question.")
+        if rules.image_dependent:
+            parts.append("Rule hint: this question may depend on an image that is not shown. Tag from the text and set fit=weak if unsure.")
+        return "\n".join(parts)
     hints: List[str] = []
     if rules.brand_hints_l1:
         hints.append(f"Rule hints — likely topic(s): {', '.join(rules.brand_hints_l1)}. Confirm or override from the question itself.")
@@ -168,10 +232,11 @@ def _canonical_hash(question_text: str, answer: str) -> str:
 
 async def _call_llm(provider: GeminiLLMProvider, model: str, question_text: str,
                     answer: str, rules: qshala_rules.RuleSignals,
-                    thinking_level: str = "low") -> Tuple[Dict[str, Any], Dict[str, int], int]:
+                    thinking_level: str = "low", visual_clues: str = "",
+                    deck_year: Optional[int] = None) -> Tuple[Dict[str, Any], Dict[str, int], int]:
     """One Gemini call. Returns (parsed_json, usage_dict, latency_ms)."""
     system = _system_prompt()
-    user = _user_prompt(question_text, answer, rules)
+    user = _user_prompt(question_text, answer, rules, visual_clues=visual_clues, deck_year=deck_year)
     schema = _tag_schema()
     t0 = time.perf_counter()
     data, usage = await provider.generate_json_schema(
@@ -203,7 +268,8 @@ def _route(rules: qshala_rules.RuleSignals, llm: Dict[str, Any]) -> Tuple[str, f
         return ("draft", 0.50, f"model marked fit={fit}")
 
     # Geography disagreement is the strongest cheap signal we have.
-    if rules.india_international and llm.get("india_international") and rules.india_international != llm["india_international"]:
+    if (rules.india_international and llm.get("india_international") not in (None, "NA")
+            and rules.india_international != llm["india_international"]):
         reasons.append(f"geography mismatch (rule {rules.india_international} vs LLM {llm['india_international']})")
         return ("draft", 0.60, "; ".join(reasons))
 
@@ -219,6 +285,24 @@ def _route(rules: qshala_rules.RuleSignals, llm: Dict[str, Any]) -> Tuple[str, f
 
     # Rules fired but L1 doesn't match any brand-hint L1 — not fatal, but worth a look.
     return ("draft", 0.75, f"brand hints suggested {sorted(rule_l1s)}; LLM chose {llm_l1}")
+
+
+# ---------------------------------------------------------------------- v6 helpers
+
+def _v6_paths(llm_out: Dict[str, Any]) -> List[Dict[str, Any]]:
+    raw = []
+    for t in llm_out.get("topics") or []:
+        if isinstance(t, dict):
+            raw.append({"l1": None, "l2": t.get("subtopic_l2"), "keywords": t.get("keywords")})
+    return topic_paths.normalise_paths(raw)
+
+
+def _clean_year(v: Any) -> Optional[int]:
+    try:
+        y = int(v)
+    except (TypeError, ValueError):
+        return None
+    return y if 1000 <= y <= datetime.now(timezone.utc).year + 2 else None
 
 
 # ---------------------------------------------------------------------- public API
@@ -243,10 +327,17 @@ class QshalaTagger:
         answer: str,
         actor: str = "system",
         commit: bool = True,
+        visual_clues: str = "",
+        deck_year: Optional[int] = None,
+        question: Optional[Any] = None,
     ) -> QshalaTag:
-        """Full pipeline for one question. Returns the inserted QshalaTag row (uncommitted if commit=False)."""
+        """Full pipeline for one question. Returns the inserted QshalaTag row (uncommitted if commit=False).
+
+        For taxonomy v6 the topic paths are written to `question_topic_paths` (and mirrored onto `question`
+        when it is passed), unless a person has already set paths for this question.
+        """
         # Step 1: rules.
-        rules = qshala_rules.extract(question_text, answer)
+        rules = qshala_rules.extract(question_text, answer, taxonomy_version=TAXONOMY_VERSION)
 
         # Step 2: duplicate check against previously confirmed tags.
         canon = _canonical_hash(question_text, answer)
@@ -262,13 +353,24 @@ class QshalaTagger:
             logger.info("qshala_tagger: skipping re-tag; HUMAN-confirmed row exists for %s", question_id)
             return existing
 
-        # Step 3: LLM call.
-        try:
-            llm_out, usage, latency_ms = await _call_llm(self.provider, self.model, question_text, answer, rules,
-                                                           thinking_level=self.thinking_level)
-        except Exception as e:
-            logger.exception("LLM call failed for %s: %s", question_id, e)
-            raise
+        # Step 3: LLM call (two retries with a short back-off for rate limits and network blips).
+        llm_out: Dict[str, Any] = {}
+        for attempt in range(3):
+            try:
+                llm_out, usage, latency_ms = await _call_llm(
+                    self.provider, self.model, question_text, answer, rules,
+                    thinking_level=self.thinking_level, visual_clues=visual_clues, deck_year=deck_year)
+                break
+            except Exception as e:
+                if attempt == 2 or isinstance(e, ValueError):
+                    logger.error("LLM call failed for %s: %s", question_id, e)
+                    raise
+                await asyncio.sleep(1.5 * (attempt + 1))
+
+        if TAXONOMY_VERSION == "v6":
+            return self._finish_v6(db, question_id=question_id, rules=rules, llm_out=llm_out, usage=usage,
+                                   latency_ms=latency_ms, actor=actor, commit=commit, existing=existing,
+                                   question=question)
 
         # Step 4: route.
         status, confidence, reason = _route(rules, llm_out)
@@ -318,6 +420,47 @@ class QshalaTagger:
                 change_type="PROMOTE", actor=actor, reason=reason,
             ))
 
+        if commit:
+            db.commit()
+            db.refresh(row)
+        return row
+
+    def _finish_v6(self, db: Session, *, question_id: str, rules: qshala_rules.RuleSignals,
+                   llm_out: Dict[str, Any], usage: Dict[str, int], latency_ms: int, actor: str,
+                   commit: bool, existing: Optional[QshalaTag], question: Optional[Any]) -> QshalaTag:
+        paths = _v6_paths(llm_out)
+        first = paths[0] if paths else {}
+        routed = {"fit": llm_out.get("fit", "weak"), "india_international": llm_out.get("india_international"),
+                  "subtopic_l2": first.get("l2")}
+        status, confidence, reason = _route(rules, routed)
+        if not paths:
+            status, confidence, reason = "draft", 0.30, "model returned no usable topic"
+        geo = llm_out.get("india_international")
+        row = QshalaTag(
+            question_id=question_id, taxonomy_version=TAXONOMY_VERSION, model_version=self.model, source="LLM",
+            topic_l1=first.get("l1"), subtopic_l2=first.get("l2"),
+            keywords_l3=first.get("keywords", []),
+            secondary_l2=[p["l2"] for p in paths[1:] if p.get("l2")],
+            city_name=rules.city_name,
+            geo_region=(llm_out.get("geo_location") or "").strip() or rules.geo_region,
+            india_international=geo if geo in GEOGRAPHY_V6 else "NA",
+            relevant_year=_clean_year(llm_out.get("relevant_year")),
+            fit=llm_out.get("fit"), search_summary=llm_out.get("search_summary"),
+            confidence=confidence, status=status,
+            tokens_in=usage.get("in"), tokens_out=usage.get("out"), thinking_tokens=usage.get("think"),
+            latency_ms=latency_ms, verification_notes=f"auto-routed: {reason}",
+        )
+        db.add(row)
+        db.flush()
+        if status == "confirmed" and existing:
+            existing.status = "superseded"
+            db.add(QshalaTagChange(question_id=question_id, from_tag_id=existing.id, to_tag_id=row.id,
+                                   change_type="SUPERSEDE", actor=actor, reason=reason))
+        if status == "confirmed":
+            db.add(QshalaTagChange(question_id=question_id, from_tag_id=None, to_tag_id=row.id,
+                                   change_type="PROMOTE", actor=actor, reason=reason))
+        if paths and not topic_paths.has_human_paths(db, question_id):
+            topic_paths.replace_paths(db, question_id, paths, source="LLM", actor=actor, question=question)
         if commit:
             db.commit()
             db.refresh(row)

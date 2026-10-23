@@ -75,14 +75,14 @@ class Deduplicator:
         tier1_passed: List[Dict[str, Any]] = []
         tier1_passed_embeddings: List[List[float]] = []
         exact_duplicates: List[Dict[str, Any]] = []
-        provenance_updates: List[Tuple[Question, Optional[str]]] = []
+        provenance_updates: List[Tuple[Question, Optional[str], Dict[str, Any]]] = []
         seen_in_batch_hashes: Set[str] = set()
 
         for i, c in enumerate(candidates):
             chash = c["content_hash"]
             if chash in existing_hash_map:
                 existing = existing_hash_map[chash]
-                provenance_updates.append((existing, c.get("slide_id")))
+                provenance_updates.append((existing, c.get("slide_id"), c))
                 exact_duplicates.append({
                     "candidate_question": c["question_text"],
                     "matched_id": existing.id,
@@ -205,19 +205,29 @@ class Deduplicator:
     def _batch_commit_provenance(
         self,
         db: Session,
-        updates: List[Tuple[Question, Optional[str]]],
+        updates: List[Tuple[Question, Optional[str], Dict[str, Any]]],
         doc_id: str
     ):
-        """Batch records duplicate occurrences and provenance links."""
+        """Records each exact repeat on the question we already hold.
+
+        Instead of storing the question again, the original gets a Repeated entry saying which quiz it was
+        found in again and at which question number, plus the provenance link and occurrence count.
+        """
         if not updates:
             return
         try:
-            for existing, slide_id in updates:
+            from backend.app.services.question_meta_service import add_repeat
+            for existing, slide_id, cand in updates:
+                if existing.document_id == doc_id:
+                    continue  # the same deck cannot repeat a question it already contributed
+                rep = add_repeat(db, existing, doc_id, cand.get("_meta"), cand.get("source_slide_range"),
+                                 match_type="EXACT")
                 provenance = list(existing.provenance_decks or [])
                 if not any(p.get("document_id") == doc_id for p in provenance):
                     provenance.append({"document_id": doc_id, "slide_id": slide_id})
                     existing.provenance_decks = provenance
-                existing.occurrence_count = (existing.occurrence_count or 1) + 1
+                if rep is not None:
+                    existing.occurrence_count = (existing.occurrence_count or 1) + 1
             db.commit()
         except Exception as e:
             logger.warning(f"Failed to batch record duplicate provenance: {e}")

@@ -17,12 +17,18 @@ from backend.app.services.ingestion.cancellation import (
 )
 from backend.app.services.ingestion.slide_classifier import SlideClassifier
 from backend.app.services.ingestion.question_extractor import QuestionExtractor
+from backend.app.services.ingestion.deck_metadata import annotate_questions
+from backend.app.services.question_meta_service import (
+    upsert_deck_metadata, deck_row_to_info, ensure_question_metadata, apply_tag_to_meta,
+)
+from backend.app.services.tagging import topic_paths
 from backend.app.services.tagging.auto_tagger import AutoTagger  # Kept for backward compatibility
 from backend.app.services.tagging.qshala_tagger import QshalaTagger
 from backend.app.services.tagging.difficulty_engine import DifficultyEngine
 
 # Feature toggle: set to False to revert to legacy AutoTagger writing topic tags on upload
 USE_QSHALA_TAGGER: bool = True
+TAG_CONCURRENCY: int = 6   # parallel Gemini tagging calls per deck
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
 
@@ -140,6 +146,11 @@ class IngestionPipeline:
                 doc_title=doc.title,
                 doc_year=doc.year
             )
+
+            # Deck details from the file name, then the no-AI per-question fields
+            # (question number, format, star, answer type, language).
+            deck_row = upsert_deck_metadata(db, doc)
+            annotate_questions(raw_questions, classified_slides, deck_row_to_info(deck_row))
 
             # Step 5: Multi-Topic Auto-Tagging & Pedagogical Difficulty Scoring
             INGESTION_STATUS_REGISTRY[document_id].update({
@@ -279,7 +290,7 @@ class IngestionPipeline:
                 q["_emb_idx"] = idx
 
             texts_to_embed = [
-                f"{q['primary_topic']} {' '.join(q.get('topics') or [])} {q['question_text']} {q['answer']} {q.get('visual_clues') or ''} {q.get('explanation') or ''}".strip()
+                f"{q.get('primary_topic') or ''} {' '.join(q.get('topics') or [])} {q['question_text']} {q['answer']} {q.get('visual_clues') or ''} {q.get('explanation') or ''}".strip()
                 for q in enriched_questions
             ]
 
@@ -329,7 +340,7 @@ class IngestionPipeline:
                     answer=q_data["answer"],
                     options=q_data.get("options"),
                     explanation=q_data.get("explanation"),
-                    topic=q_data["primary_topic"],
+                    topic=q_data["primary_topic"] or topic_paths.UNCATEGORISED,
                     subtopic=q_data.get("subtopic"),
                     topics=q_data.get("topics", []),
                     tags=q_data.get("tags", []),
@@ -369,26 +380,50 @@ class IngestionPipeline:
                 db.add(q_obj)
                 question_models.append(q_obj)
 
-            # Auto-tag newly ingested questions with QshalaTagger (v5.1 multi-tag)
-            if USE_QSHALA_TAGGER:
-                for q_m in question_models:
-                    try:
-                        q_tag = await self.qshala_tagger.tag(
-                            db=db,
-                            question_id=q_m.id,
-                            question_text=q_m.question_text,
-                            answer=q_m.answer,
-                            actor="deck_upload",
-                            commit=False
-                        )
-                        if q_tag and q_tag.topic_l1:
-                            q_m.topic = q_tag.topic_l1
-                            q_m.subtopic = q_tag.subtopic_l2
-                            q_m.topics = [q_tag.topic_l1]
-                        if q_tag and q_tag.keywords_l3:
-                            q_m.tags = q_tag.keywords_l3
-                    except Exception as q_tag_err:
-                        logger.warning(f"QshalaTagger failed during ingestion for question {q_m.id}: {q_tag_err}")
+            # Assign question ids now: the metadata rows and the tagger both key on questions.id.
+            db.flush()
+
+            for q_m, q_data in zip(question_models, unique_candidates):
+                ensure_question_metadata(db, q_m, q_data.get("_meta"), deck_row, doc)
+
+            # Auto-tag newly ingested questions with the QShala tagger (v6: topic paths, geography, year).
+            if USE_QSHALA_TAGGER and question_models:
+                sem = asyncio.Semaphore(TAG_CONCURRENCY)
+                done = {"n": 0}
+                total = len(question_models)
+
+                async def _tag_one(q_m):
+                    async with sem:
+                        raise_if_cancelled(document_id)
+                        try:
+                            q_tag = await self.qshala_tagger.tag(
+                                db=db,
+                                question_id=q_m.id,
+                                question_text=q_m.question_text,
+                                answer=q_m.answer,
+                                actor="deck_upload",
+                                commit=False,
+                                visual_clues=q_m.visual_clues or "",
+                                deck_year=deck_row.deck_year or doc.year,
+                                question=q_m,
+                            )
+                            apply_tag_to_meta(db, q_m.id, q_tag)
+                        except IngestionCancelled:
+                            raise
+                        except Exception as q_tag_err:
+                            # The question is still stored (as "Uncategorised"); a re-tag can fill it in later.
+                            logger.warning(f"QshalaTagger failed during ingestion for question {q_m.id}: {q_tag_err}")
+                        finally:
+                            done["n"] += 1
+                            INGESTION_STATUS_REGISTRY[document_id]["current_step"] = (
+                                f"8. Tagging questions ({done['n']}/{total})")
+
+                results = await asyncio.gather(*[_tag_one(m) for m in question_models], return_exceptions=True)
+                for r in results:
+                    if isinstance(r, IngestionCancelled):
+                        raise r
+                    if isinstance(r, BaseException):
+                        logger.warning(f"Tagging task error: {r}")
 
             doc.question_count = len(question_models)
             doc.processing_status = "COMPLETED"

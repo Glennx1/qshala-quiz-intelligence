@@ -15,9 +15,9 @@ def test_get_taxonomy_endpoint(client):
     res = client.get("/api/v1/qshala/taxonomy")
     assert res.status_code == 200
     data = res.json()
-    assert data["version"] == "v5.1"
-    assert len(data["domains"]) == 8
-    assert len(data["l2_descriptions"]) == 78
+    assert data["version"] == "v6"
+    assert len(data["domains"]) == 11
+    assert len(data["l2_descriptions"]) == 143
 
 
 def test_review_queue_endpoint(client):

@@ -378,6 +378,8 @@ def delete_document(document_id: str, db: Session = Depends(get_db)):
         except Exception:
             pass
 
+    from backend.app.services.question_meta_service import remove_repeats_for_document
+    remove_repeats_for_document(db, document_id)  # other questions stop listing this deck as a repeat
     db.delete(doc)
     db.commit()
     return {"message": "Document deleted successfully"}

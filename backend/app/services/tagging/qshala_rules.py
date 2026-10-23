@@ -66,6 +66,19 @@ BRAND_TO_L1: Dict[str, str] = {
     "imf": "Economy & Policy", "world bank": "Economy & Policy",
 }
 
+# Same nudges for the v6 theme names (Finance, Business, Economy, Technology, Sports, Entertainment...).
+BRAND_TO_L1_V6: Dict[str, str] = {
+    "zerodha": "Finance", "groww": "Finance", "upstox": "Finance", "nse": "Finance", "bse": "Finance",
+    "sebi": "Finance", "hdfc bank": "Finance", "sbi": "Finance", "icici bank": "Finance", "axis bank": "Finance",
+    "kotak": "Finance", "karnataka bank": "Finance", "upi": "Finance", "npci": "Finance", "paytm": "Finance",
+    "phonepe": "Finance", "gpay": "Finance", "google pay": "Finance", "lic": "Finance", "rbi": "Finance",
+    "openai": "Technology", "anthropic": "Technology", "nvidia": "Technology", "google": "Technology",
+    "microsoft": "Technology", "apple": "Technology", "meta": "Technology", "facebook": "Technology",
+    "ipl": "Sports", "bcci": "Sports", "fifa": "Sports",
+    "netflix": "Entertainment", "disney": "Entertainment", "jiocinema": "Entertainment",
+    "opec": "Economy", "wto": "Economy", "imf": "Economy", "world bank": "Economy",
+}
+
 # Patterns that mark a question as TIME_SENSITIVE (dated reference).
 YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 CURRENT_YEAR_WINDOW = 3                                      # Any year within 3y of today → TIME_SENSITIVE.
@@ -114,7 +127,8 @@ def _find_city(haystack_lc: str) -> Optional[tuple[str, str, str]]:
     return None
 
 
-def extract(question_text: str, answer: str = "", explanation: str = "") -> RuleSignals:
+def extract(question_text: str, answer: str = "", explanation: str = "",
+            taxonomy_version: Optional[str] = None) -> RuleSignals:
     """Pull every deterministic signal we can from the raw text.
 
     Nothing here will contradict the LLM later unless the two disagree on a rule hit —
@@ -131,7 +145,8 @@ def extract(question_text: str, answer: str = "", explanation: str = "") -> Rule
 
     # Brand-to-L1 nudges.
     seen_l1: List[str] = []
-    for brand, l1 in BRAND_TO_L1.items():
+    brand_map = BRAND_TO_L1_V6 if (taxonomy_version or "").lower() == "v6" else BRAND_TO_L1
+    for brand, l1 in brand_map.items():
         if re.search(rf"\b{re.escape(brand)}\b", lc) and l1 not in seen_l1:
             seen_l1.append(l1)
     out.brand_hints_l1 = seen_l1
