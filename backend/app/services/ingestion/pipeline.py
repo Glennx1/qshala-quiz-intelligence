@@ -2,17 +2,27 @@ import os
 import asyncio
 import logging
 import gc
-import psutil
 from pathlib import Path
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 
 def _log_mem(stage: str):
-    rss_mb = psutil.Process().memory_info().rss / (1024 * 1024)
+    rss_mb = 0.0
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    rss_mb = float(line.split()[1]) / 1024.0
+                    break
+    except Exception:
+        try:
+            import resource
+            rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+        except Exception:
+            pass
     counts = gc.get_count()
     msg = f"[MEM] {stage:45s} | RSS: {rss_mb:6.1f} MB | GC: {counts}"
     logging.getLogger(__name__).info(msg)
-    print(msg, flush=True)
 from backend.app.models.document import Document, Slide
 from backend.app.models.question import Question
 from backend.app.config import settings
