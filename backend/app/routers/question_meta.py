@@ -13,6 +13,7 @@
   GET    /documents/{id}/deck-meta         deck details
   PUT    /documents/{id}/deck-meta         edit deck details (flows down to questions not hand-edited)
 """
+import asyncio
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -27,7 +28,7 @@ from backend.app.models.question import Question
 from backend.app.models.question_meta import (
     DeckMetadata, QuestionEditHistory, QuestionRepeat, QuestionTopicPath,
 )
-from backend.app.services import question_meta_service as svc
+from backend.app.services import backfill_v6, question_meta_service as svc
 from backend.app.services.ingestion.deck_metadata import QUESTION_FORMATS
 from backend.app.services.tagging import topic_paths
 
@@ -269,3 +270,28 @@ def put_deck_meta(document_id: str, body: DeckUpdate, db: Session = Depends(get_
         raise HTTPException(status_code=422, detail=str(e))
     db.commit()
     return out
+
+
+# ---- one-off upgrade of questions stored before v6 ------------------------------------------------
+_backfill_task: Dict[str, Any] = {"task": None}
+
+
+@router.post("/admin/backfill-v6")
+async def start_backfill(retag: bool = Query(True)):
+    """Fill deck details, numbering and Repeated entries for old questions, then re-tag in the background."""
+    t = _backfill_task["task"]
+    if t is not None and not t.done():
+        raise HTTPException(status_code=409, detail="A backfill is already running")
+    _backfill_task["task"] = asyncio.create_task(backfill_v6.run_all(retag=retag))
+    return {"status": "started", "retag": retag}
+
+
+@router.get("/admin/backfill-v6/status")
+def backfill_status():
+    return dict(backfill_v6.STATUS)
+
+
+@router.post("/admin/backfill-v6/cancel")
+def cancel_backfill():
+    backfill_v6.request_cancel()
+    return {"status": "cancel requested"}
