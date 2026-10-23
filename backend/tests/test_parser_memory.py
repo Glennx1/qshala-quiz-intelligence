@@ -57,3 +57,24 @@ def test_images_found_without_holding_bytes_and_r2_uploads_finish(tmp_path, monk
     finally:
         import shutil
         shutil.rmtree(settings.SLIDES_DIR / doc, ignore_errors=True)
+
+
+def test_status_endpoint_returns_live_detail_events_and_memory():
+    from fastapi.testclient import TestClient
+    from backend.app.main import app
+    from backend.app.services.ingestion.pipeline import INGESTION_STATUS_REGISTRY
+    from backend.app.services.ingestion import progress
+
+    doc = f"live-{uuid.uuid4().hex[:8]}"
+    reg = {"document_id": doc, "status": "PROCESSING", "progress_percentage": 30, "current_step": "2. Processing slides",
+           "slides_processed": 0, "questions_extracted": 0, "error": None}
+    INGESTION_STATUS_REGISTRY[doc] = reg
+    try:
+        progress.event(reg, "Opening the deck (250 MB)")
+        progress.update(reg, detail="Reading slide 5 of 120", pct=31)
+        body = TestClient(app).get(f"/api/v1/documents/{doc}/status").json()
+        assert body["detail"] == "Reading slide 5 of 120" and body["progress_percentage"] == 31
+        assert body["events"][0]["msg"].startswith("Opening the deck")
+        assert "memory_mb" in body and "peak_memory_mb" in body
+    finally:
+        INGESTION_STATUS_REGISTRY.pop(doc, None)

@@ -40,6 +40,7 @@ class PPTXParser:
         self.write_to_disk = write_to_disk
         # Optional zero-arg callable; when it returns True parsing aborts (user cancelled).
         self.should_cancel = None
+        self.on_progress = None   # optional callable(detail, pct=None) for live status
         # Media uploads to R2 run in a small thread pool (one slow network call per image used to be serial).
         self._executor: Optional[ThreadPoolExecutor] = None
         self._pending: List[Any] = []
@@ -110,7 +111,13 @@ class PPTXParser:
 
     def _finish_uploads(self) -> None:
         failed = 0
-        for name, fut in self._pending:
+        total = len(self._pending)
+        for i, (name, fut) in enumerate(self._pending, start=1):
+            if self.on_progress is not None:
+                try:
+                    self.on_progress(f"Saving pictures to storage ({i}/{total})")
+                except Exception:
+                    pass
             try:
                 fut.result()
             except Exception as e:
@@ -254,7 +261,14 @@ class PPTXParser:
         slides_data = []
         zip_media = self.extract_media_from_zip()
 
+        total_slides = len(prs.slides)
         for slide_idx, slide in enumerate(prs.slides, start=1):
+            if self.on_progress is not None:
+                try:
+                    self.on_progress(f"Reading slide {slide_idx} of {total_slides}, saving pictures and media",
+                                     20 + 24.0 * slide_idx / max(total_slides, 1))
+                except Exception:
+                    pass
             if self.should_cancel is not None and self.should_cancel():
                 from backend.app.services.ingestion.cancellation import IngestionCancelled
                 raise IngestionCancelled(self.document_id)

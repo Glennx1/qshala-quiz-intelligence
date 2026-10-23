@@ -28,7 +28,12 @@ export default function UploadPage() {
     slides: number;
     questions: number;
     status: string;
+    detail?: string | null;
+    events?: { ts: number; msg: string }[];
+    memory?: { cur?: number | null; peak?: number | null; limit?: number | null };
+    error?: string | null;
   } | null>(null);
+  const [showLog, setShowLog] = useState(false);
   const [selectedSlide, setSelectedSlide] = useState<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Live upload numbers (slice i of N, MB sent) and the handles needed to cancel for real
@@ -101,6 +106,10 @@ export default function UploadPage() {
           slides: status.slides_processed,
           questions: status.questions_extracted,
           status: status.status,
+          detail: status.detail,
+          events: status.events || [],
+          memory: { cur: status.memory_mb, peak: status.peak_memory_mb, limit: status.memory_limit_mb },
+          error: status.error,
         });
 
         if (status.status === 'COMPLETED' || status.status === 'FAILED' || status.status === 'CANCELLED') {
@@ -444,6 +453,46 @@ export default function UploadPage() {
                 {timing.uploadEndedAt &&
                   ` · Extract, tag & index ${fmtDuration((timing.finishedAt ?? Date.now()) - timing.uploadEndedAt)}`}
               </span>
+            </div>
+          )}
+
+          {/* What the server is doing right now, its memory, and a short activity log */}
+          {pipelineProgress.status === 'PROCESSING' && (pipelineProgress.detail || (pipelineProgress.events || []).length > 0) && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 space-y-2">
+              <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
+                <p className="text-[12.5px] font-semibold text-slate-800 leading-snug">
+                  {pipelineProgress.detail || pipelineProgress.step}
+                </p>
+                {pipelineProgress.memory?.cur != null && (() => {
+                  const cur = pipelineProgress.memory!.cur as number;
+                  const limit = pipelineProgress.memory!.limit || 0;
+                  const ratio = limit ? cur / limit : 0;
+                  const cls = ratio > 0.92 ? 'bg-red-100 text-red-700' : ratio > 0.8 ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-700';
+                  return (
+                    <span className={`rounded px-2 py-0.5 text-[11px] font-semibold tabular-nums ${cls}`} title="Memory used by the server process. If this reaches the limit the server restarts and the upload is lost.">
+                      Server memory {Math.round(cur)} MB{limit ? ` of ${Math.round(limit)} MB` : ''}
+                      {pipelineProgress.memory?.peak != null && ` · peak ${Math.round(pipelineProgress.memory.peak as number)} MB`}
+                    </span>
+                  );
+                })()}
+              </div>
+              {(pipelineProgress.events || []).length > 0 && (
+                <div>
+                  <button type="button" onClick={() => setShowLog((v) => !v)} className="text-[11.5px] font-semibold text-blue-600 hover:text-blue-700 cursor-pointer">
+                    {showLog ? 'Hide activity log' : `Show activity log (${(pipelineProgress.events || []).length})`}
+                  </button>
+                  {showLog && (
+                    <ul className="mt-1.5 max-h-44 space-y-0.5 overflow-y-auto font-mono text-[11px] text-slate-600">
+                      {[...(pipelineProgress.events || [])].reverse().map((e, i) => (
+                        <li key={i} className="flex gap-2">
+                          <span className="shrink-0 text-slate-400 tabular-nums">{new Date(e.ts * 1000).toLocaleTimeString()}</span>
+                          <span className="break-words">{e.msg}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

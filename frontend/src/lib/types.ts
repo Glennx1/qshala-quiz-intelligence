@@ -415,6 +415,11 @@ export interface IngestionStatus {
   slides_processed: number;
   questions_extracted: number;
   error?: string | null;
+  detail?: string | null;
+  events?: { ts: number; msg: string }[] | null;
+  memory_mb?: number | null;
+  peak_memory_mb?: number | null;
+  memory_limit_mb?: number | null;
 }
 
 // ---------------------------------------------------------------- QShala tagging

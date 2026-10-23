@@ -19,6 +19,7 @@ from backend.app.services.ingestion.slide_classifier import SlideClassifier
 from backend.app.services.ingestion.question_extractor import QuestionExtractor
 from backend.app.services.ingestion.deck_metadata import annotate_questions
 from backend.app.models.question_meta import QuestionEditHistory
+from backend.app.services.ingestion import progress
 from backend.app.services.tagging.qshala_tagger import safe_error
 from backend.app.services.question_meta_service import (
     upsert_deck_metadata, deck_row_to_info, ensure_question_metadata, apply_tag_to_meta,
@@ -60,8 +61,11 @@ class IngestionPipeline:
             "current_step": "1. Extracting content from presentation",
             "slides_processed": 0,
             "questions_extracted": 0,
-            "error": None
+            "error": None,
+            "detail": "Upload received. Starting to process the deck.",
+            "events": [],
         }
+        progress.event(INGESTION_STATUS_REGISTRY[document_id], "Upload received, starting to process the deck")
 
         own_session = False
         db = self._external_db
@@ -91,6 +95,13 @@ class IngestionPipeline:
             if file_ext in [".pptx", ".ppt"]:
                 parser = PPTXParser(doc.storage_path, doc.id)
                 parser.should_cancel = lambda: doc_cancel_requested(document_id)
+                parser.on_progress = lambda detail, pct=None: progress.update(
+                    INGESTION_STATUS_REGISTRY[document_id], detail=detail, pct=pct)
+                try:
+                    _mb = os.path.getsize(doc.storage_path) / 1048576.0
+                    progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Opening the deck ({_mb:.0f} MB). Large decks take a while to load.")
+                except Exception:
+                    pass
                 # Parse in a worker thread: it is blocking, and on a big deck it would otherwise
                 # freeze the event loop so a Cancel request couldn't even be received.
                 raw_slides = await asyncio.to_thread(parser.parse)
@@ -101,6 +112,7 @@ class IngestionPipeline:
                 raise ValueError(f"Unsupported file format: {file_ext}")
 
             raise_if_cancelled(document_id)
+            progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Read {len(raw_slides)} slides and saved their pictures")
 
             # Classify each slide using 2-pass contextual deck classifier
             classified_slides = []
@@ -126,6 +138,13 @@ class IngestionPipeline:
                 slide_models.append(slide_obj)
 
             db.flush()  # Assign slide IDs
+            _kinds: Dict[str, int] = {}
+            for _t in deck_types:
+                _kinds[_t] = _kinds.get(_t, 0) + 1
+            _other = len(deck_types) - _kinds.get("QUESTION", 0) - _kinds.get("ANSWER", 0)
+            progress.event(INGESTION_STATUS_REGISTRY[document_id],
+                           f"Sorted slides: {_kinds.get('QUESTION', 0)} question, {_kinds.get('ANSWER', 0)} answer, "
+                           f"{_other} other (titles, rounds, scoreboards: not sent to the AI)")
             doc.slide_count = len(slide_models)
             
             INGESTION_STATUS_REGISTRY[document_id].update({
@@ -149,6 +168,8 @@ class IngestionPipeline:
                 doc_title=doc.title,
                 doc_year=doc.year
             )
+
+            progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Found {len(raw_questions)} questions")
 
             # Deck details from the file name, then the no-AI per-question fields
             # (question number, format, star, answer type, language).
@@ -218,13 +239,22 @@ class IngestionPipeline:
                 return visual_clues_str
 
             vision_sem = asyncio.Semaphore(VISION_CONCURRENCY)
+            _img_total = sum(1 for _q in raw_questions if (_q.get("question_images") or _q.get("image_refs")))
+            _img_done = {"n": 0}
 
             async def _describe_guarded(q):
                 async with vision_sem:
                     raise_if_cancelled(document_id)
-                    return await _describe_images(q)
+                    out = await _describe_images(q)
+                    if q.get("question_images") or q.get("image_refs"):
+                        _img_done["n"] += 1
+                        progress.update(INGESTION_STATUS_REGISTRY[document_id],
+                                        detail=f"Describing question images with AI ({_img_done['n']}/{_img_total})")
+                    return out
 
             INGESTION_STATUS_REGISTRY[document_id]["current_step"] = "5. Reading question images"
+            if _img_total:
+                progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Describing images for {_img_total} questions with AI")
             await asyncio.gather(*[_describe_guarded(q) for q in raw_questions])
 
             enriched_questions = []
@@ -431,6 +461,9 @@ class IngestionPipeline:
                             # The question is still stored (as "Uncategorised"); a re-tag can fill it in later.
                             logger.warning(f"QshalaTagger failed during ingestion for question {q_m.id}: {safe_error(q_tag_err)}")
                             done["failed"] += 1
+                            if done["failed"] <= 3:
+                                progress.event(INGESTION_STATUS_REGISTRY[document_id],
+                                               f"AI tagging error: {safe_error(q_tag_err)[:160]}")
                             done["first_error"] = done["first_error"] or safe_error(q_tag_err)[:300]
                             db.add(QuestionEditHistory(question_id=q_m.id, field="tagging", old_value=None,
                                                        new_value=f"Tagging failed: {safe_error(q_tag_err)[:300]}",
@@ -439,6 +472,10 @@ class IngestionPipeline:
                             done["n"] += 1
                             INGESTION_STATUS_REGISTRY[document_id]["current_step"] = (
                                 f"8. Tagging questions ({done['n']}/{total})")
+                            progress.update(INGESTION_STATUS_REGISTRY[document_id],
+                                            detail=f"AI tagging: {done['n']} of {total} questions done"
+                                                   + (f" ({done['failed']} failed)" if done["failed"] else "")
+                                                   + ". Calls are spaced to stay inside the AI rate limit.")
 
                 results = await asyncio.gather(*[_tag_one(m) for m in question_models], return_exceptions=True)
                 for r in results:
@@ -451,6 +488,7 @@ class IngestionPipeline:
             doc.processing_status = "COMPLETED"
             db.commit()
 
+            progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Saved {len(question_models)} questions", detail="Finishing up")
             _tag_note = ""
             if USE_QSHALA_TAGGER and question_models and done["failed"]:
                 _tag_note = f" (AI tagging failed for {done['failed']} of {len(question_models)}: {done['first_error']})"

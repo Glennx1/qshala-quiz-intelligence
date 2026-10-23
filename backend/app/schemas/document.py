@@ -47,3 +47,8 @@ class IngestionStatusResponse(BaseModel):
     slides_processed: int
     questions_extracted: int
     error: Optional[str] = None
+    detail: Optional[str] = None
+    events: Optional[List[Dict[str, Any]]] = None
+    memory_mb: Optional[float] = None
+    peak_memory_mb: Optional[float] = None
+    memory_limit_mb: Optional[float] = None

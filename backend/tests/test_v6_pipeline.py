@@ -90,6 +90,9 @@ def test_upload_fills_every_v6_tag_and_repeated_tracks_second_deck():
         doc1 = _ingest("2022-05-10 PES University Bengaluru Prelims ZVQ History Quiz English.pptx", tag)
         reg = INGESTION_STATUS_REGISTRY[doc1]
         assert reg["status"] == "COMPLETED", reg
+        msgs = " | ".join(e["msg"] for e in reg["events"])
+        assert "Sorted slides" in msgs and "Found 4 questions" in msgs and "Saved 4 questions" in msgs
+        assert "memory_mb" in reg and reg["detail"]
 
         db = SessionLocal()
         deck = db.query(DeckMetadata).filter(DeckMetadata.document_id == doc1).one()

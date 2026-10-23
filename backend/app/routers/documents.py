@@ -346,6 +346,8 @@ def get_document_slides(document_id: str, db: Session = Depends(get_db)):
 @router.get("/{document_id}/status", response_model=IngestionStatusResponse)
 def get_ingestion_status(document_id: str, db: Session = Depends(get_db)):
     if document_id in INGESTION_STATUS_REGISTRY:
+        from backend.app.services.ingestion import progress as _progress
+        _progress.update(INGESTION_STATUS_REGISTRY[document_id])   # fresh memory reading on every poll
         return INGESTION_STATUS_REGISTRY[document_id]
 
     doc = db.query(Document).filter(Document.id == document_id).first()
