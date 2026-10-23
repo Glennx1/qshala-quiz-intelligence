@@ -130,7 +130,7 @@ Subtopics, grouped by topic:
 
 SYSTEM_PROMPT_V6_TEMPLATE = """You tag quiz questions for QShala, a quiz company in Bangalore. The questions come from live quiz decks (including the Zerodha Varsity Quiz) covering business, finance, technology, science, history, geography, politics, sports, entertainment and culture, mostly India-focused. Return the fields below for each question.
 
-topics: 1 to 3 entries. Each entry is one subtopic from the list below plus keywords for it. Choose a subtopic by what the question is ABOUT (its subject), not by where it is set or how it is asked. The first entry is the best fit. Add a second or third entry only when the question genuinely sits in more than one area (a cricket league's brand deal fits both Sports Business and Brand Collaborations). When two subtopics fit equally, choose the one a quizmaster would search for first.
+topics: 1 to 3 entries. Each entry is a theme, one subtopic copied exactly from that theme's list below, and keywords for it. Choose a subtopic by what the question is ABOUT (its subject), not by where it is set or how it is asked. The first entry is the best fit. Add a second or third entry only when the question genuinely sits in more than one area (a cricket league's brand deal fits both Sports Business and Brand Collaborations). When two subtopics fit equally, choose the one a quizmaster would search for first.
 keywords (inside each entry): 3 to 6 search keywords in Title Case, most specific first: named people, companies, products, places, key terms and the answer; then one broader concept. No filler words and nothing generic like "Quiz" or "Question". Do not include facts the question does not support.
 geo_location: the place the question is about, as specific as is useful (a city, state or country, e.g. "Bengaluru, India" or "Japan"). Empty string if it is not about a place.
 india_international: IN if the subject is India-centred, INTL if it is outside India, NA if it cannot be determined or is not about a place.
@@ -154,15 +154,19 @@ def _tag_schema_v6() -> Dict[str, Any]:
     return {
         "type": "OBJECT",
         "properties": {
+            # Kept deliberately light: a 143-value enum nested inside an array can make Gemini reject the
+            # schema as too complex (HTTP 400). The subtopic list is in the prompt and is snapped to the
+            # taxonomy in code (_v6_paths); only the small theme list is enforced here.
             "topics": {
-                "type": "ARRAY", "minItems": 1, "maxItems": 3,
+                "type": "ARRAY",
                 "items": {
                     "type": "OBJECT",
                     "properties": {
-                        "subtopic_l2": {"type": "STRING", "enum": tax["l2"]},
-                        "keywords": {"type": "ARRAY", "items": {"type": "STRING"}, "minItems": 3, "maxItems": 6},
+                        "theme": {"type": "STRING", "enum": tax["l1"]},
+                        "subtopic_l2": {"type": "STRING"},
+                        "keywords": {"type": "ARRAY", "items": {"type": "STRING"}},
                     },
-                    "required": ["subtopic_l2", "keywords"],
+                    "required": ["theme", "subtopic_l2", "keywords"],
                 },
             },
             "geo_location": {"type": "STRING"},
@@ -345,10 +349,20 @@ def _route(rules: qshala_rules.RuleSignals, llm: Dict[str, Any]) -> Tuple[str, f
 # ---------------------------------------------------------------------- v6 helpers
 
 def _v6_paths(llm_out: Dict[str, Any]) -> List[Dict[str, Any]]:
+    import difflib
+    tax = _load_taxonomy()
+    known = {n.lower(): n for n in tax["l2"]}
     raw = []
-    for t in llm_out.get("topics") or []:
-        if isinstance(t, dict):
-            raw.append({"l1": None, "l2": t.get("subtopic_l2"), "keywords": t.get("keywords")})
+    for t in (llm_out.get("topics") or [])[:3]:
+        if not isinstance(t, dict):
+            continue
+        l2 = (t.get("subtopic_l2") or "").strip()
+        if l2 and l2.lower() not in known:
+            close = difflib.get_close_matches(l2.lower(), list(known), n=1, cutoff=0.82)
+            if close:
+                l2 = known[close[0]]
+        kws = t.get("keywords")
+        raw.append({"l1": t.get("theme"), "l2": l2, "keywords": (kws if isinstance(kws, list) else [])[:6]})
     return topic_paths.normalise_paths(raw)
 
 

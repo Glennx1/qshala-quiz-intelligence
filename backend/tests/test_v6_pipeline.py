@@ -283,3 +283,21 @@ def test_rate_limiter_spaces_calls():
         asyncio.sleep = real_sleep
         qt._limiter.update(next=0.0, lock=None)
     assert len(waits) == 2 and 4.5 <= waits[0] <= 5.0 and 9.5 <= waits[1] <= 10.0
+
+
+def test_v6_schema_is_light_and_paths_snap_to_taxonomy():
+    from backend.app.services.tagging import qshala_tagger as qt
+    import json as _json
+    schema = qt._tag_schema_v6()
+    item = schema["properties"]["topics"]["items"]["properties"]
+    assert "enum" not in item["subtopic_l2"] and len(item["theme"]["enum"]) == 11
+    assert "minItems" not in _json.dumps(schema) and "maxItems" not in _json.dumps(schema)
+    paths = qt._v6_paths({"topics": [
+        {"theme": "Sports", "subtopic_l2": "cricket", "keywords": ["IPL"]},
+        {"theme": "Business", "subtopic_l2": "Sports Busines", "keywords": ["Deal"]},       # typo snaps
+        {"theme": "Culture", "subtopic_l2": "Street Food Lore", "keywords": ["Chaat"]},      # custom subtopic kept
+        {"theme": "Science", "subtopic_l2": "Space Exploration", "keywords": []},
+        {"theme": "History", "subtopic_l2": "Ancient History", "keywords": []},               # 5th is dropped
+    ]})
+    assert [(p["l1"], p["l2"]) for p in paths][:2] == [("Sports", "Cricket"), ("Sports", "Sports Business")]
+    assert paths[2]["is_custom"] is True and len(paths) == 3
