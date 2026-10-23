@@ -25,21 +25,21 @@ export default function Sidebar() {
   ];
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-30 flex w-60 flex-col border-r border-slate-200/80 bg-white">
+    <aside className="fixed inset-y-0 left-0 z-30 flex w-52 flex-col border-r border-slate-200/80 bg-white">
       {/* Brand Header */}
-      <div className="flex h-16 items-center px-6">
+      <div className="flex h-16 items-center px-5">
         <Link href="/" className="flex items-center gap-2.5 group">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm shadow-blue-500/20 group-hover:bg-blue-700 transition-colors">
-            <Layers className="h-5 w-5" />
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm shadow-blue-500/20 group-hover:bg-blue-700 transition-colors">
+            <Layers className="h-4.5 w-4.5" />
           </div>
-          <span className="text-[15px] font-bold tracking-tight text-slate-900">
+          <span className="text-[14.5px] font-bold tracking-tight text-slate-900">
             QSHALA AI
           </span>
         </Link>
       </div>
 
       {/* Navigation Links */}
-      <nav className="flex-1 space-y-1 px-3 py-4">
+      <nav className="flex-1 space-y-1 px-2.5 py-4">
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive =
@@ -51,26 +51,26 @@ export default function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
-              className={`flex items-center gap-3 rounded-lg px-3.5 py-2.5 text-[13.5px] transition-all ${
+              className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] whitespace-nowrap transition-all ${
                 isActive
                   ? 'bg-blue-50/90 text-blue-600 font-semibold'
                   : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
               }`}
             >
               <Icon
-                className={`h-4 w-4 ${
+                className={`h-4 w-4 shrink-0 ${
                   isActive ? 'text-blue-600' : 'text-slate-400 group-hover:text-slate-600'
                 }`}
               />
-              <span>{item.label}</span>
+              <span className="truncate">{item.label}</span>
             </Link>
           );
         })}
       </nav>
 
       {/* Bottom Subtle Metadata */}
-      <div className="border-t border-slate-100 p-5">
-        <div className="text-[12px] leading-snug text-slate-400 font-medium">
+      <div className="border-t border-slate-100 p-4">
+        <div className="text-[11.5px] leading-snug text-slate-400 font-medium">
           QShala Intelligent<br />
           <span className="text-slate-500 font-normal">Questions Repository</span>
         </div>
