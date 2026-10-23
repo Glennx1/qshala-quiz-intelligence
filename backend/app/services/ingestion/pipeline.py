@@ -20,7 +20,6 @@ from backend.app.services.ingestion.question_extractor import QuestionExtractor
 from backend.app.services.ingestion.deck_metadata import annotate_questions
 from backend.app.models.question_meta import QuestionEditHistory
 from backend.app.services.ingestion import progress
-from backend.app.services.ingestion.compress import compress_pptx
 from backend.app.services.tagging.qshala_tagger import safe_error
 from backend.app.services.question_meta_service import (
     upsert_deck_metadata, deck_row_to_info, ensure_question_metadata, apply_tag_to_meta,
@@ -86,35 +85,7 @@ class IngestionPipeline:
             db.commit()
 
             file_ext = os.path.splitext(doc.filename)[1].lower()
-
-            # Step 0: Auto-compress large PPTX files
-            if file_ext in [".pptx", ".ppt"] and os.path.exists(doc.storage_path):
-                INGESTION_STATUS_REGISTRY[document_id].update({
-                    "progress_percentage": 8,
-                    "current_step": "1. Checking if images need compression"
-                })
-                raise_if_cancelled(document_id)
-                compress_result = await asyncio.to_thread(
-                    compress_pptx,
-                    doc.storage_path,
-                    on_progress=lambda detail: progress.update(
-                        INGESTION_STATUS_REGISTRY[document_id], detail=detail, pct=10),
-                )
-                if compress_result.get("shrunk"):
-                    progress.event(
-                        INGESTION_STATUS_REGISTRY[document_id],
-                        f"Auto-compressed: {compress_result['before_mb']:.0f} MB → "
-                        f"{compress_result['after_mb']:.0f} MB "
-                        f"({compress_result['shrunk']} images shrunk)")
-                elif compress_result.get("skipped_reason") == "too_small":
-                    progress.event(
-                        INGESTION_STATUS_REGISTRY[document_id],
-                        f"Deck is {compress_result['before_mb']:.0f} MB — small enough, skipping compression")
-                elif compress_result.get("skipped_reason") == "error":
-                    progress.event(
-                        INGESTION_STATUS_REGISTRY[document_id],
-                        f"Compression skipped (non-fatal error). Using original file.")
-
+            
             # Step 1 & 2: Extracting and Processing Slides
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "progress_percentage": 20,

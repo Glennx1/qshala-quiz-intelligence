@@ -72,7 +72,6 @@ export default function UploadPage() {
 
   const cleanSteps = [
     'Uploading',
-    'Compressing',
     'Extracting slides',
     'Identifying questions',
     'Indexing knowledge',
