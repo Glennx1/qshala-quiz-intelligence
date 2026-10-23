@@ -56,6 +56,68 @@ export function getFallbackMediaUrl(currentUrl: string): string | null {
   return null;
 }
 
+// Size of each slice sent by uploadDocumentChunked. Exported so the UI can show the same number.
+export const UPLOAD_CHUNK_SIZE = 20 * 1024 * 1024;
+
+/** Live numbers the Upload Center shows while a file is going up. */
+export interface UploadProgressInfo {
+  bytesSent: number;
+  totalBytes: number;
+  chunkIndex: number; // 1-based slice currently in flight
+  totalChunks: number;
+  chunkSize: number;
+}
+
+function makeAbortError(): Error {
+  const e = new Error('Upload cancelled');
+  e.name = 'AbortError';
+  return e;
+}
+
+export function isAbortError(e: unknown): boolean {
+  return !!e && typeof e === 'object' && (e as { name?: string }).name === 'AbortError';
+}
+
+// fetch() cannot report upload progress, XMLHttpRequest can. Resolves with a fetch-style
+// Response so callers keep using handleResponse(). Aborting the signal really closes the
+// connection (xhr.abort()), it does not just stop listening.
+function xhrPost(
+  url: string,
+  body: FormData,
+  opts?: { signal?: AbortSignal; onUploadProgress?: (loaded: number) => void }
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    if (opts?.signal?.aborted) {
+      reject(makeAbortError());
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.responseType = 'text';
+
+    const onAbort = () => xhr.abort();
+    opts?.signal?.addEventListener('abort', onAbort, { once: true });
+    const cleanup = () => opts?.signal?.removeEventListener('abort', onAbort);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) opts?.onUploadProgress?.(e.loaded);
+    };
+    xhr.onload = () => {
+      cleanup();
+      resolve(new Response(xhr.responseText, { status: xhr.status, statusText: xhr.statusText }));
+    };
+    xhr.onerror = () => {
+      cleanup();
+      reject(new Error('Network error during upload'));
+    };
+    xhr.onabort = () => {
+      cleanup();
+      reject(makeAbortError());
+    };
+    xhr.send(body);
+  });
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const errorText = await res.text();
@@ -97,37 +159,73 @@ export const api = {
     return handleResponse<IngestionStatus>(res);
   },
 
-  uploadDocument: async (file: File, title?: string, year?: number): Promise<DocumentItem> => {
+  uploadDocument: async (
+    file: File,
+    title?: string,
+    year?: number,
+    options?: { signal?: AbortSignal; onProgress?: (info: UploadProgressInfo) => void }
+  ): Promise<DocumentItem> => {
     const formData = new FormData();
     formData.append('file', file);
     if (title) formData.append('title', title);
     if (year) formData.append('year', year.toString());
 
-    const res = await fetch(`${getApiBase()}/documents/upload`, {
-      method: 'POST',
-      body: formData,
+    const res = await xhrPost(`${getApiBase()}/documents/upload`, formData, {
+      signal: options?.signal,
+      onUploadProgress: (loaded) =>
+        options?.onProgress?.({
+          bytesSent: Math.min(loaded, file.size),
+          totalBytes: file.size,
+          chunkIndex: 1,
+          totalChunks: 1,
+          chunkSize: file.size,
+        }),
     });
     return handleResponse<DocumentItem>(res);
   },
 
   uploadDocumentChunked: async (
     file: File,
-    onProgress?: (percentage: number, currentChunk: number, totalChunks: number) => void,
+    onProgress?: (
+      percentage: number,
+      currentChunk: number,
+      totalChunks: number,
+      info: UploadProgressInfo
+    ) => void,
     title?: string,
     year?: number,
-    chunkSize: number = 20 * 1024 * 1024 // 20 MB per slice -- backend now runs on Render (no 4.5 MB Vercel ceiling),
-    // so chunking here is purely for resilience: a dropped connection only loses one slice, not the whole file
+    chunkSize: number = UPLOAD_CHUNK_SIZE, // 20 MB slices: chunking is for resilience (a dropped connection
+    // only costs one slice), not for a payload ceiling -- the backend runs on Render, not Vercel serverless
+    options?: { signal?: AbortSignal; onUploadId?: (uploadId: string) => void }
   ): Promise<DocumentItem> => {
+    const signal = options?.signal;
     const uploadId =
       typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
         : `upl_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    options?.onUploadId?.(uploadId);
     const totalChunks = Math.ceil(file.size / chunkSize);
 
+    const report = (bytesSent: number, chunkIndex: number) => {
+      if (!onProgress) return;
+      const sent = Math.min(bytesSent, file.size);
+      const pct = file.size > 0 ? Math.round((sent / file.size) * 100) : 0;
+      onProgress(pct, chunkIndex + 1, totalChunks, {
+        bytesSent: sent,
+        totalBytes: file.size,
+        chunkIndex: chunkIndex + 1,
+        totalChunks,
+        chunkSize,
+      });
+    };
+
     for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      if (signal?.aborted) throw makeAbortError();
+
       const start = chunkIndex * chunkSize;
       const end = Math.min(start + chunkSize, file.size);
       const chunkBlob = file.slice(start, end);
+      report(start, chunkIndex);
 
       const formData = new FormData();
       formData.append('chunk', chunkBlob, file.name);
@@ -138,22 +236,26 @@ export const api = {
       if (title) formData.append('title', title);
       if (year) formData.append('year', year.toString());
 
-      // Attempt upload with up to 3 retries against intermittent network fluctuations
+      // Attempt upload with up to 3 retries against intermittent network fluctuations.
+      // A cancel (abort, or the server answering 409 "cancelled") is never retried.
       let res: Response | null = null;
       let lastError: any = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          res = await fetch(`${getApiBase()}/documents/upload-chunk`, {
-            method: 'POST',
-            body: formData,
+          res = await xhrPost(`${getApiBase()}/documents/upload-chunk`, formData, {
+            signal,
+            onUploadProgress: (loaded) => report(start + Math.min(loaded, end - start), chunkIndex),
           });
           if (res.ok) break;
           const errText = await res.text();
+          if (res.status === 409) throw makeAbortError();
           lastError = new Error(errText || `HTTP ${res.status}`);
         } catch (netErr) {
+          if (isAbortError(netErr)) throw netErr;
           lastError = netErr;
         }
         await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+        if (signal?.aborted) throw makeAbortError();
       }
 
       if (!res || !res.ok) {
@@ -161,11 +263,7 @@ export const api = {
       }
 
       const data = await res.json();
-
-      if (onProgress) {
-        const pct = Math.round(((chunkIndex + 1) / totalChunks) * 100);
-        onProgress(pct, chunkIndex + 1, totalChunks);
-      }
+      report(end, chunkIndex);
 
       if (chunkIndex === totalChunks - 1) {
         if (data.document) {
@@ -176,6 +274,21 @@ export const api = {
     }
 
     throw new Error('Upload completed without receiving document acknowledgment');
+  },
+
+  /** Cancel a chunked upload that is still sending slices: the server deletes what it already received. */
+  cancelChunkedUpload: async (uploadId: string): Promise<{ status: string }> => {
+    const res = await fetch(`${getApiBase()}/documents/upload-chunk/${encodeURIComponent(uploadId)}`, {
+      method: 'DELETE',
+      keepalive: true,
+    });
+    return handleResponse<{ status: string }>(res);
+  },
+
+  /** Cancel ingestion of an uploaded deck: the pipeline stops, then everything it created is removed. */
+  cancelIngestion: async (id: string): Promise<{ status: string }> => {
+    const res = await fetch(`${getApiBase()}/documents/${id}/cancel`, { method: 'POST' });
+    return handleResponse<{ status: string }>(res);
   },
 
   deleteDocument: async (id: string): Promise<{ message: string }> => {

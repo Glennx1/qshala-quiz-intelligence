@@ -106,6 +106,25 @@ class CloudflareR2Service:
             except Exception as e:
                 logger.warning(f"[CloudflareR2Service] Failed to delete {clean_key}: {e}")
 
+    def delete_prefix(self, prefix: str) -> int:
+        """Delete every object whose key starts with `prefix`. Returns how many were removed."""
+        if not self.is_configured or self._client is None:
+            return 0
+        clean_prefix = prefix.lstrip("/").replace("\\", "/")
+        removed = 0
+        paginator = self._client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket_name, Prefix=clean_prefix):
+            objs = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+            if not objs:
+                continue
+            try:
+                self._client.delete_objects(Bucket=self.bucket_name, Delete={"Objects": objs, "Quiet": True})
+                removed += len(objs)
+            except Exception as e:
+                logger.warning(f"[CloudflareR2Service] Failed to delete prefix batch under {clean_prefix}: {e}")
+        logger.info(f"[CloudflareR2Service] Deleted {removed} objects under {clean_prefix}")
+        return removed
+
     def download(self, key_or_url: str) -> bytes:
         if not self.is_configured or self._client is None:
             raise RuntimeError("CloudflareR2Service is not configured")

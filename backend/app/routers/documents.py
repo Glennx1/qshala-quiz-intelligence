@@ -10,6 +10,14 @@ from backend.app.models.document import Document, Slide
 from backend.app.schemas.document import DocumentResponse, IngestionStatusResponse, SlideResponse
 from backend.app.services.ingestion.pipeline import IngestionPipeline, INGESTION_STATUS_REGISTRY
 from backend.app.config import settings
+from backend.app.services.ingestion.cancellation import (
+    valid_upload_id,
+    request_upload_cancel,
+    upload_cancel_requested,
+    remove_chunk_dir,
+    request_doc_cancel,
+    purge_document,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -149,10 +157,16 @@ async def upload_document_chunk(
     db: Session = Depends(get_db)
 ):
     """
-    Receives an individual sliced chunk of a presentation file (< 4 MB).
-    Bypasses Vercel's 4.5 MB serverless function payload limit entirely.
-    When all chunks are received, stitches the complete file together and starts ingestion.
+    Receives one slice of a presentation file (the frontend sends 20 MB slices).
+    When all slices are received, stitches the complete file together and starts ingestion.
+    A cancelled upload_id (see DELETE /upload-chunk/{upload_id}) is refused with 409.
     """
+    if not valid_upload_id(upload_id):
+        raise HTTPException(status_code=400, detail="Invalid upload_id.")
+    if upload_cancel_requested(upload_id):
+        remove_chunk_dir(upload_id)
+        raise HTTPException(status_code=409, detail="Upload was cancelled.")
+
     ext = os.path.splitext(filename)[1].lower()
     if ext not in [".pptx", ".ppt", ".pdf"]:
         logger.warning(f"[UPLOAD-CHUNK] rejected unsupported extension: {ext}")
@@ -169,6 +183,11 @@ async def upload_document_chunk(
     with open(chunk_path, "wb") as f:
         while content := await chunk.read(64 * 1024):
             f.write(content)
+
+    # A cancel may have landed while this slice was still streaming in: drop everything.
+    if upload_cancel_requested(upload_id):
+        remove_chunk_dir(upload_id)
+        raise HTTPException(status_code=409, detail="Upload was cancelled.")
 
     parts = list(chunk_dir.glob("chunk_*.part"))
     if len(parts) < total_chunks:
@@ -271,6 +290,43 @@ async def upload_document_chunk(
         }
     }
 
+@router.delete("/upload-chunk/{upload_id}")
+def cancel_chunked_upload(upload_id: str):
+    """Cancel an in-progress chunked upload: refuse any further slices and delete what arrived."""
+    if not valid_upload_id(upload_id):
+        raise HTTPException(status_code=400, detail="Invalid upload_id.")
+    request_upload_cancel(upload_id)
+    remove_chunk_dir(upload_id)
+    logger.info(f"[UPLOAD-CHUNK] upload {upload_id} cancelled by user, slices removed")
+    return {"status": "CANCELLED", "upload_id": upload_id}
+
+@router.post("/{document_id}/cancel")
+def cancel_ingestion(document_id: str, db: Session = Depends(get_db)):
+    """
+    Cancel ingestion of a document that is still processing. The pipeline stops at its next
+    checkpoint (between slides, between questions, before each stage) and then deletes the
+    document row, the stored deck, extracted media and R2 objects.
+    """
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        return {"status": "CANCELLED", "detail": "Document already removed."}
+    if doc.processing_status == "COMPLETED":
+        raise HTTPException(status_code=409, detail="Ingestion already completed; delete the document instead.")
+
+    request_doc_cancel(document_id)
+    reg = INGESTION_STATUS_REGISTRY.get(document_id)
+    if reg and reg.get("status") == "PROCESSING":
+        reg["current_step"] = "Cancelling..."
+        return {"status": "CANCELLING", "document_id": document_id}
+
+    # Nothing is actively running for this id (e.g. server restarted mid-ingest): clean up now.
+    purge_document(db, document_id)
+    INGESTION_STATUS_REGISTRY[document_id] = {
+        "document_id": document_id, "status": "CANCELLED", "progress_percentage": 0,
+        "current_step": "Upload cancelled", "slides_processed": 0, "questions_extracted": 0, "error": None,
+    }
+    return {"status": "CANCELLED", "document_id": document_id}
+
 @router.get("", response_model=List[DocumentResponse])
 def list_documents(db: Session = Depends(get_db)):
     return db.query(Document).order_by(Document.created_at.desc()).all()
@@ -312,6 +368,10 @@ def delete_document(document_id: str, db: Session = Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
+    reg = INGESTION_STATUS_REGISTRY.get(document_id)
+    if reg and reg.get("status") == "PROCESSING":
+        request_doc_cancel(document_id)  # stop the running pipeline instead of orphaning it
+
     if os.path.exists(doc.storage_path):
         try:
             os.remove(doc.storage_path)

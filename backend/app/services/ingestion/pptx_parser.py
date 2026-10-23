@@ -36,6 +36,8 @@ class PPTXParser:
         self.file_path = file_path
         self.document_id = document_id
         self.write_to_disk = write_to_disk
+        # Optional zero-arg callable; when it returns True parsing aborts (user cancelled).
+        self.should_cancel = None
         self.output_dir = settings.SLIDES_DIR / document_id
         self.output_media_dir = self.output_dir / "media"
         # Mirror extracted media to Next.js public directory if it exists for Edge CDN delivery
@@ -196,6 +198,9 @@ class PPTXParser:
         zip_media = self.extract_media_from_zip()
 
         for slide_idx, slide in enumerate(prs.slides, start=1):
+            if self.should_cancel is not None and self.should_cancel():
+                from backend.app.services.ingestion.cancellation import IngestionCancelled
+                raise IngestionCancelled(self.document_id)
             slide_text_chunks = []
             title = None
             speaker_notes = ""

@@ -1,4 +1,5 @@
 import os
+import asyncio
 import logging
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
@@ -7,6 +8,13 @@ from backend.app.models.question import Question
 from backend.app.config import settings
 from backend.app.services.ingestion.pptx_parser import PPTXParser
 from backend.app.services.ingestion.pdf_parser import PDFParser
+from backend.app.services.ingestion.cancellation import (
+    IngestionCancelled,
+    doc_cancel_requested,
+    raise_if_cancelled,
+    clear_doc_cancel,
+    purge_document,
+)
 from backend.app.services.ingestion.slide_classifier import SlideClassifier
 from backend.app.services.ingestion.question_extractor import QuestionExtractor
 from backend.app.services.tagging.auto_tagger import AutoTagger  # Kept for backward compatibility
@@ -73,12 +81,17 @@ class IngestionPipeline:
 
             if file_ext in [".pptx", ".ppt"]:
                 parser = PPTXParser(doc.storage_path, doc.id)
-                raw_slides = parser.parse()
+                parser.should_cancel = lambda: doc_cancel_requested(document_id)
+                # Parse in a worker thread: it is blocking, and on a big deck it would otherwise
+                # freeze the event loop so a Cancel request couldn't even be received.
+                raw_slides = await asyncio.to_thread(parser.parse)
             elif file_ext == ".pdf":
                 parser = PDFParser(doc.storage_path, doc.id)
-                raw_slides = parser.parse()
+                raw_slides = await asyncio.to_thread(parser.parse)
             else:
                 raise ValueError(f"Unsupported file format: {file_ext}")
+
+            raise_if_cancelled(document_id)
 
             # Classify each slide using 2-pass contextual deck classifier
             classified_slides = []
@@ -137,6 +150,7 @@ class IngestionPipeline:
 
             enriched_questions = []
             for q in raw_questions:
+                raise_if_cancelled(document_id)
                 # 0. Multimodal Visual Clues Inspection
                 visual_clues_list = []
                 # Inspect question images first (and clue images)
@@ -253,6 +267,8 @@ class IngestionPipeline:
                 })
                 enriched_questions.append(q)
 
+            raise_if_cancelled(document_id)
+
             # Step 6: Generate Semantic Embeddings
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "progress_percentage": 85,
@@ -275,6 +291,8 @@ class IngestionPipeline:
                     logger.warning(f"Embedding generation error ({e}), falling back to unit vectors")
                     embeddings = [[0.0] * 768 for _ in texts_to_embed]
 
+            raise_if_cancelled(document_id)
+
             # Step 7: Deduplication Check (Tier 1 O(1) Hash + Tier 2 Semantic ANN)
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "progress_percentage": 92,
@@ -287,6 +305,8 @@ class IngestionPipeline:
                 candidate_embeddings=embeddings,
                 doc_id=doc.id
             )
+
+            raise_if_cancelled(document_id)
 
             # Step 8: Indexing Unique Records
             INGESTION_STATUS_REGISTRY[document_id].update({
@@ -383,6 +403,19 @@ class IngestionPipeline:
                 "duplicates_filtered": len(duplicates)
             })
 
+        except IngestionCancelled:
+            logger.info(f"[CANCEL] ingestion of {document_id} cancelled by user, cleaning up")
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            purge_document(db, document_id)
+            clear_doc_cancel(document_id)
+            INGESTION_STATUS_REGISTRY[document_id].update({
+                "status": "CANCELLED",
+                "error": None,
+                "current_step": "Upload cancelled",
+            })
         except Exception as e:
             logger.exception(f"Error processing document {document_id}: {e}")
             try:

@@ -12,7 +12,7 @@ import {
   ArrowRight,
   X,
 } from 'lucide-react';
-import { api } from '../../lib/api';
+import { api, isAbortError, UPLOAD_CHUNK_SIZE, UploadProgressInfo } from '../../lib/api';
 import { DocumentItem } from '../../lib/types';
 import SlideViewerModal from '../../components/SlideViewerModal';
 import { optimizeDeckInBrowser } from '../../lib/deckOptimizer';
@@ -31,6 +31,13 @@ export default function UploadPage() {
   } | null>(null);
   const [selectedSlide, setSelectedSlide] = useState<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Live upload numbers (slice i of N, MB sent) and the handles needed to cancel for real
+  const [uploadDetail, setUploadDetail] = useState<UploadProgressInfo | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const uploadIdRef = useRef<string | null>(null);
+
+  const fmtMB = (bytes: number) => (bytes / (1024 * 1024)).toFixed(1);
 
   const cleanSteps = [
     'Uploading',
@@ -70,9 +77,10 @@ export default function UploadPage() {
           status: status.status,
         });
 
-        if (status.status === 'COMPLETED' || status.status === 'FAILED') {
+        if (status.status === 'COMPLETED' || status.status === 'FAILED' || status.status === 'CANCELLED') {
           clearInterval(interval);
           setActiveDocId(null);
+          setCancelling(false);
           fetchDocuments();
         }
       } catch (e) {
@@ -84,23 +92,36 @@ export default function UploadPage() {
   }, [activeDocId]);
 
   const handleFileUpload = async (file: File) => {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    uploadIdRef.current = null;
+    setCancelling(false);
     setUploading(true);
-    const mbSize = (file.size / (1024 * 1024)).toFixed(1);
+    const mbSize = fmtMB(file.size);
 
-    // Backend runs on Render now (not Vercel serverless), so there's no 4.5 MB payload
-    // ceiling to dodge. Small/medium decks go up in one request; large decks still use
-    // chunked upload so a dropped connection only costs one 20 MB slice, not the whole file.
+    // The backend runs on Render (not Vercel serverless), so there is no 4.5 MB payload ceiling.
+    // Decks up to 20 MB go up in one request; larger ones are sent as 20 MB slices so a dropped
+    // connection only costs one slice, and Cancel can stop between/inside slices.
     const isLocalhost =
       typeof window !== 'undefined' &&
       (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-    const directUploadLimit = isLocalhost ? 100 * 1024 * 1024 : 20 * 1024 * 1024;
+    const directUploadLimit = isLocalhost ? 100 * 1024 * 1024 : UPLOAD_CHUNK_SIZE;
+    const sliceMB = Math.round(UPLOAD_CHUNK_SIZE / (1024 * 1024));
 
     try {
       let doc: DocumentItem;
 
       if (file.size > directUploadLimit) {
+        const plannedSlices = Math.ceil(file.size / UPLOAD_CHUNK_SIZE);
+        setUploadDetail({
+          bytesSent: 0,
+          totalBytes: file.size,
+          chunkIndex: 1,
+          totalChunks: plannedSlices,
+          chunkSize: UPLOAD_CHUNK_SIZE,
+        });
         setPipelineProgress({
-          step: `Uploading ${file.name} (${mbSize} MB) in 20MB slices...`,
+          step: `Uploading ${file.name} (${mbSize} MB) in ${plannedSlices} slices of ${sliceMB} MB...`,
           percentage: 5,
           slides: 0,
           questions: 0,
@@ -109,34 +130,91 @@ export default function UploadPage() {
 
         doc = await api.uploadDocumentChunked(
           file,
-          (pct, currentChunk, totalChunks) => {
+          (pct, currentChunk, totalChunks, info) => {
+            setUploadDetail(info);
             setPipelineProgress({
-              step: `Uploading slice ${currentChunk}/${totalChunks} (${pct}% of ${mbSize} MB)...`,
+              step: `Uploading slice ${currentChunk} of ${totalChunks} (${pct}% of ${mbSize} MB)...`,
               percentage: Math.min(Math.round(5 + pct * 0.2), 25), // 5% to 25% for upload stage
               slides: 0,
               questions: 0,
               status: 'PROCESSING',
             });
-          }
+          },
+          undefined,
+          undefined,
+          undefined,
+          { signal: controller.signal, onUploadId: (id) => { uploadIdRef.current = id; } }
         );
       } else {
         setPipelineProgress({
-          step: 'Uploading to server...',
+          step: `Uploading ${file.name} (${mbSize} MB) to server...`,
           percentage: 18,
           slides: 0,
           questions: 0,
           status: 'PROCESSING',
         });
-        doc = await api.uploadDocument(file);
+        doc = await api.uploadDocument(file, undefined, undefined, {
+          signal: controller.signal,
+          onProgress: (info) => setUploadDetail(info),
+        });
       }
 
+      setUploadDetail(null);
       setActiveDocId(doc.id);
       fetchDocuments();
     } catch (err: any) {
-      alert(err.message || 'Upload failed');
-      setPipelineProgress(null);
+      if (isAbortError(err)) {
+        setPipelineProgress({
+          step: 'Upload cancelled. Nothing was kept on the server.',
+          percentage: 0,
+          slides: 0,
+          questions: 0,
+          status: 'CANCELLED',
+        });
+      } else {
+        alert(err.message || 'Upload failed');
+        setPipelineProgress(null);
+      }
     } finally {
       setUploading(false);
+      setUploadDetail(null);
+      abortRef.current = null;
+      setCancelling(false);
+    }
+  };
+
+  // Cancel really stops the work: while slices are still going up it aborts the in-flight request
+  // and tells the server to delete the slices already received; once the deck is uploaded and being
+  // processed it tells the backend pipeline to stop, which then removes the document and its media.
+  const handleCancel = async () => {
+    if (cancelling) return;
+    setCancelling(true);
+    setPipelineProgress((p) => (p ? { ...p, step: 'Cancelling...' } : p));
+    try {
+      if (abortRef.current) {
+        abortRef.current.abort();
+        const id = uploadIdRef.current;
+        if (id) await api.cancelChunkedUpload(id);
+      } else if (activeDocId) {
+        const res = await api.cancelIngestion(activeDocId);
+        if (res.status === 'CANCELLED') {
+          // nothing was running server-side, cleanup already done
+          setActiveDocId(null);
+          setPipelineProgress({
+            step: 'Upload cancelled. Nothing was kept on the server.',
+            percentage: 0,
+            slides: 0,
+            questions: 0,
+            status: 'CANCELLED',
+          });
+          setCancelling(false);
+          fetchDocuments();
+        }
+        // 'CANCELLING': the status poll picks up CANCELLED once the pipeline has stopped
+      }
+    } catch (e) {
+      console.error(e);
+      setCancelling(false);
     }
   };
 
@@ -211,6 +289,8 @@ export default function UploadPage() {
             ? 'border-emerald-200 bg-emerald-50/25'
             : pipelineProgress.status === 'FAILED'
             ? 'border-rose-200 bg-rose-50/25'
+            : pipelineProgress.status === 'CANCELLED'
+            ? 'border-amber-200 bg-amber-50/30'
             : 'border-slate-200 bg-white'
         }`}>
           <div className="flex items-center justify-between">
@@ -219,6 +299,8 @@ export default function UploadPage() {
                 <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
               ) : pipelineProgress.status === 'FAILED' ? (
                 <AlertCircle className="h-5 w-5 text-rose-600 shrink-0" />
+              ) : pipelineProgress.status === 'CANCELLED' ? (
+                <X className="h-5 w-5 text-amber-600 shrink-0" />
               ) : (
                 <Loader2 className="h-5 w-5 animate-spin text-blue-600 shrink-0" />
               )}
@@ -228,6 +310,10 @@ export default function UploadPage() {
                     ? 'Ingestion Complete'
                     : pipelineProgress.status === 'FAILED'
                     ? 'Ingestion Failed'
+                    : pipelineProgress.status === 'CANCELLED'
+                    ? 'Upload Cancelled'
+                    : uploadDetail
+                    ? 'Uploading Material'
                     : 'Processing Material'}
                 </h4>
                 <p className="text-[12px] text-slate-500 font-normal">{pipelineProgress.step}</p>
@@ -242,10 +328,23 @@ export default function UploadPage() {
                   ? 'text-rose-600'
                   : 'text-blue-600'
               }`}>
-                {pipelineProgress.percentage}%
+                {pipelineProgress.status === 'CANCELLED' ? '' : `${pipelineProgress.percentage}%`}
               </span>
 
-              {(pipelineProgress.status === 'COMPLETED' || pipelineProgress.percentage >= 100 || pipelineProgress.status === 'FAILED') && (
+              {pipelineProgress.status === 'PROCESSING' && (uploading || activeDocId) && (
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  disabled={cancelling}
+                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+                  title="Stop this upload and remove everything it created on the server"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  {cancelling ? 'Cancelling...' : 'Cancel upload'}
+                </button>
+              )}
+
+              {(pipelineProgress.status === 'COMPLETED' || pipelineProgress.percentage >= 100 || pipelineProgress.status === 'FAILED' || pipelineProgress.status === 'CANCELLED') && (
                 <button
                   type="button"
                   onClick={() => setPipelineProgress(null)}
@@ -265,14 +364,41 @@ export default function UploadPage() {
                   ? 'bg-emerald-600'
                   : pipelineProgress.status === 'FAILED'
                   ? 'bg-rose-600'
+                  : pipelineProgress.status === 'CANCELLED'
+                  ? 'bg-amber-500'
                   : 'bg-blue-600'
               }`}
               style={{ width: `${pipelineProgress.percentage}%` }}
             />
           </div>
 
+          {/* Live upload detail: which slice is going up and how many MB have been sent */}
+          {uploadDetail && pipelineProgress.status === 'PROCESSING' && (
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[12px]">
+                <span className="font-semibold text-slate-800">
+                  {uploadDetail.totalChunks > 1
+                    ? `Slice ${uploadDetail.chunkIndex} of ${uploadDetail.totalChunks}`
+                    : 'Uploading in one piece'}
+                </span>
+                <span className="text-slate-500 font-normal tabular-nums">
+                  {fmtMB(uploadDetail.bytesSent)} / {fmtMB(uploadDetail.totalBytes)} MB
+                  {uploadDetail.totalChunks > 1 && ` · ${fmtMB(uploadDetail.chunkSize)} MB per slice`}
+                </span>
+              </div>
+              <div className="h-1 w-full overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className="h-full bg-blue-400 transition-all duration-200"
+                  style={{
+                    width: `${uploadDetail.totalBytes > 0 ? Math.round((uploadDetail.bytesSent / uploadDetail.totalBytes) * 100) : 0}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
           {/* 5 Clean Steps */}
-          <div className="grid grid-cols-5 gap-2 pt-2 text-center text-xs">
+          <div className={`grid grid-cols-5 gap-2 pt-2 text-center text-xs ${pipelineProgress.status === 'CANCELLED' ? 'hidden' : ''}`}>
             {cleanSteps.map((step, idx) => {
               const isFinished = pipelineProgress.status === 'COMPLETED' || pipelineProgress.percentage >= 100;
               const isPast = pipelineProgress.percentage >= ((idx + 1) / 5) * 100;
