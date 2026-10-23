@@ -6,6 +6,8 @@ on image-heavy decks without adding a slow pre-processing stage.
 """
 import io
 import logging
+import os
+import threading
 from typing import Tuple
 
 from PIL import Image
@@ -15,6 +17,15 @@ logger = logging.getLogger(__name__)
 MAX_SIDE: int = 1600
 JPEG_QUALITY: int = 82
 MIN_BYTES: int = 60 * 1024  # don't bother re-encoding small images
+
+# Decoding a picture costs width x height x 4 bytes of RAM (an 8192x4608 PNG is ~150 MB).
+# On a 512 MB server that is the difference between working and being killed, so:
+#  - anything that would decode to more than MAX_DECODE_PIXELS is sent as-is instead of shrunk
+#    (a bigger upload to the vision model beats an out-of-memory crash);
+#  - only one large decode runs at a time, however many vision calls are in flight.
+MAX_DECODE_PIXELS: int = int(os.getenv("VISION_MAX_DECODE_PIXELS", "24000000"))
+_BIG_DECODE_PIXELS: int = 4_000_000
+_big_decode_gate = threading.Semaphore(1)
 
 
 def shrink_for_vision(data: bytes, mime_type: str) -> Tuple[bytes, str]:
@@ -27,21 +38,31 @@ def shrink_for_vision(data: bytes, mime_type: str) -> Tuple[bytes, str]:
         return data, mime_type
 
     try:
-        img = Image.open(io.BytesIO(data))
-        img.load()
+        img = Image.open(io.BytesIO(data))   # lazy: reads the header only
+        width, height = img.size
     except Exception as e:
         logger.debug("vision_resize: could not open image, using original (%s)", e)
         return data, mime_type
 
-    if max(img.size) <= MAX_SIDE:
-        return data, mime_type
+    if max(width, height) <= MAX_SIDE:
+        return data, mime_type               # already small enough: nothing decoded
 
+    gate = None
     try:
-        scale = MAX_SIDE / float(max(img.size))
-        img = img.resize(
-            (max(1, int(img.width * scale)), max(1, int(img.height * scale))),
-            Image.LANCZOS,
-        )
+        scale = MAX_SIDE / float(max(width, height))
+        target = (max(1, int(width * scale)), max(1, int(height * scale)))
+        if img.format == "JPEG":
+            # Lets the JPEG decoder skip straight to a 1/2, 1/4 or 1/8 size image: far less memory and time.
+            img.draft("RGB", target)
+        decode_pixels = img.size[0] * img.size[1]
+        if decode_pixels > MAX_DECODE_PIXELS:
+            logger.info("vision_resize: %dx%d is too large to decode safely here, sending original", width, height)
+            return data, mime_type
+        if decode_pixels > _BIG_DECODE_PIXELS:
+            gate = _big_decode_gate
+            gate.acquire()
+        img.load()
+        img = img.resize(target, Image.LANCZOS)
         buf = io.BytesIO()
         if mime_type == "image/png":
             img.save(buf, "PNG", optimize=True)
@@ -53,3 +74,6 @@ def shrink_for_vision(data: bytes, mime_type: str) -> Tuple[bytes, str]:
     except Exception as e:
         logger.debug("vision_resize: resize failed, using original (%s)", e)
         return data, mime_type
+    finally:
+        if gate is not None:
+            gate.release()

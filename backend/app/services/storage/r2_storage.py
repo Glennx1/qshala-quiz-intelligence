@@ -77,6 +77,40 @@ class CloudflareR2Service:
         logger.info(f"[CloudflareR2Service] Uploaded {clean_key} ({len(data)} bytes) -> {url}")
         return url
 
+    def upload_file(self, key: str, path: str, content_type: Optional[str] = None) -> str:
+        """
+        Uploads a file from disk to R2 and returns its public HTTPS URL, without ever holding the
+        file in memory (boto3 streams it; large files go up as bounded multipart chunks).
+        Used for slide media so a 200 MB deck doesn't have to sit in RAM while it uploads.
+        """
+        if not self.is_configured or self._client is None:
+            raise RuntimeError("CloudflareR2Service is not configured")
+
+        clean_key = key.lstrip("/").replace("\\", "/")
+        if not content_type:
+            content_type, _ = mimetypes.guess_type(clean_key)
+            content_type = content_type or "application/octet-stream"
+
+        from boto3.s3.transfer import TransferConfig
+        # One transfer thread per call (the caller already uploads several files in parallel) and
+        # 8 MB parts: at most ~one part per in-flight upload is buffered.
+        config = TransferConfig(
+            multipart_threshold=16 * 1024 * 1024,
+            multipart_chunksize=8 * 1024 * 1024,
+            max_concurrency=2,
+            use_threads=False,
+        )
+        self._client.upload_file(
+            Filename=str(path),
+            Bucket=self.bucket_name,
+            Key=clean_key,
+            ExtraArgs={"ContentType": content_type},
+            Config=config,
+        )
+        url = f"{self.public_base_url}/{clean_key}"
+        logger.info(f"[CloudflareR2Service] Uploaded {clean_key} from file -> {url}")
+        return url
+
     def upload(
         self,
         pathname: str,
