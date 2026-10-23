@@ -193,6 +193,32 @@ def ensure_schema_columns():
                             conn.exec_driver_sql(f"ALTER TABLE documents ADD COLUMN {col_name} {col_type};")
                     except Exception:
                         pass
+            # v6 tag system: columns added to the QShala tag tables after they first shipped.
+            _v6_cols = {
+                "qshala_question_metadata": [
+                    ("round_number", "INTEGER"),
+                    ("question_in_round", "INTEGER"),
+                    ("city_name", "VARCHAR(100)"),
+                    ("deck_year", "INTEGER"),
+                    ("is_varsity", "BOOLEAN DEFAULT FALSE" if is_postgres else "BOOLEAN DEFAULT 0"),
+                    ("relevant_year", "INTEGER"),
+                    ("geo_region", "VARCHAR(100)"),
+                    ("india_international", "VARCHAR(8)"),
+                    ("manual_fields", "TEXT"),
+                ],
+                "qshala_tags": [
+                    ("relevant_year", "INTEGER"),
+                ],
+            }
+            for _tbl, _cols in _v6_cols.items():
+                for col_name, col_type in _cols:
+                    try:
+                        if is_postgres:
+                            conn.exec_driver_sql(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS {col_name} {col_type};")
+                        else:
+                            conn.exec_driver_sql(f"ALTER TABLE {_tbl} ADD COLUMN {col_name} {col_type};")
+                    except Exception:
+                        pass  # table not created yet, or column already exists
             conn.commit()
 
         # One-time backfill of content_hash and topics for legacy questions

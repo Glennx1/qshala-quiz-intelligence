@@ -33,6 +33,9 @@ from backend.app.models.question import Question  # noqa: F401
 from backend.app.models.qshala_tag import (  # noqa: F401
     QshalaQuestionMetadata, QshalaTag, QshalaTagChange,
 )
+from backend.app.models.question_meta import (  # noqa: F401
+    DeckMetadata, QuestionTopicPath, QuestionRepeat, QuestionEditHistory,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

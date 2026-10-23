@@ -1,0 +1,801 @@
+{
+  "version": "v6",
+  "level1": [
+    {
+      "name": "Finance",
+      "code": "FIN",
+      "level2": [
+        {
+          "code": "FIN.SM",
+          "name": "Stock Markets",
+          "description": "Stocks, exchanges (NSE, BSE, NYSE), brokers, trading mechanics, listed-company share moves. IPOs go to IPOs and Listings; index membership goes to Market Indices."
+        },
+        {
+          "code": "FIN.IF",
+          "name": "Investing and Funds",
+          "description": "Mutual funds, ETFs, SIPs, fund houses, fund managers, portfolio and investing concepts, famous investors' strategies."
+        },
+        {
+          "code": "FIN.D",
+          "name": "Derivatives",
+          "description": "Futures, options, swaps, hedging, margin and other derivative instruments."
+        },
+        {
+          "code": "FIN.TA",
+          "name": "Technical Analysis",
+          "description": "Charts, candlesticks, patterns, indicators and trading psychology tools used to read price action."
+        },
+        {
+          "code": "FIN.B",
+          "name": "Bonds",
+          "description": "Government and corporate bonds, yields, G-Secs, treasury bills, credit ratings, debt markets."
+        },
+        {
+          "code": "FIN.C",
+          "name": "Commodities",
+          "description": "Gold, silver, oil, grains and other traded commodities, commodity exchanges. Energy policy goes to Economy."
+        },
+        {
+          "code": "FIN.C2",
+          "name": "Cryptocurrency",
+          "description": "Bitcoin, Ethereum, blockchain money, crypto exchanges, tokens, NFTs, crypto regulation."
+        },
+        {
+          "code": "FIN.IL",
+          "name": "IPOs and Listings",
+          "description": "Initial public offerings, listings, delistings, SME IPOs, anchor investors, notable debut days."
+        },
+        {
+          "code": "FIN.MI",
+          "name": "Market Indices",
+          "description": "Sensex, Nifty, Dow, S&P, Nasdaq and other indices; index composition, history and milestones."
+        },
+        {
+          "code": "FIN.BF",
+          "name": "Behavioural Finance",
+          "description": "Biases, bubbles, manias, panics, investor psychology, famous crashes explained by behaviour."
+        },
+        {
+          "code": "FIN.FB",
+          "name": "Finance Books",
+          "description": "Books on money, markets and investing, and their authors and ideas."
+        },
+        {
+          "code": "FIN.QT",
+          "name": "Quant Trading",
+          "description": "Quantitative and algorithmic trading, high-frequency trading firms, quant strategies, trading technology."
+        },
+        {
+          "code": "FIN.BB",
+          "name": "Banks and Banking",
+          "description": "Commercial banks, bank history, mergers, products, branches, bank logos and trivia. Central banks go to Central Banking."
+        },
+        {
+          "code": "FIN.CB",
+          "name": "Central Banking",
+          "description": "RBI, the Fed, ECB and other central banks, monetary policy, repo rate, governors, CBDCs."
+        },
+        {
+          "code": "FIN.DP",
+          "name": "Digital Payments",
+          "description": "UPI, wallets, cards, payment apps, NPCI, fintech payment rails."
+        },
+        {
+          "code": "FIN.I",
+          "name": "Insurance",
+          "description": "Life, health, general and other insurance, insurers, IRDAI, terms and history."
+        },
+        {
+          "code": "FIN.LC",
+          "name": "Lending and Credit",
+          "description": "Loans, NBFCs, microfinance, credit scores, credit cards, BNPL, interest and debt products."
+        },
+        {
+          "code": "FIN.PF",
+          "name": "Personal Finance",
+          "description": "Saving, budgeting, retirement, tax-saving products, financial planning for individuals."
+        },
+        {
+          "code": "FIN.CSF",
+          "name": "Cyber Safety and Fraud",
+          "description": "Financial fraud, scams, phishing, cyber-crime helplines, how people lose money online."
+        },
+        {
+          "code": "FIN.MH",
+          "name": "Money History",
+          "description": "History of money, barter, currencies, trade finance and monetary systems through the ages."
+        },
+        {
+          "code": "FIN.CN",
+          "name": "Coins and Notes",
+          "description": "Specific coins and banknotes, designs, denominations, mints, numismatics, demonetisation notes."
+        }
+      ]
+    },
+    {
+      "name": "Business",
+      "code": "BUS",
+      "level2": [
+        {
+          "code": "BUS.S",
+          "name": "Startups",
+          "description": "Startups, unicorns, founders' early stories, funding rounds, venture capital, incubators."
+        },
+        {
+          "code": "BUS.CO",
+          "name": "Company Origins",
+          "description": "Founding stories, name origins, early history and milestones of companies."
+        },
+        {
+          "code": "BUS.CS",
+          "name": "Corporate Scandals",
+          "description": "Frauds, collapses, governance failures and scandals in companies."
+        },
+        {
+          "code": "BUS.BL",
+          "name": "Business Leaders",
+          "description": "CEOs, founders, chairpersons and industrialists, their careers and quotes."
+        },
+        {
+          "code": "BUS.AM",
+          "name": "Acquisitions and Mergers",
+          "description": "Takeovers, mergers, buyouts, deal sizes and what happened to the companies."
+        },
+        {
+          "code": "BUS.LD",
+          "name": "Legal Disputes",
+          "description": "Corporate lawsuits, trademark and patent fights, regulatory cases between companies."
+        },
+        {
+          "code": "BUS.ER",
+          "name": "Earnings and Results",
+          "description": "Revenues, profits, valuations, market cap rankings, quarterly numbers."
+        },
+        {
+          "code": "BUS.BJ",
+          "name": "Business Jargon",
+          "description": "Business and management terms, frameworks, acronyms and their meanings."
+        },
+        {
+          "code": "BUS.RA",
+          "name": "Rankings and Awards",
+          "description": "Lists such as Fortune 500 or Forbes, business awards, most valuable and largest-by lists."
+        },
+        {
+          "code": "BUS.BB",
+          "name": "Business Books",
+          "description": "Books on business and management and their authors."
+        },
+        {
+          "code": "BUS.P",
+          "name": "Partnerships",
+          "description": "Joint ventures, alliances and sponsorship-style tie-ups between companies. Product or advertising tie-ups go to Brand Collaborations."
+        },
+        {
+          "code": "BUS.A",
+          "name": "Accounting",
+          "description": "Accounting concepts, audits, balance sheets, standards, famous accounting terms."
+        },
+        {
+          "code": "BUS.RE",
+          "name": "Real Estate",
+          "description": "Property, developers, REITs, housing markets, construction firms, landmark deals."
+        },
+        {
+          "code": "BUS.HI",
+          "name": "Healthcare Industry",
+          "description": "Pharma, hospitals, biotech, diagnostics and health-tech companies and business stories."
+        },
+        {
+          "code": "BUS.A2",
+          "name": "Advertising",
+          "description": "Ad campaigns, taglines in ads, agencies, famous commercials, marketing strategies."
+        },
+        {
+          "code": "BUS.BC",
+          "name": "Brand Collaborations",
+          "description": "Co-branded products, brand-brand collabs, limited editions, celebrity-brand tie-ups."
+        },
+        {
+          "code": "BUS.BIL",
+          "name": "Brand Identity and Logos",
+          "description": "Logos, colours, mascots, rebrands, name changes, packaging and brand design."
+        },
+        {
+          "code": "BUS.S2",
+          "name": "Slogans",
+          "description": "Taglines and slogans and which brand they belong to."
+        },
+        {
+          "code": "BUS.CB",
+          "name": "Consumer Brands",
+          "description": "FMCG, food and drink brands, product launches, brand histories and trivia."
+        },
+        {
+          "code": "BUS.R",
+          "name": "Retail",
+          "description": "Stores, e-commerce, supermarkets, retail chains, shopping formats and customer behaviour."
+        },
+        {
+          "code": "BUS.F",
+          "name": "Fashion",
+          "description": "Fashion houses, designers, apparel and footwear brands, runway and style history."
+        },
+        {
+          "code": "BUS.L",
+          "name": "Luxury",
+          "description": "Luxury goods, jewellery, watches, high-end brands and their heritage."
+        },
+        {
+          "code": "BUS.A3",
+          "name": "Automobiles",
+          "description": "Car and bike makers, models, auto industry history, EVs as products. Motor racing goes to Sports."
+        }
+      ]
+    },
+    {
+      "name": "Economy",
+      "code": "ECO",
+      "level2": [
+        {
+          "code": "ECO.IE",
+          "name": "Indian Economy",
+          "description": "India's GDP, sectors, reforms, growth stories, budgets, planning and key economic events."
+        },
+        {
+          "code": "ECO.GT",
+          "name": "Global Trade",
+          "description": "Trade agreements, tariffs, imports and exports, supply chains, trade blocs, shipping."
+        },
+        {
+          "code": "ECO.M",
+          "name": "Macroeconomics",
+          "description": "GDP, inflation, unemployment, recessions, economic theories and economists."
+        },
+        {
+          "code": "ECO.CP",
+          "name": "Consumer Prices",
+          "description": "Inflation indices, prices of everyday goods, CPI, cost of living, price trivia."
+        },
+        {
+          "code": "ECO.T",
+          "name": "Taxation",
+          "description": "Income tax, GST, customs, tax history and policy, tax trivia."
+        },
+        {
+          "code": "ECO.GP",
+          "name": "Government Policy",
+          "description": "Economic and industrial policy, schemes, subsidies, regulators and flagship programmes."
+        },
+        {
+          "code": "ECO.A",
+          "name": "Agriculture",
+          "description": "Farming, crops, the green revolution, agri markets, MSP, food supply."
+        },
+        {
+          "code": "ECO.E",
+          "name": "Energy",
+          "description": "Oil, gas, power, renewables, coal, energy companies and energy policy."
+        },
+        {
+          "code": "ECO.LJ",
+          "name": "Labour and Jobs",
+          "description": "Employment, wages, unions, gig work, workplaces, job-market trivia."
+        },
+        {
+          "code": "ECO.IM",
+          "name": "Infrastructure and Manufacturing",
+          "description": "Roads, ports, railways as economic assets, factories, industrial hubs, Make in India."
+        }
+      ]
+    },
+    {
+      "name": "Technology",
+      "code": "TEC",
+      "level2": [
+        {
+          "code": "TEC.AI",
+          "name": "Artificial Intelligence",
+          "description": "AI, machine learning, chatbots, AI companies, models, ethics and milestones."
+        },
+        {
+          "code": "TEC.IP",
+          "name": "Internet and Platforms",
+          "description": "The web, websites, search, e-commerce platforms, apps and internet history."
+        },
+        {
+          "code": "TEC.SM",
+          "name": "Social Media",
+          "description": "Social networks, creators, viral trends, platform features and history."
+        },
+        {
+          "code": "TEC.TPG",
+          "name": "Tech Products and Gadgets",
+          "description": "Phones, laptops, consoles, wearables and other devices; product launches and specs."
+        },
+        {
+          "code": "TEC.CS",
+          "name": "Computing and Software",
+          "description": "Programming, operating systems, software, hardware, data, computer-science concepts."
+        },
+        {
+          "code": "TEC.T",
+          "name": "Telecom",
+          "description": "Mobile networks, operators, spectrum, 5G, telecom history."
+        },
+        {
+          "code": "TEC.DPI",
+          "name": "Digital Public Infrastructure",
+          "description": "Aadhaar, UPI as infrastructure, DigiLocker, ONDC, government digital platforms."
+        },
+        {
+          "code": "TEC.C",
+          "name": "Cybersecurity",
+          "description": "Hacking, data breaches, encryption, security tools, famous attacks."
+        },
+        {
+          "code": "TEC.GT",
+          "name": "Gaming Technology",
+          "description": "Game engines, consoles, graphics, esports tech. Video game titles and culture go to Entertainment."
+        },
+        {
+          "code": "TEC.II",
+          "name": "Inventions and Inventors",
+          "description": "Inventions, patents, inventors and the history of technology."
+        }
+      ]
+    },
+    {
+      "name": "Science",
+      "code": "SCI",
+      "level2": [
+        {
+          "code": "SCI.P",
+          "name": "Physics",
+          "description": "Mechanics, light, electricity, atoms, forces, laws and units, quantum and relativity."
+        },
+        {
+          "code": "SCI.C",
+          "name": "Chemistry",
+          "description": "Elements, periodic table, reactions, compounds, lab and everyday chemistry."
+        },
+        {
+          "code": "SCI.B",
+          "name": "Biology",
+          "description": "Cells, genetics, evolution, microbes, classification and biological processes."
+        },
+        {
+          "code": "SCI.HBH",
+          "name": "Human Body and Health",
+          "description": "Organs, systems, nutrition, diseases, vaccines, fitness and health facts."
+        },
+        {
+          "code": "SCI.M",
+          "name": "Mathematics",
+          "description": "Numbers, geometry, algebra, famous theorems, mathematicians, counting and calculation."
+        },
+        {
+          "code": "SCI.PL",
+          "name": "Puzzles and Logic",
+          "description": "Riddles, brain teasers, lateral-thinking and logic questions, number and word puzzles."
+        },
+        {
+          "code": "SCI.ES",
+          "name": "Earth Science",
+          "description": "Geology, volcanoes, earthquakes, rocks, weather science, minerals, fossils."
+        },
+        {
+          "code": "SCI.EE",
+          "name": "Ecology and Environment",
+          "description": "Ecosystems, climate change, conservation, pollution, sustainability, biodiversity."
+        },
+        {
+          "code": "SCI.AW",
+          "name": "Animals and Wildlife",
+          "description": "Mammals, birds, reptiles, insects, marine life, animal records and behaviour."
+        },
+        {
+          "code": "SCI.P2",
+          "name": "Plants",
+          "description": "Trees, flowers, crops as plants, botany, plant records and uses."
+        },
+        {
+          "code": "SCI.M2",
+          "name": "Medicine",
+          "description": "Drugs, medical discoveries, surgery, diseases and doctors in medicine's history."
+        },
+        {
+          "code": "SCI.SD",
+          "name": "Scientists and Discoveries",
+          "description": "Famous scientists, Nobel-prize science, landmark experiments and discoveries."
+        },
+        {
+          "code": "SCI.ES2",
+          "name": "Everyday Science",
+          "description": "Science behind daily life: kitchen, household, materials, weather, how things work."
+        },
+        {
+          "code": "SCI.AC",
+          "name": "Astronomy and Cosmos",
+          "description": "Stars, galaxies, black holes, constellations, cosmology, telescopes, eclipses."
+        },
+        {
+          "code": "SCI.SS",
+          "name": "Solar System",
+          "description": "Planets, moons, the Sun, comets, asteroids and dwarf planets."
+        },
+        {
+          "code": "SCI.SE",
+          "name": "Space Exploration",
+          "description": "Missions, rockets, satellites, probes, space stations, the space race, moon landings."
+        },
+        {
+          "code": "SCI.SAI",
+          "name": "Space Agencies and ISRO",
+          "description": "ISRO, NASA, ESA, Roscosmos, private space firms, their programmes and leaders."
+        },
+        {
+          "code": "SCI.A",
+          "name": "Astronauts",
+          "description": "Astronauts, cosmonauts, spaceflight records and life in space."
+        },
+        {
+          "code": "SCI.A2",
+          "name": "Aerospace",
+          "description": "Aircraft, aviation, aerospace engineering, airlines' technology. Military use goes to Politics."
+        }
+      ]
+    },
+    {
+      "name": "History",
+      "code": "HIS",
+      "level2": [
+        {
+          "code": "HIS.AH",
+          "name": "Ancient History",
+          "description": "Early civilisations, Indus Valley, Egypt, Greece, Rome, Mesopotamia, ancient India and China."
+        },
+        {
+          "code": "HIS.MH",
+          "name": "Medieval History",
+          "description": "Sultanates, Mughals, medieval Europe, crusades, kingdoms, explorers of the middle ages."
+        },
+        {
+          "code": "HIS.MH2",
+          "name": "Modern History",
+          "description": "From about 1700 onwards: colonialism, industrial revolution, modern states."
+        },
+        {
+          "code": "HIS.IFS",
+          "name": "Indian Freedom Struggle",
+          "description": "Independence movement, freedom fighters, movements, Partition, key dates."
+        },
+        {
+          "code": "HIS.WW",
+          "name": "World Wars",
+          "description": "World War I and II, battles, leaders, treaties and the aftermath."
+        },
+        {
+          "code": "HIS.ED",
+          "name": "Empires and Dynasties",
+          "description": "Mauryas, Guptas, Mughals, Ottomans, Romans, British Empire, dynasties and rulers."
+        },
+        {
+          "code": "HIS.HF",
+          "name": "Historical Figures",
+          "description": "Kings, queens, leaders, rebels and thinkers of history."
+        },
+        {
+          "code": "HIS.RM",
+          "name": "Revolutions and Movements",
+          "description": "French, Russian and other revolutions, social and political movements."
+        },
+        {
+          "code": "HIS.EH",
+          "name": "Economic History",
+          "description": "Trade routes, East India Company, past economic systems, famous financial episodes."
+        },
+        {
+          "code": "HIS.AHS",
+          "name": "Archaeology and Heritage Sites",
+          "description": "Excavations, ruins, UNESCO sites, monuments seen as history."
+        },
+        {
+          "code": "HIS.HED",
+          "name": "Historical Events and Dates",
+          "description": "Specific events, 'which year' questions, anniversaries and historical timelines."
+        }
+      ]
+    },
+    {
+      "name": "Geography",
+      "code": "GEO",
+      "level2": [
+        {
+          "code": "GEO.CC",
+          "name": "Countries and Capitals",
+          "description": "Countries, capitals, borders, currencies, continents, country facts."
+        },
+        {
+          "code": "GEO.CP",
+          "name": "Cities and Places",
+          "description": "Cities, towns, regions, islands, famous places and what they are known for."
+        },
+        {
+          "code": "GEO.RML",
+          "name": "Rivers, Mountains and Landforms",
+          "description": "Rivers, lakes, mountains, plateaus, deserts, valleys and other landforms."
+        },
+        {
+          "code": "GEO.OC",
+          "name": "Oceans and Climate",
+          "description": "Seas, oceans, currents, monsoon, climate zones, weather patterns."
+        },
+        {
+          "code": "GEO.SI",
+          "name": "States of India",
+          "description": "Indian states and union territories, capitals, districts, state symbols and facts."
+        },
+        {
+          "code": "GEO.FS",
+          "name": "Flags and Symbols",
+          "description": "National flags, emblems, anthems, state symbols and what they mean."
+        },
+        {
+          "code": "GEO.LM",
+          "name": "Landmarks and Monuments",
+          "description": "Famous buildings, towers, bridges, monuments and tourist landmarks."
+        },
+        {
+          "code": "GEO.MT",
+          "name": "Maps and Travel",
+          "description": "Routes, borders on maps, airports, railways as journeys, travel and tourism facts."
+        },
+        {
+          "code": "GEO.NW",
+          "name": "Natural Wonders",
+          "description": "Waterfalls, canyons, reefs, caves and other natural wonders of the world."
+        }
+      ]
+    },
+    {
+      "name": "Politics",
+      "code": "POL",
+      "level2": [
+        {
+          "code": "POL.IP",
+          "name": "Indian Politics",
+          "description": "Indian parties, leaders, parliament, state politics and political history."
+        },
+        {
+          "code": "POL.WP",
+          "name": "World Politics",
+          "description": "Governments, leaders and political events outside India."
+        },
+        {
+          "code": "POL.GC",
+          "name": "Governance and Constitution",
+          "description": "Constitution, rights, institutions, how governments work, amendments."
+        },
+        {
+          "code": "POL.LC",
+          "name": "Law and Courts",
+          "description": "Courts, landmark judgments, laws, legal terms and famous cases."
+        },
+        {
+          "code": "POL.IO",
+          "name": "International Organisations",
+          "description": "UN, WTO, IMF, NATO, BRICS, G20, WHO and other bodies."
+        },
+        {
+          "code": "POL.E",
+          "name": "Elections",
+          "description": "Elections, voting, results, electoral systems and election trivia."
+        },
+        {
+          "code": "POL.DM",
+          "name": "Defence and Military",
+          "description": "Armed forces, weapons, wars as military events, defence organisations."
+        },
+        {
+          "code": "POL.CA",
+          "name": "Current Affairs",
+          "description": "Recent news, events of the year, newsmakers and appointments."
+        },
+        {
+          "code": "POL.AH",
+          "name": "Awards and Honours",
+          "description": "Bharat Ratna, Padma awards, Nobel Peace Prize, state honours and civilian awards."
+        }
+      ]
+    },
+    {
+      "name": "Sports",
+      "code": "SPO",
+      "level2": [
+        {
+          "code": "SPO.C",
+          "name": "Cricket",
+          "description": "Matches, players, records, tournaments, IPL as a cricket competition, umpiring and trivia."
+        },
+        {
+          "code": "SPO.F",
+          "name": "Football",
+          "description": "Clubs, leagues, World Cups, players, managers, football records and history."
+        },
+        {
+          "code": "SPO.OME",
+          "name": "Olympics and Multi-Sport Events",
+          "description": "Olympics, Asian Games, Commonwealth Games, medallists, hosts, mascots."
+        },
+        {
+          "code": "SPO.T",
+          "name": "Tennis",
+          "description": "Grand Slams, players, tournaments, tennis records and history."
+        },
+        {
+          "code": "SPO.M",
+          "name": "Motorsport",
+          "description": "Formula 1, MotoGP, rallying, drivers, teams, circuits."
+        },
+        {
+          "code": "SPO.OS",
+          "name": "Other Sports",
+          "description": "Hockey, badminton, chess, kabaddi, athletics, golf, boxing, wrestling and every other sport."
+        },
+        {
+          "code": "SPO.SB",
+          "name": "Sports Business",
+          "description": "Franchise values, broadcast rights, sponsorships, league economics, sports brands."
+        },
+        {
+          "code": "SPO.AR",
+          "name": "Athletes and Records",
+          "description": "Famous athletes, world records, firsts, career milestones across sports."
+        }
+      ]
+    },
+    {
+      "name": "Entertainment",
+      "code": "ENT",
+      "level2": [
+        {
+          "code": "ENT.B",
+          "name": "Bollywood",
+          "description": "Hindi cinema, actors, directors, films, songs, box office and trivia."
+        },
+        {
+          "code": "ENT.HWC",
+          "name": "Hollywood and World Cinema",
+          "description": "English-language and international films, directors, franchises, Oscars trivia."
+        },
+        {
+          "code": "ENT.TO",
+          "name": "Television and OTT",
+          "description": "TV shows, serials, reality TV, streaming series and platforms as shows."
+        },
+        {
+          "code": "ENT.M",
+          "name": "Music",
+          "description": "Songs, albums, genres, classical and film music, music history and instruments."
+        },
+        {
+          "code": "ENT.MB",
+          "name": "Musicians and Bands",
+          "description": "Singers, composers, bands and their careers."
+        },
+        {
+          "code": "ENT.TS",
+          "name": "Theatre and Stand-up",
+          "description": "Plays, theatre, stand-up comedy and live performance."
+        },
+        {
+          "code": "ENT.AC",
+          "name": "Animation and Comics",
+          "description": "Cartoons, anime, comics, graphic novels, animated films and characters."
+        },
+        {
+          "code": "ENT.VG",
+          "name": "Video Games",
+          "description": "Game titles, characters, studios and gaming culture."
+        },
+        {
+          "code": "ENT.C",
+          "name": "Celebrities",
+          "description": "Famous personalities, influencers, personal trivia about stars."
+        },
+        {
+          "code": "ENT.AF",
+          "name": "Awards and Festivals",
+          "description": "Film and music awards, film festivals, Filmfare, Grammys, Oscars."
+        },
+        {
+          "code": "ENT.ICM",
+          "name": "Internet Culture and Memes",
+          "description": "Memes, viral videos, internet slang, online trends."
+        }
+      ]
+    },
+    {
+      "name": "Culture",
+      "code": "CUL",
+      "level2": [
+        {
+          "code": "CUL.LA",
+          "name": "Literature and Authors",
+          "description": "Novels, poems, authors, characters, literary prizes and famous quotes."
+        },
+        {
+          "code": "CUL.MR",
+          "name": "Mythology and Religion",
+          "description": "Myths, epics, gods, religions, scriptures, religious festivals' stories."
+        },
+        {
+          "code": "CUL.AA",
+          "name": "Art and Artists",
+          "description": "Painting, sculpture, artists, art movements, museums and famous artworks."
+        },
+        {
+          "code": "CUL.A",
+          "name": "Architecture",
+          "description": "Styles, architects, famous buildings seen as architecture, design history."
+        },
+        {
+          "code": "CUL.FD",
+          "name": "Food and Drink",
+          "description": "Dishes, cuisines, beverages, ingredients, food origins and food culture."
+        },
+        {
+          "code": "CUL.FT",
+          "name": "Festivals and Traditions",
+          "description": "Festivals, rituals, customs, folk traditions and celebrations."
+        },
+        {
+          "code": "CUL.LW",
+          "name": "Language and Words",
+          "description": "Vocabulary, grammar, idioms, languages, scripts, wordplay, borrowed words."
+        },
+        {
+          "code": "CUL.E",
+          "name": "Etymology",
+          "description": "Where words and names come from, word histories, name origins."
+        },
+        {
+          "code": "CUL.PB",
+          "name": "People and Biographies",
+          "description": "Notable people whose stories do not belong to a single field above."
+        },
+        {
+          "code": "CUL.UL",
+          "name": "Urban Life",
+          "description": "Cities as lived places, local culture, transport, civic life, neighbourhood trivia."
+        },
+        {
+          "code": "CUL.SI",
+          "name": "Social Impact",
+          "description": "NGOs, social movements, philanthropy, education access, sustainability work."
+        },
+        {
+          "code": "CUL.EI",
+          "name": "Education and Institutions",
+          "description": "Schools, universities, exams, famous institutions, school-syllabus general knowledge."
+        }
+      ]
+    }
+  ],
+  "geography": [
+    "IN",
+    "INTL",
+    "NA"
+  ],
+  "formats": [
+    "QA",
+    "THREE_CLUE",
+    "POTPOURRI",
+    "CONNECT",
+    "ARRANGE_ORDER",
+    "IMAGE_REVEAL",
+    "LIST_IT",
+    "BUZZER"
+  ]
+}

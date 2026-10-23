@@ -52,6 +52,19 @@ class QshalaQuestionMetadata(Base):
     secondary_audience = Column(String(64), nullable=True)
     language = Column(String(32), default="English")
 
+    # v6 additions. These hold the *effective* value for the question: copied from the deck when the
+    # question is ingested, overwritten by the tagger (geography, relevant year) or by a human.
+    # `manual_fields` lists the fields a human edited so a deck edit or re-tag never overwrites them.
+    round_number = Column(Integer, nullable=True)
+    question_in_round = Column(Integer, nullable=True)           # "Round 3 Q4" -> round_number=3, question_in_round=4
+    city_name = Column(String(100), nullable=True)               # where the quiz was held (from the deck name)
+    deck_year = Column(Integer, nullable=True)
+    is_varsity = Column(Boolean, default=False)                  # Zerodha Varsity Quiz (ZVQ in the deck name)
+    relevant_year = Column(Integer, nullable=True)               # the year the question is about, e.g. 2016
+    geo_region = Column(String(100), nullable=True)              # where the question is about
+    india_international = Column(String(8), nullable=True)       # IN | INTL | NA
+    manual_fields = Column(JSON, default=list)
+
     created_at = Column(DateTime(timezone=True), default=_now)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
 
@@ -81,7 +94,8 @@ class QshalaTag(Base):
 
     city_name = Column(String(100), nullable=True)
     geo_region = Column(String(64), nullable=True)                # South India | West India | North India | ...
-    india_international = Column(String(16), nullable=True, index=True)       # IN | INTL | MIXED
+    india_international = Column(String(16), nullable=True, index=True)       # IN | INTL | MIXED (v5.1) | NA (v6)
+    relevant_year = Column(Integer, nullable=True)                # v6: the year the question is about
 
     shelf_life = Column(String(24), nullable=True, index=True)                # EVERGREEN | REVIEW_YEARLY | TIME_SENSITIVE
     sensitivity = Column(String(24), nullable=True, index=True)               # NONE | POLITICAL | MATURE_REFERENCE
