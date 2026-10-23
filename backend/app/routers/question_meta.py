@@ -84,6 +84,13 @@ def split_tags(q: Question, paths: List[Dict[str, Any]]) -> List[str]:
     return [t for t in (q.tags or []) if isinstance(t, str) and t.lower() not in kw]
 
 
+def _tag_error(db: Session, qid: str) -> Optional[str]:
+    row = (db.query(QuestionEditHistory)
+           .filter(QuestionEditHistory.question_id == qid, QuestionEditHistory.kind == "TAG_ERROR")
+           .order_by(QuestionEditHistory.changed_at.desc()).first())
+    return row.new_value if row else None
+
+
 def build_detail(db: Session, q: Question) -> Dict[str, Any]:
     doc = db.query(Document).filter(Document.id == q.document_id).first()
     meta = db.query(QshalaQuestionMetadata).filter(QshalaQuestionMetadata.question_id == q.id).first()
@@ -108,6 +115,7 @@ def build_detail(db: Session, q: Question) -> Dict[str, Any]:
         "repeated": svc.get_repeats(db, q.id),
         "topic": q.topic,
         "subtopic": q.subtopic,
+        "tag_error": _tag_error(db, q.id) if not paths else None,
     }
 
 

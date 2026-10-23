@@ -456,7 +456,11 @@ function KnowledgeBaseContent() {
                             <div className="font-semibold text-[13.5px] text-slate-900 leading-snug">
                               {q.question_text}
                             </div>
-                            {q.star_marked && <Star className="mt-0.5 h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-500" aria-label="Star marked" />}
+                            {q.star_marked && (
+                              <span className="mt-0.5 inline-flex shrink-0 items-center gap-0.5 rounded bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10.5px] font-bold text-amber-700">
+                                <Star className="h-3 w-3 fill-amber-400 text-amber-500" />Star
+                              </span>
+                            )}
                           </div>
                           <div className="mt-1 text-[12px] text-slate-600 font-normal">
                             Answer: <span className="font-semibold text-slate-800">{q.answer}</span>

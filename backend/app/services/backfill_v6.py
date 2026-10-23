@@ -72,11 +72,12 @@ def run_structure(db: Session) -> Dict[str, int]:
     docs = db.query(Document).filter(Document.processing_status == "COMPLETED").all()
     doc_ids = {d.id for d in docs}
     for doc in docs:
-        deck_row = svc.upsert_deck_metadata(db, doc)
+        deck_row = svc.upsert_deck_metadata(db, doc, reparse=True)
         slides = db.query(Slide).filter(Slide.document_id == doc.id).order_by(Slide.slide_number).all()
         slide_no = {s.id: s.slide_number for s in slides}
         slide_dicts = [{"slide_number": s.slide_number, "extracted_text": s.extracted_text or "",
-                        "slide_type": s.slide_type, "title": s.title} for s in slides]
+                        "slide_type": s.slide_type, "title": s.title,
+                        "metadata_json": s.metadata_json or {}} for s in slides]
         qs = db.query(Question).filter(Question.document_id == doc.id).all()
         qs.sort(key=lambda q: (slide_no.get(q.slide_id) or 10 ** 6, q.created_at or 0))
         dicts = [_question_dict(q, slide_no.get(q.slide_id)) for q in qs]
@@ -86,6 +87,7 @@ def run_structure(db: Session) -> Dict[str, int]:
             if d["question_text"] != q.question_text:
                 q.question_text = d["question_text"]
                 q.content_hash = Deduplicator.compute_hash(q.question_text, q.answer or "")
+            q.round_number = (d.get("_meta") or {}).get("round_number")
             svc.ensure_question_metadata(db, q, d.get("_meta"), deck_row, doc)
             STATUS["questions"] += 1
             # Repeated entries from the old provenance list

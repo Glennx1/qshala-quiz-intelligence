@@ -221,7 +221,14 @@ class PPTXParser:
 
             # 1. Iterate shapes for text, tables, and PICTURE shapes
             img_counter = 1
+            has_star_shape = False
             for shape in slide.shapes:
+                try:
+                    st = getattr(shape, "auto_shape_type", None) if shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE else None
+                    if (st is not None and "STAR" in str(st).upper()) or "star" in (shape.name or "").lower():
+                        has_star_shape = True
+                except Exception:
+                    pass
                 if shape.has_text_frame:
                     shape_text = clean_pptx_text(shape.text_frame.text)
                     if shape_text:
@@ -394,7 +401,8 @@ class PPTXParser:
                     "has_notes": bool(speaker_notes),
                     "audio_count": len(audio_items),
                     "video_count": len(video_items),
-                    "image_count": len(image_paths)
+                    "image_count": len(image_paths),
+                    "has_star_shape": has_star_shape,
                 }
             })
 

@@ -148,3 +148,27 @@ def test_annotate_numbers_per_round_and_star_strip():
     assert qs[1]["_meta"]["star_marked"] is False
     assert dm.question_label(3, 2, 1) == "Round 2 Q1"
     assert dm.question_label(14, None, None) == "Q14"
+
+
+def test_filename_with_city_after_stage_and_answers_noise():
+    from backend.app.services.ingestion.deck_metadata import parse_deck_filename
+    d = parse_deck_filename("Prelim W ANSWERS - Bangalore South Zone - ZVQ 2026.pptx")
+    assert d.city == "Bengaluru" and d.round_stage == "Prelims" and d.deck_year == 2026
+    assert d.college is None and d.is_varsity is True
+    assert d.quiz_name == "Bangalore South Zone ZVQ"
+
+
+def test_decks_without_round_headers_have_no_round_and_star_shapes_count():
+    from backend.app.services.ingestion.deck_metadata import annotate_questions, question_label
+    slides = [
+        {"slide_number": 1, "title": "ZVQ Prelims", "extracted_text": "ZVQ Prelims", "slide_type": "TITLE"},
+        {"slide_number": 2, "title": "Q20", "extracted_text": "QUESTION 20\nWho?", "slide_type": "QUESTION",
+         "metadata_json": {"has_star_shape": True}},
+        {"slide_number": 3, "title": "Q21", "extracted_text": "QUESTION 21\nWhat?", "slide_type": "QUESTION"},
+    ]
+    qs = [{"question_text": "Who?", "answer": "a", "slide_number": 2, "round_number": 20},
+          {"question_text": "What?", "answer": "b", "slide_number": 3, "round_number": 21}]
+    annotate_questions(qs, slides)
+    assert [q["_meta"]["round_number"] for q in qs] == [None, None]
+    assert [q["_meta"]["star_marked"] for q in qs] == [True, False]
+    assert question_label(2, None, 2) == "Q2"

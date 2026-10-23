@@ -442,6 +442,11 @@ export default function TagManagerModal({ isOpen, onClose, question, onSaved, on
                       Not tagged yet. Add a topic below, or re-tag with AI.
                     </p>
                   )}
+                  {paths.length === 0 && detail.tag_error && (
+                    <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-[12px] text-red-700 break-words">
+                      The AI could not tag this question. {detail.tag_error}
+                    </p>
+                  )}
 
                   {paths.map((p, i) => {
                     const theme = themes.find((t) => t.name === p.l1);
@@ -541,7 +546,7 @@ export default function TagManagerModal({ isOpen, onClose, question, onSaved, on
                   </p>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <Field label="Quiz name"><input className={inputCls} value={meta.quiz_name ?? ''} onChange={(e) => setMetaField('quiz_name', e.target.value)} /></Field>
-                    <Field label="College"><input className={inputCls} value={meta.college_institution ?? ''} onChange={(e) => setMetaField('college_institution', e.target.value)} /></Field>
+                    <Field label="Venue (college, school or company)"><input className={inputCls} value={meta.college_institution ?? ''} onChange={(e) => setMetaField('college_institution', e.target.value)} /></Field>
                     <Field label="City (where the quiz was held)"><input className={inputCls} value={meta.city_name ?? ''} onChange={(e) => setMetaField('city_name', e.target.value)} /></Field>
                     <Field label="Prelims / Finals">
                       <input className={inputCls} list="round-stages" value={meta.round_stage ?? ''} onChange={(e) => setMetaField('round_stage', e.target.value)} />

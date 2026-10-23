@@ -18,6 +18,7 @@ from backend.app.services.ingestion.cancellation import (
 from backend.app.services.ingestion.slide_classifier import SlideClassifier
 from backend.app.services.ingestion.question_extractor import QuestionExtractor
 from backend.app.services.ingestion.deck_metadata import annotate_questions
+from backend.app.models.question_meta import QuestionEditHistory
 from backend.app.services.question_meta_service import (
     upsert_deck_metadata, deck_row_to_info, ensure_question_metadata, apply_tag_to_meta,
 )
@@ -357,7 +358,7 @@ class IngestionPipeline:
                     occurrence_count=1,
                     question_type=q_data.get("question_type", "SLIDE_QA"),
                     source_year=q_data.get("source_year", doc.year),
-                    round_number=q_data.get("round_number"),
+                    round_number=(q_data.get("_meta") or {}).get("round_number"),
                     image_refs=q_data.get("image_refs", []),
                     question_images=q_data.get("question_images", []),
                     answer_images=q_data.get("answer_images", []),
@@ -389,7 +390,7 @@ class IngestionPipeline:
             # Auto-tag newly ingested questions with the QShala tagger (v6: topic paths, geography, year).
             if USE_QSHALA_TAGGER and question_models:
                 sem = asyncio.Semaphore(TAG_CONCURRENCY)
-                done = {"n": 0}
+                done = {"n": 0, "failed": 0, "first_error": None}
                 total = len(question_models)
 
                 async def _tag_one(q_m):
@@ -413,6 +414,11 @@ class IngestionPipeline:
                         except Exception as q_tag_err:
                             # The question is still stored (as "Uncategorised"); a re-tag can fill it in later.
                             logger.warning(f"QshalaTagger failed during ingestion for question {q_m.id}: {q_tag_err}")
+                            done["failed"] += 1
+                            done["first_error"] = done["first_error"] or str(q_tag_err)[:300]
+                            db.add(QuestionEditHistory(question_id=q_m.id, field="tagging", old_value=None,
+                                                       new_value=f"Tagging failed: {str(q_tag_err)[:300]}",
+                                                       kind="TAG_ERROR", actor="deck_upload"))
                         finally:
                             done["n"] += 1
                             INGESTION_STATUS_REGISTRY[document_id]["current_step"] = (
@@ -429,10 +435,13 @@ class IngestionPipeline:
             doc.processing_status = "COMPLETED"
             db.commit()
 
+            _tag_note = ""
+            if USE_QSHALA_TAGGER and question_models and done["failed"]:
+                _tag_note = f" (AI tagging failed for {done['failed']} of {len(question_models)}: {done['first_error']})"
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "progress_percentage": 100,
                 "status": "COMPLETED",
-                "current_step": "Ingestion completed successfully",
+                "current_step": "Ingestion completed successfully" + _tag_note,
                 "slides_processed": len(slide_models),
                 "questions_extracted": len(question_models),
                 "duplicates_filtered": len(duplicates)

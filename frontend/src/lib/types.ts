@@ -155,6 +155,7 @@ export interface DeckMeta {
 }
 
 export interface QuestionDetail {
+  tag_error?: string | null;
   id: string;
   question_text: string;
   answer: string;

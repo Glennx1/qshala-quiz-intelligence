@@ -167,6 +167,9 @@ def is_varsity_name(*texts: Optional[str]) -> bool:
                 or re.search(r"zerodha\s+varsity", blob, re.I))
 
 
+_NOISE = re.compile(r"\b(?:w(?:ith)?\.?\s+answers?|answers?|copy(?:\s+of)?|final\s+version|v\d+)\b|\(\d+\)", re.I)
+
+
 def parse_deck_filename(filename: Optional[str], title: Optional[str] = None) -> DeckInfo:
     """Parse a deck file name (or, failing that, its title) into DeckInfo. Never raises."""
     info = DeckInfo(source_presentation=filename or title)
@@ -179,6 +182,8 @@ def parse_deck_filename(filename: Optional[str], title: Optional[str] = None) ->
 
         info.is_varsity = is_varsity_name(stem, title)
 
+        stem = _NOISE.sub(" ", stem)
+        stem = re.sub(r"\s+", " ", stem).strip()
         dt, year, rest = _extract_date(stem)
         info.deck_date = dt.isoformat() if dt else None
         info.deck_year = year
@@ -216,12 +221,18 @@ def parse_deck_filename(filename: Optional[str], title: Optional[str] = None) ->
                     if city_span is None or end > city_span[1]:
                         city_span = (pos, end)
                 start = pos + 1
+        if city_span is None:   # no city before the stage word: take the first city anywhere in the name
+            for city in _ALL_CITIES:
+                pos = _find_subseq(norm, city.split(), 0)
+                if pos is not None and (city_span is None or pos < city_span[0]):
+                    city_span = (pos, pos + len(city.split()))
         if city_span:
             raw_city = " ".join(norm[city_span[0]:city_span[1]])
             info.city = CITY_ALIASES.get(raw_city, raw_city.title())
 
         # College: everything before the city (or before the stage word when no city was found).
-        college_end = city_span[0] if city_span else stage_idx
+        ends = [e for e in (city_span[0] if city_span else None, stage_idx) if e is not None]
+        college_end = min(ends) if ends else None
         if college_end:
             college = " ".join(tokens[:college_end]).strip(" -–—|.")
             info.college = college or None
@@ -373,6 +384,21 @@ def clue_media_type(q: Dict[str, Any]) -> str:
     return "NONE"
 
 
+def round_by_slide(slides: List[Dict[str, Any]]) -> Dict[int, Optional[int]]:
+    """Round in force at each slide, from real 'ROUND n' header slides only (None for decks without rounds)."""
+    out: Dict[int, Optional[int]] = {}
+    current: Optional[int] = None
+    for s in sorted((x for x in slides if x.get("slide_number") is not None), key=lambda x: int(x["slide_number"])):
+        title = s.get("title") or ""
+        text = s.get("extracted_text") or ""
+        if s.get("slide_type") == "SECTION_MARKER" or re.search(r"\bround\s*\d+", title, re.I):
+            m = re.search(r"\bround\s*(\d+)", f"{title} {text}", re.I)
+            if m:
+                current = int(m.group(1))
+        out[int(s["slide_number"])] = current
+    return out
+
+
 def annotate_questions(
     questions: List[Dict[str, Any]],
     slides: List[Dict[str, Any]],
@@ -387,11 +413,16 @@ def annotate_questions(
     slide_text_by_no = {int(s.get("slide_number")): (s.get("extracted_text") or "")
                         for s in slides if s.get("slide_number") is not None}
     per_round: Dict[Optional[int], int] = {}
+    rounds = round_by_slide(slides)
+    star_shape_slides = {int(s["slide_number"]) for s in slides
+                         if s.get("slide_number") is not None and (s.get("metadata_json") or {}).get("has_star_shape")}
     for idx, q in enumerate(questions, start=1):
-        rnd = q.get("round_number")
-        per_round[rnd] = per_round.get(rnd, 0) + 1
         sn = q.get("slide_number")
+        rnd = rounds.get(int(sn)) if sn else None
+        per_round[rnd] = per_round.get(rnd, 0) + 1
         star, cleaned = detect_star(q.get("question_text") or "", slide_text_by_no.get(int(sn), "") if sn else "")
+        if not star and sn and int(sn) in star_shape_slides:
+            star = True
         if star and cleaned:
             q["question_text"] = cleaned
         lang_default = deck.language if deck and deck.language else None
