@@ -7,8 +7,11 @@ on image-heavy decks without adding a slow pre-processing stage.
 import io
 import logging
 import os
+import sys
 import threading
-from typing import Tuple
+import concurrent.futures
+import asyncio
+from typing import Tuple, Optional
 
 from PIL import Image
 
@@ -77,3 +80,73 @@ def shrink_for_vision(data: bytes, mime_type: str) -> Tuple[bytes, str]:
     finally:
         if gate is not None:
             gate.release()
+
+
+def shrink_file_worker(file_path: str, mime_type: str) -> Tuple[bytes, str]:
+    """Worker executed in throwaway subprocess: reads file, shrinks it, returns small bytes and mime."""
+    try:
+        with open(file_path, "rb") as f:
+            data = f.read()
+        return shrink_for_vision(data, mime_type)
+    except Exception as e:
+        logger.debug("shrink_file_worker failed for %s: %s", file_path, e)
+        return b"", mime_type
+
+
+def shrink_data_worker(data: bytes, mime_type: str) -> Tuple[bytes, str]:
+    """Worker executed in throwaway subprocess: shrinks bytes, returns small bytes and mime."""
+    try:
+        return shrink_for_vision(data, mime_type)
+    except Exception as e:
+        logger.debug("shrink_data_worker failed: %s", e)
+        return data, mime_type
+
+
+def _use_subprocess() -> bool:
+    """Use throwaway subprocess on Linux/macOS to enforce memory return to OS."""
+    return not sys.platform.startswith("win")
+
+
+async def shrink_for_vision_subprocess(
+    file_path: Optional[str] = None,
+    data: Optional[bytes] = None,
+    mime_type: str = "image/jpeg"
+) -> Tuple[bytes, str]:
+    """Shrink image in a throwaway subprocess so decode memory returns to OS upon exit.
+
+    Passes file path directly to the child if present, keeping full-res bytes out of the parent process.
+    Falls back to in-process shrink_for_vision on any exception.
+    """
+    if _use_subprocess():
+        if file_path and os.path.exists(file_path):
+            try:
+                loop = asyncio.get_running_loop()
+                with concurrent.futures.ProcessPoolExecutor(max_workers=1, max_tasks_per_child=1) as pool:
+                    result = await loop.run_in_executor(pool, shrink_file_worker, str(file_path), mime_type)
+                    if result and result[0]:
+                        return result
+            except Exception as exc:
+                logger.debug("Subprocess shrink failed (%s), falling back to in-process", exc)
+        elif data:
+            try:
+                loop = asyncio.get_running_loop()
+                with concurrent.futures.ProcessPoolExecutor(max_workers=1, max_tasks_per_child=1) as pool:
+                    result = await loop.run_in_executor(pool, shrink_data_worker, data, mime_type)
+                    if result and result[0]:
+                        return result
+            except Exception as exc:
+                logger.debug("Subprocess shrink failed (%s), falling back to in-process", exc)
+
+    # In-process fallback
+    if file_path and os.path.exists(file_path):
+        try:
+            with open(file_path, "rb") as f:
+                raw_bytes = f.read()
+            return shrink_for_vision(raw_bytes, mime_type)
+        except Exception as read_exc:
+            logger.debug("Fallback file read failed: %s", read_exc)
+            return b"", mime_type
+    elif data:
+        return shrink_for_vision(data, mime_type)
+
+    return b"", mime_type

@@ -1,8 +1,18 @@
 import os
 import asyncio
 import logging
+import gc
+import psutil
+from pathlib import Path
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
+
+def _log_mem(stage: str):
+    rss_mb = psutil.Process().memory_info().rss / (1024 * 1024)
+    counts = gc.get_count()
+    msg = f"[MEM] {stage:45s} | RSS: {rss_mb:6.1f} MB | GC: {counts}"
+    logging.getLogger(__name__).info(msg)
+    print(msg, flush=True)
 from backend.app.models.document import Document, Slide
 from backend.app.models.question import Question
 from backend.app.config import settings
@@ -20,7 +30,7 @@ from backend.app.services.ingestion.question_extractor import QuestionExtractor
 from backend.app.services.ingestion.deck_metadata import annotate_questions
 from backend.app.models.question_meta import QuestionEditHistory
 from backend.app.services.ingestion import progress
-from backend.app.services.ingestion.vision_resize import shrink_for_vision
+from backend.app.services.ingestion.vision_resize import shrink_for_vision, shrink_for_vision_subprocess
 from backend.app.services.tagging.qshala_tagger import safe_error
 from backend.app.services.question_meta_service import (
     upsert_deck_metadata, deck_row_to_info, ensure_question_metadata, apply_tag_to_meta,
@@ -29,10 +39,19 @@ from backend.app.services.tagging import topic_paths
 from backend.app.services.tagging.auto_tagger import AutoTagger  # Kept for backward compatibility
 from backend.app.services.tagging.qshala_tagger import QshalaTagger
 from backend.app.services.tagging.difficulty_engine import DifficultyEngine
+import ctypes
+
+def _trim_memory():
+    gc.collect()
+    if hasattr(ctypes, "CDLL"):
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
 
 # Feature toggle: set to False to revert to legacy AutoTagger writing topic tags on upload
 USE_QSHALA_TAGGER: bool = True
-VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "2"))   # parallel image-description calls (lowered: full-res images held per in-flight call add up on 512 MB)
+VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "1"))   # parallel image-description calls (1 on 512 MB instances)
 TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "3"))   # parallel Gemini tagging calls per deck
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
@@ -114,6 +133,12 @@ class IngestionPipeline:
 
             raise_if_cancelled(document_id)
             progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Read {len(raw_slides)} slides and saved their pictures")
+            try:
+                del parser
+            except NameError:
+                pass
+            _trim_memory()
+            _log_mem("after parse")
 
             # Classify each slide using 2-pass contextual deck classifier
             classified_slides = []
@@ -147,6 +172,12 @@ class IngestionPipeline:
                            f"Sorted slides: {_kinds.get('QUESTION', 0)} question, {_kinds.get('ANSWER', 0)} answer, "
                            f"{_other} other (titles, rounds, scoreboards: not sent to the AI)")
             doc.slide_count = len(slide_models)
+            try:
+                del deck_types
+            except NameError:
+                pass
+            _trim_memory()
+            _log_mem("after classify")
             
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "progress_percentage": 45,
@@ -176,6 +207,8 @@ class IngestionPipeline:
             # (question number, format, star, answer type, language).
             deck_row = upsert_deck_metadata(db, doc)
             annotate_questions(raw_questions, classified_slides, deck_row_to_info(deck_row))
+            _trim_memory()
+            _log_mem("after question extraction")
 
             # Step 5: Multi-Topic Auto-Tagging & Pedagogical Difficulty Scoring
             INGESTION_STATUS_REGISTRY[document_id].update({
@@ -193,6 +226,8 @@ class IngestionPipeline:
             _vision_reused = {"n": 0}
 
             async def _describe_one_image(rel_img_path: str) -> Optional[str]:
+                img_name = os.path.basename(rel_img_path)
+                _log_mem(f"before image desc [{img_name}]")
                 async with _vision_cache_lock:
                     fut = _vision_cache.get(rel_img_path)
                     if fut is not None:
@@ -203,22 +238,14 @@ class IngestionPipeline:
 
                 desc: Optional[str] = None
                 try:
-                    disk_path = None
-                    img_bytes = None
-                    ext = None
+                    disk_path: Optional[Path] = None
+                    img_bytes: Optional[bytes] = None
+                    ext = os.path.splitext(rel_img_path)[1].lower()
 
-                    if rel_img_path.startswith("http://") or rel_img_path.startswith("https://"):
-                        # Media stored in Cloudflare R2 (or any other remote object store) --
-                        # the local disk copy may not exist on this instance, so fetch over HTTP.
-                        try:
-                            import httpx as _httpx
-                            async with _httpx.AsyncClient(timeout=30.0) as client:
-                                resp = await client.get(rel_img_path)
-                                resp.raise_for_status()
-                                img_bytes = resp.content
-                            ext = os.path.splitext(rel_img_path)[1].lower()
-                        except Exception as fetch_err:
-                            logger.warning(f"Failed to fetch remote image {rel_img_path}: {fetch_err}")
+                    # 1. First look for local copy at settings.SLIDES_DIR / doc.id / "media" / img_name
+                    cand_local = settings.SLIDES_DIR / doc.id / "media" / img_name
+                    if cand_local.exists():
+                        disk_path = cand_local
                     elif rel_img_path.startswith("/static/slides/"):
                         sub = rel_img_path[len("/static/slides/"):]
                         cand = settings.SLIDES_DIR / sub
@@ -229,29 +256,42 @@ class IngestionPipeline:
                         if cand.exists():
                             disk_path = cand
 
-                    if img_bytes is None and disk_path and disk_path.exists():
+                    # 2. Only fall back to httpx download if local file not found
+                    if disk_path is None and (rel_img_path.startswith("http://") or rel_img_path.startswith("https://")):
                         try:
-                            with open(disk_path, "rb") as f:
-                                img_bytes = f.read()
-                            ext = disk_path.suffix.lower()
-                        except Exception as read_err:
-                            logger.warning(f"Failed to read local image {rel_img_path}: {read_err}")
+                            import httpx as _httpx
+                            async with _httpx.AsyncClient(timeout=30.0) as client:
+                                resp = await client.get(rel_img_path)
+                                resp.raise_for_status()
+                                img_bytes = resp.content
+                                del resp
+                        except Exception as fetch_err:
+                            logger.warning(f"Failed to fetch remote image {rel_img_path}: {fetch_err}")
 
-                    if img_bytes:
+                    if disk_path or img_bytes:
                         try:
                             mime = "image/png" if ext == ".png" else ("image/jpeg" if ext in [".jpg", ".jpeg"] else "image/webp")
-                            # Shrink in memory only -- not touching the stored file -- so a deck
-                            # with many large pictures doesn't hold full-res bytes for every
-                            # concurrent vision call at once.
-                            vision_bytes, mime = await asyncio.to_thread(shrink_for_vision, img_bytes, mime)
-                            raw_desc = await self.llm_provider.describe_image(vision_bytes, mime_type=mime)
-                            if raw_desc and raw_desc.strip():
-                                desc = raw_desc.strip()
+                            vision_bytes, mime = await shrink_for_vision_subprocess(
+                                file_path=str(disk_path) if disk_path else None,
+                                data=img_bytes,
+                                mime_type=mime
+                            )
+                            if img_bytes is not None:
+                                del img_bytes
+                                img_bytes = None
+
+                            if vision_bytes:
+                                raw_desc = await self.llm_provider.describe_image(vision_bytes, mime_type=mime)
+                                del vision_bytes
+                                if raw_desc and raw_desc.strip():
+                                    desc = raw_desc.strip()
                         except Exception as vision_err:
                             logger.warning(f"Failed to describe image {rel_img_path}: {vision_err}")
                 finally:
                     if not fut.done():
                         fut.set_result(desc)
+                    _trim_memory()
+                    _log_mem(f"after image desc [{img_name}]")
                 return desc
 
             async def _describe_images(q):
@@ -284,6 +324,8 @@ class IngestionPipeline:
             if _img_total:
                 progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Describing images for {_img_total} questions with AI")
             await asyncio.gather(*[_describe_guarded(q) for q in raw_questions])
+            _vision_cache.clear()
+            _trim_memory()
             if _vision_reused["n"]:
                 progress.event(INGESTION_STATUS_REGISTRY[document_id],
                                f"{_vision_reused['n']} repeated pictures reused their earlier description (skipped the AI call)")
@@ -514,10 +556,14 @@ class IngestionPipeline:
                         raise r
                     if isinstance(r, BaseException):
                         logger.warning(f"Tagging task error: {r}")
+                del results
+                _trim_memory()
+                _log_mem("after tagging")
 
             doc.question_count = len(question_models)
             doc.processing_status = "COMPLETED"
             db.commit()
+            _log_mem("end of pipeline")
 
             progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Saved {len(question_models)} questions", detail="Finishing up")
             _tag_note = ""

@@ -210,7 +210,10 @@ class GeminiLLMProvider(LLMProvider):
             "2. Describe the key visual content (person, monument, diagram, flag, animal, historical event, etc.) "
             "and any visual clues relevant to a quiz question."
         )
-        return await self.generate_multimodal(prompt, [{"mime_type": mime_type, "data": b64_data}])
+        try:
+            return await self.generate_multimodal(prompt, [{"mime_type": mime_type, "data": b64_data}])
+        finally:
+            del b64_data
 
     async def transcribe_audio(self, audio_bytes: bytes, mime_type: str = "audio/mp3") -> str:
         b64_data = base64.b64encode(audio_bytes).decode("utf-8")
