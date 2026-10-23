@@ -66,6 +66,9 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Lifespan seed check exception: {e}")
     yield
 
+import logging as _logging
+_logging.getLogger("httpx").setLevel(_logging.WARNING)   # its INFO lines print the API key in the URL
+
 app = FastAPI(
     title=settings.PROJECT_NAME or "QShala Quiz Intelligence Platform",
     openapi_url=f"{settings.API_V1_STR or '/api/v1'}/openapi.json",

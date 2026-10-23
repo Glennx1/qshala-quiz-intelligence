@@ -223,6 +223,40 @@ def _user_prompt(question_text: str, answer: str, rules: qshala_rules.RuleSignal
     return f"QUESTION: {question_text}\nANSWER: {answer}{hint_block}"
 
 
+# ---------------------------------------------------------------------- error helpers
+
+_KEY_RE = re.compile(r"(key=)[^&'\"\s]+", re.I)
+
+
+def safe_error(e: BaseException) -> str:
+    """Error text for logs, the database and the UI: API keys removed, Google's reason added."""
+    msg = str(e)
+    resp = getattr(e, "response", None)
+    if resp is not None:
+        try:
+            detail = (resp.json().get("error") or {}).get("message") or resp.text
+        except Exception:
+            detail = getattr(resp, "text", "") or ""
+        if detail and detail[:60] not in msg:
+            msg = f"{msg} | {detail[:240]}"
+    return _KEY_RE.sub(r"\1***", msg)
+
+
+def is_rate_limit(e: BaseException) -> bool:
+    resp = getattr(e, "response", None)
+    code = getattr(resp, "status_code", None)
+    return code == 429 or "429" in str(e)[:200] or "too many requests" in str(e).lower()
+
+
+def retry_after_seconds(e: BaseException) -> Optional[float]:
+    resp = getattr(e, "response", None)
+    try:
+        v = resp.headers.get("retry-after") if resp is not None else None
+        return min(90.0, float(v)) if v else None
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------- the core call
 
 def _canonical_hash(question_text: str, answer: str) -> str:
@@ -355,17 +389,25 @@ class QshalaTagger:
 
         # Step 3: LLM call (two retries with a short back-off for rate limits and network blips).
         llm_out: Dict[str, Any] = {}
-        for attempt in range(3):
+        max_attempts = 6
+        for attempt in range(max_attempts):
             try:
                 llm_out, usage, latency_ms = await _call_llm(
                     self.provider, self.model, question_text, answer, rules,
                     thinking_level=self.thinking_level, visual_clues=visual_clues, deck_year=deck_year)
                 break
             except Exception as e:
-                if attempt == 2 or isinstance(e, ValueError):
-                    logger.error("LLM call failed for %s: %s", question_id, e)
-                    raise
-                await asyncio.sleep(1.5 * (attempt + 1))
+                if attempt == max_attempts - 1 or isinstance(e, ValueError) or (not is_rate_limit(e) and attempt >= 2):
+                    logger.error("LLM call failed for %s: %s", question_id, safe_error(e))
+                    raise (ValueError if isinstance(e, ValueError) else RuntimeError)(safe_error(e)) from None
+                # Rate limited (429): wait much longer, and honour Retry-After when Google sends it.
+                if is_rate_limit(e):
+                    wait = retry_after_seconds(e) or min(60, 6 * (2 ** attempt))
+                else:
+                    wait = 1.5 * (attempt + 1)
+                logger.warning("LLM call for %s hit %s, retrying in %.0fs", question_id,
+                               "a rate limit" if is_rate_limit(e) else "an error", wait)
+                await asyncio.sleep(wait)
 
         if TAXONOMY_VERSION == "v6":
             return self._finish_v6(db, question_id=question_id, rules=rules, llm_out=llm_out, usage=usage,

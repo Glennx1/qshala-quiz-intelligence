@@ -19,6 +19,7 @@ from backend.app.services.ingestion.slide_classifier import SlideClassifier
 from backend.app.services.ingestion.question_extractor import QuestionExtractor
 from backend.app.services.ingestion.deck_metadata import annotate_questions
 from backend.app.models.question_meta import QuestionEditHistory
+from backend.app.services.tagging.qshala_tagger import safe_error
 from backend.app.services.question_meta_service import (
     upsert_deck_metadata, deck_row_to_info, ensure_question_metadata, apply_tag_to_meta,
 )
@@ -29,7 +30,7 @@ from backend.app.services.tagging.difficulty_engine import DifficultyEngine
 
 # Feature toggle: set to False to revert to legacy AutoTagger writing topic tags on upload
 USE_QSHALA_TAGGER: bool = True
-TAG_CONCURRENCY: int = 6   # parallel Gemini tagging calls per deck
+TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "3"))   # parallel Gemini tagging calls per deck
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
 
@@ -413,11 +414,11 @@ class IngestionPipeline:
                             raise
                         except Exception as q_tag_err:
                             # The question is still stored (as "Uncategorised"); a re-tag can fill it in later.
-                            logger.warning(f"QshalaTagger failed during ingestion for question {q_m.id}: {q_tag_err}")
+                            logger.warning(f"QshalaTagger failed during ingestion for question {q_m.id}: {safe_error(q_tag_err)}")
                             done["failed"] += 1
-                            done["first_error"] = done["first_error"] or str(q_tag_err)[:300]
+                            done["first_error"] = done["first_error"] or safe_error(q_tag_err)[:300]
                             db.add(QuestionEditHistory(question_id=q_m.id, field="tagging", old_value=None,
-                                                       new_value=f"Tagging failed: {str(q_tag_err)[:300]}",
+                                                       new_value=f"Tagging failed: {safe_error(q_tag_err)[:300]}",
                                                        kind="TAG_ERROR", actor="deck_upload"))
                         finally:
                             done["n"] += 1

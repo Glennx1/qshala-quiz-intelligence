@@ -28,7 +28,7 @@ from backend.app.services.tagging import topic_paths
 
 logger = logging.getLogger(__name__)
 
-RETAG_CONCURRENCY = 6
+RETAG_CONCURRENCY = 3
 
 STATUS: Dict[str, Any] = {
     "state": "idle",          # idle | structure | tagging | done | cancelled | error
@@ -146,7 +146,9 @@ async def run_tagging(ids: List[str]) -> None:
             except Exception as e:  # one bad question never stops the run
                 db.rollback()
                 STATUS["failed"] += 1
-                logger.warning("backfill tag failed for %s: %s", qid, e)
+                from backend.app.services.tagging.qshala_tagger import safe_error
+                logger.warning("backfill tag failed for %s: %s", qid, safe_error(e))
+                STATUS["last_error"] = safe_error(e)
             finally:
                 db.close()
 

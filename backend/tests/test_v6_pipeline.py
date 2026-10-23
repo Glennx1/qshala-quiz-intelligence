@@ -198,3 +198,61 @@ def test_tagger_failure_still_stores_question_as_uncategorised():
         db = SessionLocal()
         purge_document(db, doc_id)
         db.close()
+
+
+def test_rate_limit_is_retried_and_api_key_never_leaks():
+    import httpx
+    from backend.app.services.tagging import qshala_tagger as qt
+
+    url = "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent?key=SECRET123"
+    req = httpx.Request("POST", url)
+
+    def err():
+        return httpx.HTTPStatusError(
+            "Client error '429 Too Many Requests' for url '" + url + "'", request=req,
+            response=httpx.Response(429, request=req, json={"error": {"message": "Quota exceeded per minute"}}))
+
+    msg = qt.safe_error(err())
+    assert "SECRET123" not in msg and "Quota exceeded" in msg and qt.is_rate_limit(err())
+
+    class Flaky(FakeGemini):
+        n = 0
+
+        async def generate_json_schema(self, *a, **k):
+            Flaky.n += 1
+            if Flaky.n <= 2:
+                raise err()
+            return await FakeGemini.generate_json_schema(self, *a, **k)
+
+    waits = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(t, *a, **k):
+        waits.append(t)
+
+    doc = None
+    asyncio.sleep = fake_sleep
+    try:
+        dest = settings.UPLOAD_DIR / f"{uuid.uuid4().hex}.pptx"
+        settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        _build_deck(dest, uuid.uuid4().hex[:8], n=1)
+        doc = str(uuid.uuid4())
+        db = SessionLocal()
+        db.add(Document(id=doc, filename="2022 Pune Prelims Quiz.pptx", title="t", year=2022, file_type="pptx",
+                        storage_path=str(dest), file_size_bytes=dest.stat().st_size, processing_status="PROCESSING"))
+        db.commit()
+        db.close()
+        pipe = IngestionPipeline()
+        pipe.qshala_tagger.provider = Flaky()
+        asyncio.run(pipe.run(doc))
+        db = SessionLocal()
+        q = db.query(Question).filter(Question.document_id == doc).one()
+        assert q.topic == "History"                       # tagged after two 429s
+        assert len(waits) >= 2 and min(waits) >= 5        # waited properly, not 1 second
+        db.close()
+    finally:
+        asyncio.sleep = real_sleep
+        if doc:
+            db = SessionLocal()
+            purge_document(db, doc)
+            db.close()

@@ -229,7 +229,8 @@ async def retag(question_id: str, force: bool = Query(False), db: Session = Depe
             question=q)
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=502, detail=f"Tagging failed: {e}")
+        from backend.app.services.tagging.qshala_tagger import safe_error
+        raise HTTPException(status_code=502, detail=f"Tagging failed: {safe_error(e)}")
     svc.apply_tag_to_meta(db, q.id, tag)
     svc.log_edit(db, q.id, "retag", None, "re-tagged by AI", kind="RETAG", actor="retag")
     db.commit()
