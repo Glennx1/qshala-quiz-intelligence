@@ -14,11 +14,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-from backend.app.database import SessionLocal, engine, Base
+from backend.app.database import Base
 from backend.app.models.document import Document
 from backend.app.models.question import Question
 from backend.app.services.retrieval.hybrid_retriever import HybridRetriever
+from backend.app.services.ai.local_provider import LocalEmbeddingProvider
 
 TEST_DOC_ID = "test-doc-hybrid-search-001"
 
@@ -39,22 +42,13 @@ def _make_question(db, doc_id: str, qid: str, text: str, topic: str, embedding):
     return q
 
 
-def _cleanup(db):
-    # Scoped to this test's own document -- the suite shares one on-disk
-    # SQLite DB across files, and other tests rely on vault data that
-    # persists across the run, so this must never touch rows outside its own.
-    db.query(Question).filter(Question.document_id == TEST_DOC_ID).delete()
-    db.query(Document).filter(Document.id == TEST_DOC_ID).delete()
-    db.commit()
-
-
 @pytest.fixture
 def db_with_questions():
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
+    test_engine = create_engine("sqlite:///:memory:", echo=False)
+    Base.metadata.create_all(bind=test_engine)
+    TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+    db = TestingSession()
     try:
-        _cleanup(db)
-
         doc = Document(
             id=TEST_DOC_ID,
             filename="dummy.pptx",
@@ -66,6 +60,7 @@ def db_with_questions():
         db.commit()
 
         retriever = HybridRetriever(db)
+        retriever.embedding_provider = LocalEmbeddingProvider()
         # Reuse the retriever's own (deterministic, local) embedding provider
         # so dense similarity is meaningful rather than all-zero vectors.
         # asyncio.run() (not get_event_loop()) so this sync fixture doesn't
@@ -83,13 +78,13 @@ def db_with_questions():
 
         yield db
     finally:
-        _cleanup(db)
         db.close()
 
 
 @pytest.mark.anyio
 async def test_search_returns_relevant_result_shape(db_with_questions):
     retriever = HybridRetriever(db_with_questions)
+    retriever.embedding_provider = LocalEmbeddingProvider()
     results = await retriever.search(query="space astronomy planets", limit=5)
 
     assert len(results) > 0
@@ -103,6 +98,7 @@ async def test_search_returns_relevant_result_shape(db_with_questions):
 @pytest.mark.anyio
 async def test_search_relaxes_when_topic_filter_matches_nothing(db_with_questions):
     retriever = HybridRetriever(db_with_questions)
+    retriever.embedding_provider = LocalEmbeddingProvider()
     # No question has this topic -- should fall back to the unfiltered pool
     # instead of returning nothing.
     results = await retriever.search(query="space astronomy planets", topic="Nonexistent Topic Xyz", limit=5)
@@ -112,6 +108,7 @@ async def test_search_relaxes_when_topic_filter_matches_nothing(db_with_question
 @pytest.mark.anyio
 async def test_query_embedding_is_cached(db_with_questions, monkeypatch):
     retriever = HybridRetriever(db_with_questions)
+    retriever.embedding_provider = LocalEmbeddingProvider()
     HybridRetriever._embedding_cache.clear()
 
     calls = {"n": 0}
