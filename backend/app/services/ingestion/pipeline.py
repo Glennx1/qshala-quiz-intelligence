@@ -185,11 +185,24 @@ class IngestionPipeline:
             })
 
             # Describe question images in parallel (each is a separate vision call; they used to run one by one).
-            async def _describe_images(q):
-                visual_clues_list = []
-                # Inspect question images first (and clue images)
-                target_imgs = list(q.get("question_images") or q.get("image_refs") or [])
-                for rel_img_path in target_imgs:
+            # A picture reused across several questions (a round's title image, a repeated
+            # logo or answer slide) is only described once: callers for the same path share
+            # one in-flight future rather than each firing their own Gemini call.
+            _vision_cache: Dict[str, asyncio.Future] = {}
+            _vision_cache_lock = asyncio.Lock()
+            _vision_reused = {"n": 0}
+
+            async def _describe_one_image(rel_img_path: str) -> Optional[str]:
+                async with _vision_cache_lock:
+                    fut = _vision_cache.get(rel_img_path)
+                    if fut is not None:
+                        _vision_reused["n"] += 1
+                        return await fut
+                    fut = asyncio.get_event_loop().create_future()
+                    _vision_cache[rel_img_path] = fut
+
+                desc: Optional[str] = None
+                try:
                     disk_path = None
                     img_bytes = None
                     ext = None
@@ -206,7 +219,6 @@ class IngestionPipeline:
                             ext = os.path.splitext(rel_img_path)[1].lower()
                         except Exception as fetch_err:
                             logger.warning(f"Failed to fetch remote image {rel_img_path}: {fetch_err}")
-                            continue
                     elif rel_img_path.startswith("/static/slides/"):
                         sub = rel_img_path[len("/static/slides/"):]
                         cand = settings.SLIDES_DIR / sub
@@ -224,7 +236,6 @@ class IngestionPipeline:
                             ext = disk_path.suffix.lower()
                         except Exception as read_err:
                             logger.warning(f"Failed to read local image {rel_img_path}: {read_err}")
-                            continue
 
                     if img_bytes:
                         try:
@@ -233,11 +244,23 @@ class IngestionPipeline:
                             # with many large pictures doesn't hold full-res bytes for every
                             # concurrent vision call at once.
                             vision_bytes, mime = await asyncio.to_thread(shrink_for_vision, img_bytes, mime)
-                            desc = await self.llm_provider.describe_image(vision_bytes, mime_type=mime)
-                            if desc and desc.strip():
-                                visual_clues_list.append(desc.strip())
+                            raw_desc = await self.llm_provider.describe_image(vision_bytes, mime_type=mime)
+                            if raw_desc and raw_desc.strip():
+                                desc = raw_desc.strip()
                         except Exception as vision_err:
                             logger.warning(f"Failed to describe image {rel_img_path}: {vision_err}")
+                finally:
+                    if not fut.done():
+                        fut.set_result(desc)
+                return desc
+
+            async def _describe_images(q):
+                visual_clues_list = []
+                target_imgs = list(q.get("question_images") or q.get("image_refs") or [])
+                for rel_img_path in target_imgs:
+                    desc = await _describe_one_image(rel_img_path)
+                    if desc:
+                        visual_clues_list.append(desc)
 
                 visual_clues_str = "\n".join(visual_clues_list) if visual_clues_list else None
                 q["visual_clues"] = visual_clues_str
@@ -261,6 +284,9 @@ class IngestionPipeline:
             if _img_total:
                 progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Describing images for {_img_total} questions with AI")
             await asyncio.gather(*[_describe_guarded(q) for q in raw_questions])
+            if _vision_reused["n"]:
+                progress.event(INGESTION_STATUS_REGISTRY[document_id],
+                               f"{_vision_reused['n']} repeated pictures reused their earlier description (skipped the AI call)")
 
             enriched_questions = []
             for q in raw_questions:

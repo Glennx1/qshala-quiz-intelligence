@@ -151,9 +151,9 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
 
-    # Which Gemini model to call for tagging/generation. Overridable without a code change
-    # in case Google renames/retires the default (gemini-2.5-flash is GA as of Oct 2026).
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    # Which Gemini model to call for tagging/generation/image-description. Overridable
+    # without a code change in case Google renames/retires the default.
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
 
     # QShala-domain tagger (business/finance/culture) runs on a cheaper, faster model
     # so bulk tagging stays affordable while the heavier generator stays on GEMINI_MODEL.
@@ -196,7 +196,7 @@ class Settings(BaseSettings):
     @classmethod
     def parse_gemini_model(cls, v):
         if v == "" or v is None:
-            return "gemini-2.5-flash"
+            return "gemini-3.5-flash-lite"
         return str(v)
 
     @field_validator("QSHALA_TAGGER_MODEL", mode="before")
