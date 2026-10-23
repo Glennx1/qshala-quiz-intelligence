@@ -498,22 +498,26 @@ def resolve_question_duplicate(
                 from backend.app.models.qshala_tag import QshalaQuestionMetadata
                 from backend.app.services.question_meta_service import add_repeat, meta_to_dict
                 dup_meta = db.query(QshalaQuestionMetadata).filter(QshalaQuestionMetadata.question_id == q.id).first()
-                rep = add_repeat(db, original, q.document_id, meta_to_dict(dup_meta), q.source_slide_range,
-                                 match_type="CONFIRMED")
-                if rep is not None:
+                if q.document_id == original.document_id:
+                    # Same deck: it is not "found again in another quiz", so just count it and keep the row.
                     original.occurrence_count = (original.occurrence_count or 1) + 1
-                prov = list(original.provenance_decks or [])
-                if not any(p.get("document_id") == q.document_id for p in prov):
-                    prov.append({"document_id": q.document_id, "slide_id": q.slide_id})
-                    original.provenance_decks = prov
-                # The question is stored once: the extra copy goes, and the original carries the Repeated entry.
-                db.delete(q)
-                db.commit()
-                o_item = db.query(Question, Document, Slide).\
-                    outerjoin(Document, Question.document_id == Document.id).\
-                    outerjoin(Slide, Question.slide_id == Slide.id).\
-                    filter(Question.id == original.id).first()
-                return _enrich_one(db, to_question_response(*o_item))
+                else:
+                    rep = add_repeat(db, original, q.document_id, meta_to_dict(dup_meta), q.source_slide_range,
+                                     match_type="CONFIRMED")
+                    if rep is not None:
+                        original.occurrence_count = (original.occurrence_count or 1) + 1
+                    prov = list(original.provenance_decks or [])
+                    if not any(p.get("document_id") == q.document_id for p in prov):
+                        prov.append({"document_id": q.document_id, "slide_id": q.slide_id})
+                        original.provenance_decks = prov
+                    # The question is stored once: the extra copy goes, and the original carries the Repeated entry.
+                    db.delete(q)
+                    db.commit()
+                    o_item = db.query(Question, Document, Slide).\
+                        outerjoin(Document, Question.document_id == Document.id).\
+                        outerjoin(Slide, Question.slide_id == Slide.id).\
+                        filter(Question.id == original.id).first()
+                    return _enrich_one(db, to_question_response(*o_item))
     elif action in ["DISMISS_UNIQUE", "RESOLVE"]:
         q.duplicate_status = "RESOLVED"
     else:
