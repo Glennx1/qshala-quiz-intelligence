@@ -387,3 +387,24 @@ def delete_document(document_id: str, db: Session = Depends(get_db)):
     db.delete(doc)
     db.commit()
     return {"message": "Document deleted successfully"}
+
+@router.post("/{document_id}/retry")
+def retry_document_ingestion(document_id: str, db: Session = Depends(get_db)):
+    """Finds the manual-upload job for this document and re-queues it."""
+    from backend.app.models.job import IngestionJob
+    from backend.app.services.ingestion.upload_queue import requeue_job, enqueue_upload
+
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    job = db.query(IngestionJob).filter(
+        IngestionJob.document_id == document_id,
+        IngestionJob.source_type == "MANUAL_UPLOAD"
+    ).order_by(IngestionJob.created_at.desc()).first()
+
+    if not job:
+        job = enqueue_upload(db, document_id=doc.id, filename=doc.filename)
+
+    requeue_job(db, job)
+    return {"message": "Deck re-queued successfully", "job_id": job.id}

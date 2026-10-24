@@ -11,6 +11,10 @@ import {
   Loader2,
   ArrowRight,
   X,
+  Clock,
+  ListOrdered,
+  RotateCcw,
+  Sparkles,
 } from 'lucide-react';
 import { api, isAbortError, UPLOAD_CHUNK_SIZE, UploadProgressInfo } from '../../lib/api';
 import { DocumentItem } from '../../lib/types';
@@ -137,14 +141,41 @@ export default function UploadPage() {
     const hasPending = documents.some(
       (d) => d.processing_status === 'QUEUED' || d.processing_status === 'PROCESSING'
     );
-    if (!hasPending && !activeDocId) return;
+    if (!hasPending && !activeDocId && !uploading) return;
 
     const interval = setInterval(() => {
       fetchDocuments();
-    }, 2500);
+    }, 2000);
 
     return () => clearInterval(interval);
-  }, [documents, activeDocId]);
+  }, [documents, activeDocId, uploading]);
+
+  // Auto-connect to active processing document if activeDocId is null (e.g. after refresh or queue transition)
+  useEffect(() => {
+    if (!activeDocId) {
+      const processing = documents.find((d) => d.processing_status === 'PROCESSING');
+      if (processing) {
+        setActiveDocId(processing.id);
+        if (!timing || timing.finishedAt) {
+          setTiming({ startedAt: Date.now(), uploadEndedAt: Date.now(), finishedAt: null });
+        }
+      }
+    }
+  }, [documents, activeDocId, timing]);
+
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+
+  const handleRetry = async (id: string) => {
+    setRetryingId(id);
+    try {
+      await api.retryDocument(id);
+      await fetchDocuments();
+    } catch (err: any) {
+      alert(err.message || 'Failed to retry deck ingestion');
+    } finally {
+      setRetryingId(null);
+    }
+  };
 
   const handleFileUpload = async (file: File, fileIndex = 1, fileTotal = 1) => {
     const controller = new AbortController();
@@ -325,6 +356,13 @@ export default function UploadPage() {
     }
   };
 
+  const queuedDocs = documents
+    .filter((d) => d.processing_status === 'QUEUED')
+    .slice()
+    .reverse();
+
+  const activeDoc = documents.find((d) => d.id === activeDocId);
+
   return (
     <div className="p-6 sm:p-8 lg:p-10 max-w-6xl mx-auto space-y-8">
       {/* Header */}
@@ -418,14 +456,14 @@ export default function UploadPage() {
               <div>
                 <h4 className="text-[13px] font-semibold text-slate-900">
                   {pipelineProgress.status === 'COMPLETED' || pipelineProgress.percentage >= 100
-                    ? 'Ingestion Complete'
+                    ? `Ingestion Complete${activeDoc ? `: ${activeDoc.title}` : ''}`
                     : pipelineProgress.status === 'FAILED'
-                    ? 'Ingestion Failed'
+                    ? `Ingestion Failed${activeDoc ? `: ${activeDoc.title}` : ''}`
                     : pipelineProgress.status === 'CANCELLED'
                     ? 'Upload Cancelled'
                     : uploadDetail
-                    ? 'Uploading Material'
-                    : 'Processing Material'}
+                    ? `Uploading Material${activeDoc ? `: ${activeDoc.title}` : ''}`
+                    : `Processing Deck${activeDoc ? `: ${activeDoc.title}` : ''}`}
                 </h4>
                 <p className="text-[12px] text-slate-500 font-normal">{pipelineProgress.step}</p>
               </div>
@@ -632,6 +670,54 @@ export default function UploadPage() {
         </div>
       )}
 
+      {/* Waiting in Serial Queue */}
+      {queuedDocs.length > 0 && (
+        <div className="rounded-xl border border-amber-200/80 bg-amber-50/20 p-5 shadow-xs space-y-3 animate-in fade-in">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/60 pb-3">
+            <div className="flex items-center gap-2 text-amber-900 font-semibold text-[13.5px]">
+              <ListOrdered className="h-4 w-4 text-amber-600" />
+              <span>Ingestion Queue ({queuedDocs.length} presentation{queuedDocs.length > 1 ? 's' : ''} waiting)</span>
+            </div>
+            <span className="text-[11.5px] font-medium text-amber-800 bg-amber-100/80 border border-amber-200 px-2.5 py-0.5 rounded-full">
+              Serial Queue: Ingests 1 deck at a time to prevent server memory crashes
+            </span>
+          </div>
+
+          <div className="divide-y divide-amber-100/60 rounded-lg border border-amber-200/60 bg-white overflow-hidden shadow-xs">
+            {queuedDocs.map((doc, idx) => (
+              <div key={doc.id} className="flex items-center justify-between px-4 py-3 hover:bg-amber-50/30 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-800 text-[11px] font-bold">
+                    #{idx + 1}
+                  </span>
+                  <div className="min-w-0">
+                    <h5 className="truncate text-[13px] font-medium text-slate-900">{doc.title}</h5>
+                    <p className="text-[11px] text-slate-500">
+                      {doc.slide_count ? `${doc.slide_count} slides • ` : ''}
+                      Waiting in line — will begin automatically
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                    <Clock className="h-3 w-3 animate-spin" />
+                    Position #{idx + 1}
+                  </span>
+                  <button
+                    onClick={() => handleDelete(doc.id)}
+                    className="p-1.5 text-slate-400 hover:text-red-600 rounded transition-colors cursor-pointer"
+                    title="Remove from queue"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Ingested Decks Table */}
       <div className="rounded-xl border border-slate-200/80 bg-white shadow-sm shadow-slate-100/50 overflow-hidden">
         <div className="border-b border-slate-100 px-6 py-4 flex items-center justify-between">
@@ -657,7 +743,7 @@ export default function UploadPage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2.5">
                 <div className="flex items-center gap-1.5 text-[12px]">
                   <span
                     className={`h-2 w-2 rounded-full ${
@@ -680,6 +766,29 @@ export default function UploadPage() {
                       : doc.processing_status}
                   </span>
                 </div>
+
+                {doc.processing_status === 'COMPLETED' && doc.question_count > 0 && (
+                  <Link
+                    href={`/knowledge-base?document_id=${doc.id}`}
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11.5px] font-medium text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition-colors shadow-xs"
+                    title="View Questions in Knowledge Base"
+                  >
+                    <span>View Questions</span>
+                    <ArrowRight className="h-3 w-3" />
+                  </Link>
+                )}
+
+                {doc.processing_status === 'FAILED' && (
+                  <button
+                    onClick={() => handleRetry(doc.id)}
+                    disabled={retryingId === doc.id}
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11.5px] font-medium text-slate-700 hover:bg-slate-50 transition-colors shadow-xs cursor-pointer disabled:opacity-50"
+                    title="Retry this deck"
+                  >
+                    <RotateCcw className={`h-3 w-3 ${retryingId === doc.id ? 'animate-spin text-blue-600' : ''}`} />
+                    <span>Retry</span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => handleDelete(doc.id)}

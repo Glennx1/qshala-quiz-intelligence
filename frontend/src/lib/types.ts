@@ -20,7 +20,7 @@ export interface DocumentItem {
   file_size_bytes: number;
   slide_count: number;
   question_count: number;
-  processing_status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  processing_status: 'QUEUED' | 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
   processing_error?: string | null;
   uploaded_at: string;
   slides?: Slide[];

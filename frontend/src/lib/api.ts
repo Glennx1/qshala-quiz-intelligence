@@ -306,6 +306,13 @@ export const api = {
     return handleResponse<{ message: string }>(res);
   },
 
+  retryDocument: async (id: string): Promise<{ message: string; job_id: string }> => {
+    const res = await fetch(`${getApiBase()}/documents/${id}/retry`, {
+      method: 'POST',
+    });
+    return handleResponse<{ message: string; job_id: string }>(res);
+  },
+
   // Questions / Knowledge Base Vault
   getTopics: async (): Promise<TopicItem[]> => {
     const res = await fetch(`${getApiBase()}/questions/topics`, { cache: 'no-store' });
