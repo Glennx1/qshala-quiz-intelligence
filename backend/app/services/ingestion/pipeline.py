@@ -581,7 +581,11 @@ class IngestionPipeline:
                     fin_doc.question_count = len(question_models)
                     fin_doc.processing_status = "COMPLETED"
 
-            progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Saved {len(question_models)} questions", detail="Finishing up")
+            _review_n = tag_stats.get("draft", 0)
+            _summary = (f"Saved {len(question_models)} questions from {len(slide_models)} slides"
+                        + (f", {len(duplicates)} duplicate(s) skipped" if duplicates else "")
+                        + (f", {_review_n} flagged for review" if _review_n else ""))
+            progress.event(INGESTION_STATUS_REGISTRY[document_id], _summary, detail="Finishing up")
             _tag_note = ""
             if USE_QSHALA_TAGGER and question_models and tag_stats.get("draft"):
                 _tag_note = (f" ({tag_stats['draft']} of {len(question_models)} questions flagged for "
