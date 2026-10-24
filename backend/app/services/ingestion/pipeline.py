@@ -41,6 +41,20 @@ TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "3"))   # parallel Gemin
 # abandoned and ingestion continues with whatever it has, instead of the deck sitting PROCESSING.
 VISION_STAGE_TIMEOUT: int = int(os.getenv("VISION_STAGE_TIMEOUT", "600"))      # 10 min for all images
 EMBED_STAGE_TIMEOUT: int = int(os.getenv("EMBED_STAGE_TIMEOUT", "180"))        # 3 min for embeddings
+# A question whose own text already runs this long almost certainly carries its clue in words — its
+# image is decorative, so skip the (slow, memory-heavy) vision call. Set 0 to describe every image.
+VISION_TEXT_WORD_GATE: int = int(os.getenv("VISION_TEXT_WORD_GATE", "25"))
+
+
+def _needs_vision(q: Dict[str, Any]) -> bool:
+    """True when a question has an image AND little enough text that the image likely carries the
+    clue. Skips vision for text-heavy questions — the big efficiency win on a small, slow host."""
+    if not (q.get("question_images") or q.get("image_refs")):
+        return False
+    if VISION_TEXT_WORD_GATE <= 0:
+        return True
+    words = len(f"{q.get('question_text', '')} {q.get('explanation', '')}".split())
+    return words < VISION_TEXT_WORD_GATE
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
 
@@ -335,25 +349,31 @@ class IngestionPipeline:
                 return visual_clues_str
 
             vision_sem = asyncio.Semaphore(VISION_CONCURRENCY)
-            _img_total = sum(1 for _q in raw_questions if (_q.get("question_images") or _q.get("image_refs")))
+            # Only describe images for questions that actually need it (short text + an image). A
+            # text-heavy question keeps whatever clue is in its words and skips the vision call.
+            _vision_targets = [q for q in raw_questions if _needs_vision(q)]
+            _has_img = sum(1 for _q in raw_questions if (_q.get("question_images") or _q.get("image_refs")))
+            _img_total = len(_vision_targets)
             _img_done = {"n": 0}
 
             async def _describe_guarded(q):
                 async with vision_sem:
                     raise_if_cancelled(document_id)
                     out = await _describe_images(q)
-                    if q.get("question_images") or q.get("image_refs"):
-                        _img_done["n"] += 1
-                        progress.update(INGESTION_STATUS_REGISTRY[document_id],
-                                        detail=f"Describing question images with AI ({_img_done['n']}/{_img_total})")
+                    _img_done["n"] += 1
+                    progress.update(INGESTION_STATUS_REGISTRY[document_id],
+                                    detail=f"Describing question images with AI ({_img_done['n']}/{_img_total})")
                     return out
 
             INGESTION_STATUS_REGISTRY[document_id]["current_step"] = "5. Reading question images"
             if _img_total:
-                progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Describing images for {_img_total} questions with AI")
+                _skipped = _has_img - _img_total
+                progress.event(INGESTION_STATUS_REGISTRY[document_id],
+                               f"Describing images for {_img_total} questions with AI"
+                               + (f" (skipped {_skipped} with enough text)" if _skipped > 0 else ""))
             try:
                 await asyncio.wait_for(
-                    asyncio.gather(*[_describe_guarded(q) for q in raw_questions]),
+                    asyncio.gather(*[_describe_guarded(q) for q in _vision_targets]),
                     timeout=VISION_STAGE_TIMEOUT)
             except asyncio.TimeoutError:
                 # A hung vision call must not freeze the whole upload. Continue with whatever
