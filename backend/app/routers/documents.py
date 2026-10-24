@@ -30,14 +30,18 @@ def _schedule_ingestion(doc, db: Session, background_tasks: BackgroundTasks) -> 
     host). With the queue off, fall back to the old immediate per-upload background task.
     """
     if settings.UPLOAD_QUEUE_ENABLED:
-        from backend.app.services.ingestion.upload_queue import enqueue_upload, queue_position
-        job = enqueue_upload(db, document_id=doc.id, filename=doc.filename)
-        pos = queue_position(db, job)
+        from backend.app.services.ingestion import upload_queue
+        job = upload_queue.enqueue_upload(db, document_id=doc.id, filename=doc.filename)
+        pos = upload_queue.queue_position(db, job)
         INGESTION_STATUS_REGISTRY[doc.id] = {
             "document_id": doc.id, "status": "QUEUED", "progress_percentage": 0,
             "current_step": f"Queued (position {pos + 1}) — processing one deck at a time",
             "slides_processed": 0, "questions_extracted": 0, "error": None,
         }
+        # Kick a drainer so the queue is actually worked off, without relying on the long-lived
+        # background worker (which may not run under some deployments). Serial + idempotent: if a
+        # drainer is already going, this one exits immediately.
+        background_tasks.add_task(upload_queue.drain)
         logger.info("[UPLOAD] queued doc_id=%s (job=%s, position=%d)", doc.id, job.id, pos)
     else:
         INGESTION_STATUS_REGISTRY[doc.id] = {
@@ -387,24 +391,3 @@ def delete_document(document_id: str, db: Session = Depends(get_db)):
     db.delete(doc)
     db.commit()
     return {"message": "Document deleted successfully"}
-
-@router.post("/{document_id}/retry")
-def retry_document_ingestion(document_id: str, db: Session = Depends(get_db)):
-    """Finds the manual-upload job for this document and re-queues it."""
-    from backend.app.models.job import IngestionJob
-    from backend.app.services.ingestion.upload_queue import requeue_job, enqueue_upload
-
-    doc = db.query(Document).filter(Document.id == document_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    job = db.query(IngestionJob).filter(
-        IngestionJob.document_id == document_id,
-        IngestionJob.source_type == "MANUAL_UPLOAD"
-    ).order_by(IngestionJob.created_at.desc()).first()
-
-    if not job:
-        job = enqueue_upload(db, document_id=doc.id, filename=doc.filename)
-
-    requeue_job(db, job)
-    return {"message": "Deck re-queued successfully", "job_id": job.id}

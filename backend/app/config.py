@@ -183,9 +183,12 @@ class Settings(BaseSettings):
     # this back to False to re-enable the cost-saving hybrid gate.
     FORCE_AI_TAGGING: bool = True
 
-    # Upload queue: when True, uploads enqueue a job and a single serial worker processes one deck
-    # at a time (memory-safe on a 512 MB host). When False, falls back to immediate per-upload
-    # background processing (the old behaviour). Flip off with UPLOAD_QUEUE_ENABLED=0 to revert.
+    # Upload mechanism. Default (False) = the direct path: each upload processes immediately in the
+    # background with live progress, server-memory metrics, an activity log, and a working Cancel
+    # button. This is the proven single-deck experience and is the recommended default.
+    # Set UPLOAD_QUEUE_ENABLED=1 to instead queue uploads and process them one deck at a time with a
+    # single serial worker (useful for dropping several decks at once on a small host); the queue
+    # path shows queue position rather than live per-deck progress until a deck starts.
     UPLOAD_QUEUE_ENABLED: bool = False
     UPLOAD_QUEUE_POLL_SECONDS: int = 5          # how often the worker looks for the next deck
     UPLOAD_QUEUE_MAX_RETRIES: int = 2           # manual-retry cap per deck
@@ -200,7 +203,7 @@ class Settings(BaseSettings):
     @classmethod
     def _parse_safety_bools(cls, v, info):
         if v == "" or v is None:
-            return False
+            return False          # both default off; an unset/blank env var means "use the default"
         if isinstance(v, bool):
             return v
         return str(v).strip().lower() in {"1", "true", "yes", "on"}
