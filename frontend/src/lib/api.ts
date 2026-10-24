@@ -366,18 +366,18 @@ export const api = {
   },
 
   getReviewCandidates: async (): Promise<HistoricalQuestion[]> => {
-    const res = await fetch(${getApiBase()}/questions/needs-review, { cache: 'no-store' });
+    const res = await fetch(`${getApiBase()}/questions/needs-review`, { cache: 'no-store' });
     return handleResponse<HistoricalQuestion[]>(res);
   },
 
   getReviewCount: async (): Promise<number> => {
-    const res = await fetch(${getApiBase()}/questions/needs-review/count, { cache: 'no-store' });
+    const res = await fetch(`${getApiBase()}/questions/needs-review/count`, { cache: 'no-store' });
     const data = await handleResponse<{ count: number }>(res);
     return data.count;
   },
 
   acceptReview: async (questionId: string): Promise<HistoricalQuestion> => {
-    const res = await fetch(${getApiBase()}/questions//accept-review, {
+    const res = await fetch(`${getApiBase()}/questions/${questionId}/accept-review`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
