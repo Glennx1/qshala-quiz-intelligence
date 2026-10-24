@@ -37,6 +37,10 @@ from backend.app.services.tagging.difficulty_engine import DifficultyEngine
 USE_QSHALA_TAGGER: bool = True
 VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "2"))   # parallel image-description calls (lowered: full-res images held per in-flight call add up on 512 MB)
 TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "3"))   # parallel Gemini tagging calls per deck
+# Hard caps so a hung external call (Gemini / R2) can never freeze an upload forever: the stage is
+# abandoned and ingestion continues with whatever it has, instead of the deck sitting PROCESSING.
+VISION_STAGE_TIMEOUT: int = int(os.getenv("VISION_STAGE_TIMEOUT", "600"))      # 10 min for all images
+EMBED_STAGE_TIMEOUT: int = int(os.getenv("EMBED_STAGE_TIMEOUT", "180"))        # 3 min for embeddings
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
 
@@ -63,12 +67,25 @@ def _ensure_clean(db: Session, where: str) -> None:
             pass
 
 
+def release_memory() -> None:
+    """Return freed memory to the OS between stages. Python/glibc holds onto freed heap in per-thread
+    arenas, so RSS ratchets up across a deck's stages on a 512 MB host; gc + malloc_trim give it back."""
+    import gc
+    gc.collect()
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
 def _stage_log(document_id: str, stage: str, t0: float) -> float:
-    """Log wall-clock + process memory for a finished stage and return a new start time."""
+    """Log wall-clock + process memory for a finished stage, free memory, and return a new start time."""
+    release_memory()
     try:
         from backend.app.services.ingestion import progress as _p
         mem = _p.memory_mb() or {}
-        rss = mem.get("rss") or mem.get("current") or mem.get("process")
+        rss = mem.get("memory_mb") or mem.get("rss") or mem.get("current")
     except Exception:
         rss = None
     dt = time.perf_counter() - t0
@@ -334,7 +351,16 @@ class IngestionPipeline:
             INGESTION_STATUS_REGISTRY[document_id]["current_step"] = "5. Reading question images"
             if _img_total:
                 progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Describing images for {_img_total} questions with AI")
-            await asyncio.gather(*[_describe_guarded(q) for q in raw_questions])
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*[_describe_guarded(q) for q in raw_questions]),
+                    timeout=VISION_STAGE_TIMEOUT)
+            except asyncio.TimeoutError:
+                # A hung vision call must not freeze the whole upload. Continue with whatever
+                # descriptions were gathered; untagged images just miss their visual clue.
+                logger.warning("vision stage timed out after %ss; continuing without the rest", VISION_STAGE_TIMEOUT)
+                progress.event(INGESTION_STATUS_REGISTRY[document_id],
+                               "Image description timed out; continuing with the rest of the deck")
             if _vision_reused["n"]:
                 progress.event(INGESTION_STATUS_REGISTRY[document_id],
                                f"{_vision_reused['n']} repeated pictures reused their earlier description (skipped the AI call)")
@@ -426,9 +452,13 @@ class IngestionPipeline:
             embeddings = []
             if texts_to_embed:
                 try:
-                    embeddings = await self.embedding_provider.get_embeddings(texts_to_embed)
-                except Exception as e:
-                    logger.warning(f"Embedding generation error ({e}), falling back to unit vectors")
+                    embeddings = await asyncio.wait_for(
+                        self.embedding_provider.get_embeddings(texts_to_embed),
+                        timeout=EMBED_STAGE_TIMEOUT)
+                except (Exception, asyncio.TimeoutError) as e:
+                    # Timeout or error: fall back to unit vectors so ingestion still completes and
+                    # saves the questions. Search quality degrades for this deck; a re-tag can refill.
+                    logger.warning(f"Embedding generation failed/timed out ({e}), falling back to unit vectors")
                     embeddings = [[0.0] * 768 for _ in texts_to_embed]
 
             raise_if_cancelled(document_id)
