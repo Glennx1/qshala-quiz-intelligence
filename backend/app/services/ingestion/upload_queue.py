@@ -106,23 +106,65 @@ def purge_artifacts(db: Session, document_id: str) -> None:
 
 # --------------------------------------------------------------------- claim / run
 
+# A deck should finish well within this; a job PROCESSING longer than this had its worker die
+# (crash, or the host slept mid-run). Such a job is reclaimed so it can no longer block the queue.
+STALE_PROCESSING_MINUTES = 30
+_ADVISORY_LOCK_KEY = 778201  # arbitrary, stable; serialises claiming across every process
+
+
+def _reclaim_stale(db: Session) -> None:
+    """Mark any PROCESSING job whose worker clearly died as FAILED, so it stops blocking the queue."""
+    from datetime import timedelta
+    cutoff = _now() - timedelta(minutes=STALE_PROCESSING_MINUTES)
+    stale = (db.query(IngestionJob)
+             .filter(IngestionJob.source_type == SOURCE, IngestionJob.status == "PROCESSING",
+                     IngestionJob.updated_at < cutoff)
+             .all())
+    for job in stale:
+        job.status = "FAILED"
+        job.error_message = (f"No progress for over {STALE_PROCESSING_MINUTES} min — the worker "
+                             f"likely died or the server slept mid-ingestion. Retry to re-process.")
+        job.updated_at = _now()
+        doc = db.query(Document).filter(Document.id == job.document_id).first()
+        if doc is not None and doc.processing_status not in ("COMPLETED",):
+            doc.processing_status = "FAILED"
+            doc.processing_error = job.error_message
+    if stale:
+        db.commit()
+        logger.warning("[QUEUE] reclaimed %d stale PROCESSING job(s)", len(stale))
+
+
 def claim_next(db: Session) -> "IngestionJob | None":
-    """Claim the oldest PENDING upload job, but only if none is already PROCESSING (serial cap=1)."""
+    """Claim the oldest PENDING upload job, but only if none is actively PROCESSING. The whole
+    check-and-claim is serialised ACROSS PROCESSES with a Postgres transaction-level advisory lock,
+    so even when the web server runs several worker processes, at most one deck ingests at a time."""
+    from backend.app.database import is_postgres
+    from sqlalchemy import text
+
+    if is_postgres:
+        # Held until this transaction ends (commit/rollback); no leaked locks. Serialises claimers.
+        db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _ADVISORY_LOCK_KEY})
+
+    _reclaim_stale(db)   # a dead PROCESSING job must not block the queue forever
+
     busy = (db.query(IngestionJob)
             .filter(IngestionJob.source_type == SOURCE, IngestionJob.status == "PROCESSING")
             .count())
     if busy:
+        db.commit()      # release the advisory lock; someone else is working
         return None
+
     job = (db.query(IngestionJob)
            .filter(IngestionJob.source_type == SOURCE, IngestionJob.status == "PENDING")
            .order_by(IngestionJob.created_at)
            .first())
     if job is None:
+        db.commit()
         return None
     job.status = "PROCESSING"
     job.current_step = "INGESTING"
     job.updated_at = _now()
-    db.commit()
+    db.commit()          # sets PROCESSING and releases the lock atomically
     return job
 
 
