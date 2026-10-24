@@ -3,6 +3,8 @@ import { Plus_Jakarta_Sans } from 'next/font/google';
 import './globals.css';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
+import { UploadProvider } from '../context/UploadContext';
+import UploadProgressWidget from '../components/UploadProgressWidget';
 
 const plusJakartaSans = Plus_Jakarta_Sans({
   subsets: ['latin'],
@@ -24,11 +26,14 @@ export default function RootLayout({
   return (
     <html lang="en" className={`h-full bg-slate-50 text-slate-900 antialiased ${plusJakartaSans.variable}`}>
       <body className={`min-h-full flex bg-slate-50 font-sans ${plusJakartaSans.className}`}>
-        <Sidebar />
-        <div className="flex-1 pl-52 flex flex-col min-w-0">
-          <Topbar />
-          <main className="flex-1">{children}</main>
-        </div>
+        <UploadProvider>
+          <Sidebar />
+          <div className="flex-1 pl-52 flex flex-col min-w-0">
+            <Topbar />
+            <main className="flex-1">{children}</main>
+          </div>
+          <UploadProgressWidget />
+        </UploadProvider>
       </body>
     </html>
   );
