@@ -1,10 +1,13 @@
 import os
+import time
 import asyncio
 import logging
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from backend.app.models.document import Document, Slide
 from backend.app.models.question import Question
+from backend.app.models.qshala_tag import QshalaTag
+from backend.app.database import short_session
 from backend.app.config import settings
 from backend.app.services.ingestion.pptx_parser import PPTXParser
 from backend.app.services.ingestion.pdf_parser import PDFParser
@@ -42,6 +45,36 @@ logger = logging.getLogger(__name__)
 # Global tracker for real-time progress polling
 INGESTION_STATUS_REGISTRY: Dict[str, Dict[str, Any]] = {}
 
+
+def _ensure_clean(db: Session, where: str) -> None:
+    """Enforce the ingestion invariant: no DB transaction may stay open across a slow AI/network
+    stage. If one is open at a phase boundary, commit it (ending the idle window Neon would kill)
+    and log where — so a regression is visible instead of silently reintroducing the
+    IdleInTransactionSessionTimeout crash.
+    """
+    try:
+        if db.in_transaction():
+            logger.info("ingestion: committing open transaction before %s", where)
+            db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+def _stage_log(document_id: str, stage: str, t0: float) -> float:
+    """Log wall-clock + process memory for a finished stage and return a new start time."""
+    try:
+        from backend.app.services.ingestion import progress as _p
+        mem = _p.memory_mb() or {}
+        rss = mem.get("rss") or mem.get("current") or mem.get("process")
+    except Exception:
+        rss = None
+    dt = time.perf_counter() - t0
+    logger.info("stage[%s] %-22s %6.1fs  mem=%s MB", document_id[:8], stage, dt, rss)
+    return time.perf_counter()
+
 class IngestionPipeline:
     def __init__(self, db: Optional[Session] = None):
         self._external_db = db
@@ -76,6 +109,7 @@ class IngestionPipeline:
             own_session = True
 
         try:
+            t0 = time.perf_counter()
             doc = db.query(Document).filter(Document.id == document_id).first()
             if not doc:
                 INGESTION_STATUS_REGISTRY[document_id]["status"] = "FAILED"
@@ -154,9 +188,12 @@ class IngestionPipeline:
                 "current_step": "3. Detecting questions and quiz patterns"
             })
 
-            # Map slide objects back to classified slides with IDs
+            # Map slide objects back to classified slides with IDs, then CLOSE phase A:
+            # slides are durable and no transaction stays open into the slow AI stages below.
             for i, s_model in enumerate(slide_models):
                 classified_slides[i]["id"] = s_model.id
+            db.commit()
+            t0 = _stage_log(document_id, "A:parse+slides", t0)
 
             # Step 3, 4, 5: Question Extraction & Classification
             INGESTION_STATUS_REGISTRY[document_id].update({
@@ -176,6 +213,14 @@ class IngestionPipeline:
             # (question number, format, star, answer type, language).
             deck_row = upsert_deck_metadata(db, doc)
             annotate_questions(raw_questions, classified_slides, deck_row_to_info(deck_row))
+            # Values needed later, captured BEFORE the commit expires the ORM rows.
+            deck_year = deck_row.deck_year or doc.year
+            doc_title = doc.title
+            # CLOSE phase A/B DB work: the vision + embedding stages below touch no DB, so no
+            # transaction is held while they run (minutes). This is the fix for the recurring
+            # IdleInTransactionSessionTimeout — not the engine flag, which Neon's pooler may ignore.
+            db.commit()
+            _ensure_clean(db, "vision/embedding stage")
 
             # Step 5: Multi-Topic Auto-Tagging & Pedagogical Difficulty Scoring
             INGESTION_STATUS_REGISTRY[document_id].update({
@@ -312,7 +357,7 @@ class IngestionPipeline:
                         question_text=q["question_text"],
                         answer_text=q["answer"],
                         explanation=q.get("explanation", ""),
-                        doc_title=doc.title,
+                        doc_title=doc_title,
                         visual_clues=visual_clues_str or q.get("visual_clues", "") or "",
                         audio_transcript=q.get("audio_transcript", ""),
                         video_transcript=q.get("video_transcript", ""),
@@ -388,12 +433,27 @@ class IngestionPipeline:
                 "current_step": "7. Deduplicating questions against knowledge base"
             })
 
-            unique_candidates, duplicates = self.deduplicator.deduplicate_batch(
-                db=db,
-                candidates=enriched_questions,
-                candidate_embeddings=embeddings,
-                doc_id=doc.id
-            )
+            t0 = _stage_log(document_id, "B:vision+embed+enrich", t0)
+
+            # Phase C begins. The connection has been idle through the AI stages, so the first
+            # query here must run on a fresh, pre-pinged connection. _ensure_clean guarantees no
+            # stale transaction is open; the retry covers the case where the pooled connection was
+            # dropped server-side during the idle window.
+            _ensure_clean(db, "dedup")
+            from sqlalchemy.exc import OperationalError, DBAPIError
+            try:
+                unique_candidates, duplicates = self.deduplicator.deduplicate_batch(
+                    db=db, candidates=enriched_questions,
+                    candidate_embeddings=embeddings, doc_id=doc.id)
+            except (OperationalError, DBAPIError) as db_err:
+                logger.warning("dedup hit a stale connection, retrying once: %s", safe_error(db_err))
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                unique_candidates, duplicates = self.deduplicator.deduplicate_batch(
+                    db=db, candidates=enriched_questions,
+                    candidate_embeddings=embeddings, doc_id=doc.id)
 
             raise_if_cancelled(document_id)
 
@@ -464,65 +524,62 @@ class IngestionPipeline:
             for q_m, q_data in zip(question_models, unique_candidates):
                 ensure_question_metadata(db, q_m, q_data.get("_meta"), deck_row, doc)
 
-            # Auto-tag newly ingested questions with the QShala tagger (v6: topic paths, geography, year).
-            if USE_QSHALA_TAGGER and question_models:
-                sem = asyncio.Semaphore(TAG_CONCURRENCY)
-                done = {"n": 0, "failed": 0, "first_error": None}
-                total = len(question_models)
-
-                async def _tag_one(q_m):
-                    async with sem:
-                        raise_if_cancelled(document_id)
-                        try:
-                            q_tag = await self.qshala_tagger.tag(
-                                db=db,
-                                question_id=q_m.id,
-                                question_text=q_m.question_text,
-                                answer=q_m.answer,
-                                actor="deck_upload",
-                                commit=False,
-                                visual_clues=q_m.visual_clues or "",
-                                deck_year=deck_row.deck_year or doc.year,
-                                question=q_m,
-                            )
-                            apply_tag_to_meta(db, q_m.id, q_tag)
-                        except IngestionCancelled:
-                            raise
-                        except Exception as q_tag_err:
-                            # The question is still stored (as "Uncategorised"); a re-tag can fill it in later.
-                            logger.warning(f"QshalaTagger failed during ingestion for question {q_m.id}: {safe_error(q_tag_err)}")
-                            done["failed"] += 1
-                            if done["failed"] <= 3:
-                                progress.event(INGESTION_STATUS_REGISTRY[document_id],
-                                               f"AI tagging error: {safe_error(q_tag_err)[:160]}")
-                            done["first_error"] = done["first_error"] or safe_error(q_tag_err)[:300]
-                            db.add(QuestionEditHistory(question_id=q_m.id, field="tagging", old_value=None,
-                                                       new_value=f"Tagging failed: {safe_error(q_tag_err)[:300]}",
-                                                       kind="TAG_ERROR", actor="deck_upload"))
-                        finally:
-                            done["n"] += 1
-                            INGESTION_STATUS_REGISTRY[document_id]["current_step"] = (
-                                f"8. Tagging questions ({done['n']}/{total})")
-                            progress.update(INGESTION_STATUS_REGISTRY[document_id],
-                                            detail=f"AI tagging: {done['n']} of {total} questions done"
-                                                   + (f" ({done['failed']} failed)" if done["failed"] else "")
-                                                   + ". Calls are spaced to stay inside the AI rate limit.")
-
-                results = await asyncio.gather(*[_tag_one(m) for m in question_models], return_exceptions=True)
-                for r in results:
-                    if isinstance(r, IngestionCancelled):
-                        raise r
-                    if isinstance(r, BaseException):
-                        logger.warning(f"Tagging task error: {r}")
-
-            doc.question_count = len(question_models)
-            doc.processing_status = "COMPLETED"
+            # Phase C1 done: questions + metadata are durable BEFORE tagging runs. A tagging hiccup
+            # can no longer roll back the whole ingested deck, and the connection is released.
             db.commit()
+            t0 = _stage_log(document_id, "C:dedup+persist", t0)
+
+            # Tagging (phase C2). Chunked batch calls (one Gemini call per ~12 questions) instead of
+            # one call per question: fast, and small enough that no single response overflows the
+            # output-token ceiling. Each result is routed through the same draft/confirmed gate, so
+            # low-confidence questions still land in the review queue. A failed chunk parks its
+            # questions in review rather than taking the deck down.
+            tag_stats = {"confirmed": 0, "draft": 0, "failed_chunks": 0}
+            if USE_QSHALA_TAGGER and question_models:
+                raise_if_cancelled(document_id)
+                INGESTION_STATUS_REGISTRY[document_id]["current_step"] = "8. Tagging questions"
+                progress.update(INGESTION_STATUS_REGISTRY[document_id],
+                                detail=f"AI tagging {len(question_models)} questions in batches")
+                try:
+                    from backend.app.services.tagging.qshala_batch import tag_questions_batched
+                    tag_stats = await tag_questions_batched(
+                        db, question_models,
+                        provider=self.qshala_tagger.provider,
+                        model=self.qshala_tagger.model,
+                        actor="deck_upload",
+                    )
+                    # Mirror each question's resulting tag onto its metadata row (geography, year, ...).
+                    for q_m in question_models:
+                        latest = (db.query(QshalaTag)
+                                  .filter(QshalaTag.question_id == q_m.id)
+                                  .order_by(QshalaTag.created_at.desc()).first())
+                        if latest is not None:
+                            try:
+                                apply_tag_to_meta(db, q_m.id, latest)
+                            except Exception as meta_err:
+                                logger.warning("apply_tag_to_meta failed for %s: %s", q_m.id, safe_error(meta_err))
+                    db.commit()
+                except IngestionCancelled:
+                    raise
+                except Exception as tag_err:
+                    # Tagging is best-effort: questions are already stored. Park the deck's tags for
+                    # review rather than failing the whole ingestion.
+                    db.rollback()
+                    logger.warning("batch tagging failed, questions left untagged for review: %s",
+                                   safe_error(tag_err))
+                t0 = _stage_log(document_id, "C2:tagging", t0)
+
+            with short_session() as fin:
+                fin_doc = fin.query(Document).filter(Document.id == document_id).first()
+                if fin_doc:
+                    fin_doc.question_count = len(question_models)
+                    fin_doc.processing_status = "COMPLETED"
 
             progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Saved {len(question_models)} questions", detail="Finishing up")
             _tag_note = ""
-            if USE_QSHALA_TAGGER and question_models and done["failed"]:
-                _tag_note = f" (AI tagging failed for {done['failed']} of {len(question_models)}: {done['first_error']})"
+            if USE_QSHALA_TAGGER and question_models and tag_stats.get("draft"):
+                _tag_note = (f" ({tag_stats['draft']} of {len(question_models)} questions flagged for "
+                             f"review; {tag_stats.get('failed_chunks', 0)} chunk(s) failed)")
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "progress_percentage": 100,
                 "status": "COMPLETED",
