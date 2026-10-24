@@ -78,6 +78,12 @@ class ReviewActionIn(BaseModel):
     notes: Optional[str] = None
 
 
+class ClarifyIn(BaseModel):
+    hint: str
+    actor: str = "quizmaster"
+    accept: bool = True          # True: confirm the re-tag as the quiz master's call
+
+
 def _tag_to_dict(t: QshalaTag) -> Dict[str, Any]:
     return {
         "id": t.id,
@@ -415,6 +421,34 @@ def review_action(tag_id: str, body: ReviewActionIn, db: Session = Depends(get_d
 
     else:
         raise HTTPException(400, f"Unsupported action: {body.action}")
+
+
+@router.post("/review/{question_id}/clarify")
+async def clarify_question(question_id: str, body: ClarifyIn, db: Session = Depends(get_db)):
+    """Re-tag one question using a quiz-master hint. The hint is authoritative in the prompt.
+    If accept=True the result is stored HUMAN-confirmed (and becomes a future few-shot example)."""
+    q = db.query(Question).filter(Question.id == question_id).first()
+    if not q:
+        raise HTTPException(404, "question not found")
+
+    tagger = QshalaTagger()
+    row = await tagger.tag(db, question_id=question_id, question_text=q.question_text or "",
+                           answer=q.answer or "", actor=body.actor, commit=False,
+                           visual_clues=getattr(q, "visual_clues", "") or "",
+                           clarification=body.hint, question=q)
+
+    if body.accept:
+        new_tags = {"subtopic_l2": row.subtopic_l2, "keywords_l3": row.keywords_l3,
+                    "secondary_l2": row.secondary_l2, "entity_type": row.entity_type,
+                    "india_international": row.india_international, "geo_region": row.geo_region,
+                    "shelf_life": row.shelf_life, "sensitivity": row.sensitivity, "fit": "good"}
+        db.rollback()   # drop the uncommitted draft; human_override writes the authoritative row
+        human = tagger.human_override(db, question_id=question_id, new_tags=new_tags,
+                                      actor=body.actor, notes=f"clarified: {body.hint[:300]}")
+        return {"status": "ok", "confirmed": True, "tag": _tag_to_dict(human)}
+
+    db.commit()
+    return {"status": "ok", "confirmed": False, "tag": _tag_to_dict(row)}
 
 
 @router.get("/deck/{document_id}/tag-summary")

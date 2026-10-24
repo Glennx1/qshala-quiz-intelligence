@@ -63,9 +63,8 @@ export function getFallbackMediaUrl(currentUrl: string): string | null {
 }
 
 // Size of each slice sent by uploadDocumentChunked. Exported so the UI can show the same number.
-// 50 MB: probed against the live Render service, which accepted single requests of 120 MB, so the
-// platform is not the limit. The real cost of a bigger slice is only what a failed slice must resend.
-export const UPLOAD_CHUNK_SIZE = 50 * 1024 * 1024;
+// 15 MB: resilient against dropped connections, fast retries, and low memory impact on 512 MB instances.
+export const UPLOAD_CHUNK_SIZE = 15 * 1024 * 1024;
 
 /** Live numbers the Upload Center shows while a file is going up. */
 export interface UploadProgressInfo {
@@ -202,8 +201,8 @@ export const api = {
     ) => void,
     title?: string,
     year?: number,
-    chunkSize: number = UPLOAD_CHUNK_SIZE, // 50 MB slices: chunking is for resilience (a dropped connection
-    // only costs one slice), not for a payload ceiling -- the backend runs on Render, not Vercel serverless
+    chunkSize: number = UPLOAD_CHUNK_SIZE, // 15 MB slices: chunking is for resilience (a dropped connection
+    // only costs one slice), low memory footprint on 512 MB instances, and smooth progress tracking
     options?: { signal?: AbortSignal; onUploadId?: (uploadId: string) => void }
   ): Promise<DocumentItem> => {
     const signal = options?.signal;
@@ -657,6 +656,28 @@ export const api = {
     }
     return await postRes.blob();
   },
+  getQshalaReviewQueue: async (limit = 50) => {
+    return getQshalaReviewQueue(limit);
+  },
+  clarifyQshalaQuestion: async (questionId: string, hint: string, actor = 'quizmaster', accept = true) => {
+    return clarifyQshalaQuestion(questionId, hint, actor, accept);
+  },
+  getQshalaTaxonomy: async () => {
+    return getQshalaTaxonomy();
+  },
+  executeReviewAction: async (
+    tagId: string,
+    body: { action: 'accept' | 'change' | 'skip'; actor?: string; new_subtopic_l2?: string; notes?: string }
+  ) => {
+    return executeReviewAction(tagId, body);
+  },
+  bulkAcceptQshalaTags: async (
+    tagIds: string[],
+    actor = 'reviewer',
+    notes = 'Bulk accepted from /review queue'
+  ) => {
+    return bulkAcceptQshalaTags(tagIds, actor, notes);
+  },
 };
 
 export async function downloadQuizFile(quiz: Quiz, format: 'json' | 'csv' | 'pptx' = 'pptx'): Promise<void> {
@@ -705,7 +726,7 @@ export async function submitQshalaHumanTag(questionId: string, body: QshalaHuman
   return r.json();
 }
 
-export async function getQshalaReviewQueue(limit = 50): Promise<QshalaTag[]> {
+export async function getQshalaReviewQueue(limit = 50): Promise<QshalaReviewItem[]> {
   const base = getApiBase();
   const r = await fetch(`${base}/qshala/review-queue?limit=${limit}`);
   if (!r.ok) throw new Error(`Review queue load failed (${r.status})`);
@@ -730,5 +751,50 @@ export async function searchQshalaQuestions(params: Record<string, any> = {}): P
   }
   const r = await fetch(`${base}/qshala/questions?${qs.toString()}`);
   if (!r.ok) throw new Error(`Search failed (${r.status})`);
+  return r.json();
+}
+
+export async function clarifyQshalaQuestion(
+  questionId: string,
+  hint: string,
+  actor = 'quizmaster',
+  accept = true
+) {
+  const base = getApiBase();
+  const r = await fetch(`${base}/qshala/review/${encodeURIComponent(questionId)}/clarify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hint, actor, accept }),
+  });
+  if (!r.ok) throw new Error(`Clarify failed (${r.status})`);
+  return r.json();
+}
+
+export async function executeReviewAction(
+  tagId: string,
+  body: { action: 'accept' | 'change' | 'skip'; actor?: string; new_subtopic_l2?: string; notes?: string }
+) {
+  const base = getApiBase();
+  const r = await fetch(`${base}/qshala/review/${encodeURIComponent(tagId)}/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`Review action failed (${r.status})`);
+  return r.json();
+}
+
+export async function bulkAcceptQshalaTags(
+  tagIds: string[],
+  actor = 'reviewer',
+  notes = 'Bulk accepted from /review queue'
+) {
+  const base = getApiBase();
+  const r = await fetch(`${base}/qshala/review/bulk-accept`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tag_ids: tagIds, actor, notes }),
+  });
+  if (!r.ok) throw new Error(`Bulk accept failed (${r.status})`);
   return r.json();
 }

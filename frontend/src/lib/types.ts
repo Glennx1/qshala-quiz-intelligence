@@ -40,6 +40,9 @@ export interface HistoricalQuestion {
   topics?: string[];
   tags?: string[];
   difficulty: string;
+  round?: string;
+  question_format?: string;
+  answer_type?: string;
   difficulty_score?: number;
   cognitive_level?: string;
   grade_min: number;
@@ -160,6 +163,9 @@ export interface QuestionDetail {
   question_text: string;
   answer: string;
   difficulty: string;
+  round?: string;
+  question_format?: string;
+  answer_type?: string;
   difficulty_score?: number;
   document: { id: string; title?: string | null; filename?: string | null };
   source_slide_range?: string | null;
@@ -252,7 +258,10 @@ export interface TopicSummary {
   subtopics: string[];
   grade_min: number | null;
   grade_max: number | null;
-  sample_questions: { question_text: string; difficulty: string; answer: string }[];
+  sample_questions: { question_text: string; difficulty: string;
+  round?: string;
+  question_format?: string;
+  answer_type?: string; answer: string }[];
 }
 
 export interface RetrievalSource {
@@ -296,6 +305,9 @@ export interface GeneratedQuestion {
   answer: string;
   explanation?: string | null;
   difficulty: string;
+  round?: string;
+  question_format?: string;
+  answer_type?: string;
   grade_min?: number;
   grade_max?: number;
   topic?: string;
@@ -337,6 +349,9 @@ export interface Quiz {
   grade_min?: number | null;
   grade_max?: number | null;
   difficulty: string;
+  round?: string;
+  question_format?: string;
+  answer_type?: string;
   difficulty_distribution?: Record<string, number>;
   question_count: number;
   question_types: string[];
@@ -371,6 +386,9 @@ export interface TagPreviewResponse {
     question_text: string;
     answer: string;
     difficulty: string;
+  round?: string;
+  question_format?: string;
+  answer_type?: string;
     topic: string;
     tags: string[];
   }[];
@@ -398,6 +416,9 @@ export interface DashboardStats {
     topic: string;
     question_count: number;
     difficulty: string;
+  round?: string;
+  question_format?: string;
+  answer_type?: string;
     grade_range: string;
     created_at: string;
   }[];
@@ -517,3 +538,20 @@ export interface QshalaSearchResponse {
     tag: QshalaTag;
   }[];
 }
+
+export interface QshalaReviewItem {
+  tag: QshalaTag;
+  question: {
+    id: string;
+    question_text: string;
+    answer?: string;
+    explanation?: string;
+    document_id?: string;
+    visual_clues?: string;
+    slide_id?: string;
+    slide_index?: number;
+    image_refs?: string[];
+  };
+}
+
+export type QshalaTaxonomyResponse = Record<string, string[]> | any;

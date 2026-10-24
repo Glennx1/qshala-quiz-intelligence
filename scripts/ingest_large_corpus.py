@@ -106,18 +106,24 @@ async def ingest_single_deck(pipeline: IngestionPipeline, deck_path: Path, year:
         await pipeline.run(doc_id)
 
         # Query result stats
-        db.refresh(doc)
-        print(f"   ✅ Finished '{doc.title}':")
-        print(f"      - Slides Processed: {doc.slide_count}")
-        print(f"      - Questions Extracted: {doc.question_count}")
-        print(f"      - Status: {doc.processing_status}")
+        with SessionLocal() as check_db:
+            res_doc = check_db.query(Document).filter(Document.id == doc_id).first()
+            title = res_doc.title if res_doc else doc.title
+            slide_count = res_doc.slide_count if res_doc else 0
+            question_count = res_doc.question_count if res_doc else 0
+            status = res_doc.processing_status if res_doc else "UNKNOWN"
 
-        return {
-            "title": doc.title,
-            "slides": doc.slide_count,
-            "questions": doc.question_count,
-            "status": doc.processing_status
-        }
+            print(f"   ✅ Finished '{title}':")
+            print(f"      - Slides Processed: {slide_count}")
+            print(f"      - Questions Extracted: {question_count}")
+            print(f"      - Status: {status}")
+
+            return {
+                "title": title,
+                "slides": slide_count,
+                "questions": question_count,
+                "status": status
+            }
     except Exception as e:
         print(f"   ❌ Failed to ingest {deck_path.name}: {e}")
         return {"title": deck_path.name, "error": str(e), "status": "FAILED"}
@@ -149,7 +155,7 @@ async def main():
     print(f"Found {len(decks)} presentation deck(s) to process.")
 
     db = SessionLocal()
-    pipeline = IngestionPipeline(db)
+    pipeline = IngestionPipeline()
 
     total_questions = 0
     total_slides = 0

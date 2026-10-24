@@ -21,7 +21,8 @@ import {
   Copy,
   X,
   FileSpreadsheet,
-  Star
+  Star,
+  Sparkles
 } from 'lucide-react';
 import { api, resolveMediaUrl, getFallbackMediaUrl } from '../../lib/api';
 import { HistoricalQuestion, TopicItem, DocumentItem } from '../../lib/types';
@@ -45,8 +46,12 @@ function KnowledgeBaseContent() {
   const searchParams = useSearchParams();
   const initialTopic = searchParams.get('topic') || '';
 
-  const [activeTab, setActiveTab] = useState<'all' | 'duplicates'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'duplicates' | 'needs-review'>('all');
   const [duplicateCount, setDuplicateCount] = useState<number>(0);
+  const [reviewCount, setReviewCount] = useState<number>(0);
+  const [reviewQueue, setReviewQueue] = useState<any[]>([]);
+  const [clarifyHints, setClarifyHints] = useState<Record<string, string>>({});
+  const [clarifyingId, setClarifyingId] = useState<string | null>(null);
 
   const [query, setQuery] = useState('');
   const [topic, setTopic] = useState(initialTopic);
@@ -84,6 +89,36 @@ function KnowledgeBaseContent() {
     const nextFallback = getFallbackMediaUrl(current);
     if (nextFallback && nextFallback !== current) {
       setImgFallbackUrls((prev) => ({ ...prev, [rawUrl]: nextFallback }));
+    }
+  };
+
+  const fetchReviewQueue = async () => {
+    try {
+      const rq = await api.getQshalaReviewQueue(100);
+      setReviewQueue(rq || []);
+      setReviewCount((rq || []).length);
+    } catch (err) {
+      console.error('Failed to load review queue:', err);
+    }
+  };
+
+  const handleClarify = async (questionId: string) => {
+    const hint = clarifyHints[questionId] || '';
+    setClarifyingId(questionId);
+    try {
+      await api.clarifyQshalaQuestion(questionId, hint, 'quizmaster', true);
+      setReviewQueue((prev) => prev.filter((item) => (item.question?.id || item.tag?.question_id) !== questionId));
+      setReviewCount((prev) => Math.max(0, prev - 1));
+      setClarifyHints((prev) => {
+        const next = { ...prev };
+        delete next[questionId];
+        return next;
+      });
+    } catch (err) {
+      console.error('Clarify failed:', err);
+      alert('Failed to clarify question: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setClarifyingId(null);
     }
   };
 
@@ -141,7 +176,11 @@ function KnowledgeBaseContent() {
   };
 
   useEffect(() => {
-    fetchQuestions();
+    if (activeTab === 'needs-review') {
+      fetchReviewQueue();
+    } else {
+      fetchQuestions();
+    }
   }, [activeTab, topic, subtopic, tagFilter, difficulty, selectedDeckId, gradeMin, sortBy, sortOrder]);
 
   const handleSearch = (e: React.FormEvent) => {
@@ -392,7 +431,124 @@ function KnowledgeBaseContent() {
 
       {/* Professional CMS Data Table */}
       <div className="rounded-xl border border-slate-200/80 bg-white shadow-sm shadow-slate-100/50 overflow-hidden">
-        {loading ? (
+        {activeTab === 'needs-review' ? (
+          <div className="overflow-x-auto">
+            <div className="bg-indigo-50/70 border-b border-indigo-100 px-4 py-3 flex items-center justify-between text-xs text-indigo-950">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-indigo-600 shrink-0" />
+                <span className="font-medium">
+                  Weak-fit or low-confidence questions parked for review. Your clarifications teach the tagger for future questions.
+                </span>
+              </div>
+              <span className="font-semibold px-2 py-0.5 bg-indigo-100 rounded-full text-indigo-800 shrink-0">
+                {reviewQueue.length} pending
+              </span>
+            </div>
+            <table className="w-full text-left text-[13px] border-collapse">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50/60 font-semibold text-[12px] uppercase tracking-wider text-slate-600">
+                  <th className="py-3 px-4 w-5/12">Question & Answer</th>
+                  <th className="py-3 px-4 w-3/12">AI Classification & Reason</th>
+                  <th className="py-3 px-4 w-4/12">Quiz Master Clarification & Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {reviewQueue.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="py-12 text-center text-slate-400">
+                      No questions currently need review! All questions are confirmed.
+                    </td>
+                  </tr>
+                ) : (
+                  reviewQueue.map((item) => {
+                    const q = item.question || {};
+                    const tag = item.tag || {};
+                    const qId = q.id || tag.question_id;
+                    const hintVal = clarifyHints[qId] || '';
+                    const isSaving = clarifyingId === qId;
+
+                    return (
+                      <tr key={qId || tag.id} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="py-3.5 px-4 align-top">
+                          <div className="font-semibold text-[13.5px] text-slate-900 leading-snug">
+                            {q.question_text || '(No question text)'}
+                          </div>
+                          {q.answer && (
+                            <div className="mt-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200/60 rounded px-2.5 py-1 inline-block font-medium">
+                              <span className="font-semibold text-emerald-900">Answer: </span>
+                              {q.answer}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 align-top">
+                          <div className="flex flex-wrap gap-1 items-center">
+                            <span className="font-semibold text-slate-900 bg-slate-100 border border-slate-200 rounded px-2 py-0.5 text-xs">
+                              {tag.topic_l1 || 'Uncategorised'}
+                            </span>
+                            {tag.subtopic_l2 && (
+                              <>
+                                <span className="text-slate-400 text-xs">›</span>
+                                <span className="text-slate-700 bg-slate-50 border border-slate-200 rounded px-2 py-0.5 text-xs">
+                                  {tag.subtopic_l2}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                          {tag.confidence !== undefined && (
+                            <div className="mt-1 text-[11px] text-slate-500">
+                              Confidence: {Math.round((tag.confidence || 0) * 100)}%
+                            </div>
+                          )}
+                          {tag.verification_notes && (
+                            <div className="mt-1.5 text-[11.5px] text-slate-700 bg-amber-50/80 border border-amber-200/70 rounded p-2 leading-snug">
+                              <span className="font-semibold text-amber-900">Reason: </span>
+                              {tag.verification_notes}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 align-top">
+                          <div className="flex flex-col gap-2">
+                            <input
+                              type="text"
+                              placeholder="One-line hint (e.g. 'This is about the Beatles album')"
+                              value={hintVal}
+                              onChange={(e) => setClarifyHints({ ...clarifyHints, [qId]: e.target.value })}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleClarify(qId);
+                                }
+                              }}
+                              className="w-full text-xs px-2.5 py-1.5 rounded border border-slate-200 focus:outline-none focus:border-indigo-500"
+                            />
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-slate-400">
+                                {hintVal.trim() ? 'Clarifies & trains tagger' : 'Confirms current AI tags'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleClarify(qId)}
+                                disabled={isSaving}
+                                className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded shadow-sm transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                {isSaving ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <CheckCircle className="h-3.5 w-3.5" />
+                                )}
+                                <span>Accept & Confirm</span>
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        ) : loading ? (
           <div className="flex flex-col items-center justify-center py-20">
             <Loader2 className="h-6 w-6 animate-spin text-blue-600 mb-2" />
             <p className="text-[13px] text-slate-400 font-normal">Loading questions...</p>

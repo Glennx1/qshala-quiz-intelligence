@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import asyncio
 import logging
 import gc
@@ -39,7 +40,7 @@ from backend.app.services.ingestion.cancellation import (
 from backend.app.services.ingestion.slide_classifier import SlideClassifier
 from backend.app.services.ingestion.question_extractor import QuestionExtractor
 from backend.app.services.ingestion.deck_metadata import annotate_questions
-from backend.app.models.question_meta import QuestionEditHistory
+from backend.app.models.question_meta import DeckMetadata, QuestionEditHistory
 from backend.app.services.ingestion import progress
 from backend.app.services.ingestion.vision_resize import shrink_for_vision, shrink_for_vision_subprocess, is_significant_visual_image, is_significant_file
 from backend.app.services.tagging.qshala_tagger import safe_error
@@ -49,6 +50,7 @@ from backend.app.services.question_meta_service import (
 from backend.app.services.tagging import topic_paths
 from backend.app.services.tagging.auto_tagger import AutoTagger  # Kept for backward compatibility
 from backend.app.services.tagging.qshala_tagger import QshalaTagger
+from backend.app.services.tagging.qshala_batch import tag_deck_batched
 from backend.app.services.tagging.difficulty_engine import DifficultyEngine
 import ctypes
 
@@ -81,19 +83,32 @@ _VISUAL_TRIGGER_REGEX = re.compile("|".join(VISUAL_TRIGGER_PATTERNS), re.IGNOREC
 
 def is_image_dependent_question(q: Dict[str, Any]) -> bool:
     """Returns True only if the question's text references visual assets or lacks enough context without them."""
-    text = (q.get("question_text") or "").strip()
-    if not text:
-        return bool(q.get("answer"))
-    words = text.split()
+    has_slide_images = bool(q.get("image_paths") or q.get("question_images") or q.get("image_refs"))
+    if not has_slide_images:
+        return False
+    combined_text = ((q.get("question_text") or "") + " " + (q.get("explanation") or "")).strip()
+    words = combined_text.split()
     if len(words) < 15:
         return True
-    if _VISUAL_TRIGGER_REGEX.search(text):
+    if _VISUAL_TRIGGER_REGEX.search(combined_text):
         return True
     return False
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_clean(db, where: str) -> None:
+    """Enforce the invariant: no open transaction may cross a slow AI stage.
+    If one is open, commit it (ending the idle window) and log where it happened so a
+    regression is visible instead of silently re-introducing the idle-timeout bug."""
+    try:
+        if db.in_transaction():
+            logger.info("ingestion: committing open transaction before %s", where)
+            db.commit()
+    except Exception:
+        db.rollback()
 
 # Global tracker for real-time progress polling
 INGESTION_STATUS_REGISTRY: Dict[str, Dict[str, Any]] = {}
@@ -141,7 +156,13 @@ class IngestionPipeline:
             doc.processing_status = "PROCESSING"
             db.commit()
 
-            file_ext = os.path.splitext(doc.filename)[1].lower()
+            doc_id = doc.id
+            doc_storage_path = doc.storage_path
+            doc_filename = doc.filename
+            doc_title = doc.title
+            doc_year = doc.year
+
+            file_ext = os.path.splitext(doc_filename)[1].lower()
             
             # Step 1 & 2: Extracting and Processing Slides
             INGESTION_STATUS_REGISTRY[document_id].update({
@@ -150,20 +171,21 @@ class IngestionPipeline:
             })
 
             if file_ext in [".pptx", ".ppt"]:
-                parser = PPTXParser(doc.storage_path, doc.id)
+                parser = PPTXParser(doc_storage_path, doc_id)
                 parser.should_cancel = lambda: doc_cancel_requested(document_id)
                 parser.on_progress = lambda detail, pct=None: progress.update(
                     INGESTION_STATUS_REGISTRY[document_id], detail=detail, pct=pct)
                 try:
-                    _mb = os.path.getsize(doc.storage_path) / 1048576.0
+                    _mb = os.path.getsize(doc_storage_path) / 1048576.0
                     progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Opening the deck ({_mb:.0f} MB). Large decks take a while to load.")
                 except Exception:
                     pass
-                # Parse in a worker thread: it is blocking, and on a big deck it would otherwise
-                # freeze the event loop so a Cancel request couldn't even be received.
+                # Make sure DB transaction is committed/clean before slow parse
+                db.commit()
                 raw_slides = await asyncio.to_thread(parser.parse)
             elif file_ext == ".pdf":
-                parser = PDFParser(doc.storage_path, doc.id)
+                parser = PDFParser(doc_storage_path, doc_id)
+                db.commit()
                 raw_slides = await asyncio.to_thread(parser.parse)
             else:
                 raise ValueError(f"Unsupported file format: {file_ext}")
@@ -187,7 +209,7 @@ class IngestionPipeline:
                 classified_slides.append(s)
 
                 slide_obj = Slide(
-                    document_id=doc.id,
+                    document_id=doc_id,
                     slide_number=s["slide_number"],
                     slide_type=slide_type,
                     title=s["title"],
@@ -222,9 +244,10 @@ class IngestionPipeline:
                 "current_step": "3. Detecting questions and quiz patterns"
             })
 
-            # Map slide objects back to classified slides with IDs
+            # Map slide objects back to classified slides with IDs, then CLOSE phase A.
             for i, s_model in enumerate(slide_models):
                 classified_slides[i]["id"] = s_model.id
+            db.commit()                         # Phase A done: slides durable, no open transaction.
 
             # Step 3, 4, 5: Question Extraction & Classification
             INGESTION_STATUS_REGISTRY[document_id].update({
@@ -234,8 +257,8 @@ class IngestionPipeline:
 
             raw_questions = self.extractor.extract_from_slides(
                 classified_slides,
-                doc_title=doc.title,
-                doc_year=doc.year
+                doc_title=doc_title,
+                doc_year=doc_year
             )
 
             progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Found {len(raw_questions)} questions")
@@ -243,8 +266,11 @@ class IngestionPipeline:
             # Deck details from the file name, then the no-AI per-question fields
             # (question number, format, star, answer type, language).
             deck_row = upsert_deck_metadata(db, doc)
-            annotate_questions(raw_questions, classified_slides, deck_row_to_info(deck_row))
-            db.commit()  # Commit slides and metadata to release PostgreSQL transaction before AI calls
+            deck_info = deck_row_to_info(deck_row)
+            annotate_questions(raw_questions, classified_slides, deck_info)
+            deck_year = deck_row.deck_year or doc.year    # capture BEFORE commit expires the row
+            db.commit()                                   # nothing below until dedup touches the DB
+            _ensure_clean(db, "vision/embedding stage")   # assert the invariant at the phase boundary
             _trim_memory()
             _log_mem("after question extraction")
 
@@ -280,8 +306,8 @@ class IngestionPipeline:
                     img_bytes: Optional[bytes] = None
                     ext = os.path.splitext(rel_img_path)[1].lower()
 
-                    # 1. First look for local copy at settings.SLIDES_DIR / doc.id / "media" / img_name
-                    cand_local = settings.SLIDES_DIR / doc.id / "media" / img_name
+                    # 1. First look for local copy at settings.SLIDES_DIR / doc_id / "media" / img_name
+                    cand_local = settings.SLIDES_DIR / doc_id / "media" / img_name
                     if cand_local.exists():
                         disk_path = cand_local
                     elif rel_img_path.startswith("/static/slides/"):
@@ -361,6 +387,7 @@ class IngestionPipeline:
             ] if ENABLE_VISION_INGESTION else []
             _img_total = len(candidate_questions)
             _img_done = {"n": 0}
+            logger.info(f"Vision: {_img_total}/{len(raw_questions)} questions flagged as image-dependent (was 27)")
 
             async def _describe_guarded(q):
                 if not ENABLE_VISION_INGESTION or not is_image_dependent_question(q) or not (q.get("question_images") or q.get("image_refs")):
@@ -410,7 +437,7 @@ class IngestionPipeline:
                         question_text=q["question_text"],
                         answer_text=q["answer"],
                         explanation=q.get("explanation", ""),
-                        doc_title=doc.title,
+                        doc_title=doc_title,
                         visual_clues=visual_clues_str or q.get("visual_clues", "") or "",
                         audio_transcript=q.get("audio_transcript", ""),
                         video_transcript=q.get("video_transcript", ""),
@@ -480,22 +507,27 @@ class IngestionPipeline:
 
             raise_if_cancelled(document_id)
 
-            # Step 7: Deduplication Check (Tier 1 O(1) Hash + Tier 2 Semantic ANN)
+            # Step 7: Deduplication Check & Step 8: Indexing Unique Records
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "progress_percentage": 92,
                 "current_step": "7. Deduplicating questions against knowledge base"
             })
 
-            unique_candidates, duplicates = self.deduplicator.deduplicate_batch(
-                db=db,
-                candidates=enriched_questions,
-                candidate_embeddings=embeddings,
-                doc_id=doc.id
-            )
+            _ensure_clean(db, "dedup")              # fresh, pre-pinged connection for phase C
+            from sqlalchemy.exc import OperationalError, DBAPIError
+            try:
+                unique_candidates, duplicates = self.deduplicator.deduplicate_batch(
+                    db=db, candidates=enriched_questions,
+                    candidate_embeddings=embeddings, doc_id=doc.id)
+            except (OperationalError, DBAPIError) as db_err:
+                logger.warning("dedup hit a stale connection, retrying once: %s", safe_error(db_err))
+                db.rollback()                        # drop the dead transaction; pre_ping gives a live conn
+                unique_candidates, duplicates = self.deduplicator.deduplicate_batch(
+                    db=db, candidates=enriched_questions,
+                    candidate_embeddings=embeddings, doc_id=doc.id)
 
             raise_if_cancelled(document_id)
 
-            # Step 8: Indexing Unique Records
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "progress_percentage": 96,
                 "current_step": f"8. Storing {len(unique_candidates)} unique questions ({len(duplicates)} replicas linked)"
@@ -503,13 +535,12 @@ class IngestionPipeline:
 
             question_models = []
             for q_data in unique_candidates:
-                # Find matching embedding
                 orig_idx = q_data.get("_emb_idx")
                 emb = embeddings[orig_idx] if orig_idx is not None and 0 <= orig_idx < len(embeddings) else None
 
                 q_obj = Question(
                     content_hash=q_data["content_hash"],
-                    document_id=doc.id,
+                    document_id=document_id,
                     slide_id=q_data.get("slide_id"),
                     answer_slide_id=q_data.get("answer_slide_id"),
                     question_text=q_data["question_text"],
@@ -529,10 +560,10 @@ class IngestionPipeline:
                     question_hook=q_data.get("question_hook", "DIRECT_TRIVIA"),
                     curiosity_score=q_data.get("curiosity_score", 7),
                     temporal_nature=q_data.get("temporal_nature", "EVERGREEN"),
-                    provenance_decks=[{"document_id": doc.id, "slide_id": q_data.get("slide_id")}],
+                    provenance_decks=[{"document_id": document_id, "slide_id": q_data.get("slide_id")}],
                     occurrence_count=1,
                     question_type=q_data.get("question_type", "SLIDE_QA"),
-                    source_year=q_data.get("source_year", doc.year),
+                    source_year=q_data.get("source_year", doc.year if doc else doc_year),
                     round_number=(q_data.get("_meta") or {}).get("round_number"),
                     image_refs=q_data.get("image_refs", []),
                     question_images=q_data.get("question_images", []),
@@ -561,77 +592,67 @@ class IngestionPipeline:
 
             for q_m, q_data in zip(question_models, unique_candidates):
                 ensure_question_metadata(db, q_m, q_data.get("_meta"), deck_row, doc)
-            db.commit()  # Commit created questions so db transaction is closed before tagging calls
+            db.commit()                             # questions + metadata durable; tagging is its own phase
+            saved_question_ids = [q_m.id for q_m in question_models]
 
-            # Auto-tag newly ingested questions with the QShala tagger (v6: topic paths, geography, year).
+            # Auto-tag newly ingested questions with chunked, review-gated batch tagger (v6: topic paths, geography, year).
+            done = {"n": 0, "failed": 0, "first_error": None}
             if USE_QSHALA_TAGGER and question_models:
-                sem = asyncio.Semaphore(TAG_CONCURRENCY)
-                done = {"n": 0, "failed": 0, "first_error": None}
                 total = len(question_models)
+                INGESTION_STATUS_REGISTRY[document_id]["current_step"] = f"8. Tagging questions (chunked batch {total})"
+                progress.update(INGESTION_STATUS_REGISTRY[document_id],
+                                detail=f"AI tagging: Classifying {total} questions in chunked batches...")
 
-                async def _tag_one(q_m):
-                    async with sem:
-                        raise_if_cancelled(document_id)
-                        try:
-                            q_tag = await self.qshala_tagger.tag(
-                                db=db,
-                                question_id=q_m.id,
-                                question_text=q_m.question_text,
-                                answer=q_m.answer,
-                                actor="deck_upload",
-                                commit=False,
-                                visual_clues=q_m.visual_clues or "",
-                                deck_year=deck_row.deck_year or doc.year,
-                                question=q_m,
-                            )
-                            apply_tag_to_meta(db, q_m.id, q_tag)
-                        except IngestionCancelled:
-                            raise
-                        except Exception as q_tag_err:
-                            # The question is still stored (as "Uncategorised"); a re-tag can fill it in later.
-                            logger.warning(f"QshalaTagger failed during ingestion for question {q_m.id}: {safe_error(q_tag_err)}")
-                            done["failed"] += 1
-                            if done["failed"] <= 3:
-                                progress.event(INGESTION_STATUS_REGISTRY[document_id],
-                                               f"AI tagging error: {safe_error(q_tag_err)[:160]}")
-                            done["first_error"] = done["first_error"] or safe_error(q_tag_err)[:300]
-                            db.add(QuestionEditHistory(question_id=q_m.id, field="tagging", old_value=None,
-                                                       new_value=f"Tagging failed: {safe_error(q_tag_err)[:300]}",
-                                                       kind="TAG_ERROR", actor="deck_upload"))
-                        finally:
-                            done["n"] += 1
-                            INGESTION_STATUS_REGISTRY[document_id]["current_step"] = (
-                                f"8. Tagging questions ({done['n']}/{total})")
-                            progress.update(INGESTION_STATUS_REGISTRY[document_id],
-                                            detail=f"AI tagging: {done['n']} of {total} questions done"
-                                                   + (f" ({done['failed']} failed)" if done["failed"] else "")
-                                                   + ". Calls are spaced to stay inside the AI rate limit.")
+                t_tag_start = time.perf_counter()
+                try:
+                    raise_if_cancelled(document_id)
+                    tag_stats = await tag_deck_batched(
+                        db,
+                        question_models,
+                        provider=self.qshala_tagger.provider,
+                        model=self.qshala_tagger.model,
+                        actor="deck_upload",
+                        rpm=getattr(self.qshala_tagger, "rpm", 0.0),
+                    )
+                    t_tag_elapsed = time.perf_counter() - t_tag_start
+                    logger.info("Tagging: %d questions in %.1fs: %s", len(question_models), t_tag_elapsed, tag_stats)
+                    done["n"] = len(question_models)
+                    progress.update(INGESTION_STATUS_REGISTRY[document_id],
+                                    detail=f"AI tagging: {total} questions processed in {t_tag_elapsed:.1f}s ({tag_stats.get('confirmed', 0)} confirmed, {tag_stats.get('draft', 0)} in review queue).")
+                except IngestionCancelled:
+                    raise
+                except Exception as q_tag_err:
+                    logger.warning(f"Batch tagging failed: {safe_error(q_tag_err)}")
+                    done["failed"] = total
+                    done["first_error"] = safe_error(q_tag_err)[:300]
+                    progress.event(INGESTION_STATUS_REGISTRY[document_id],
+                                   f"AI tagging error: {safe_error(q_tag_err)[:160]}")
+                    for q_m in question_models:
+                        db.add(QuestionEditHistory(
+                            question_id=q_m.id, field="tagging", old_value=None,
+                            new_value=f"Tagging failed: {safe_error(q_tag_err)[:300]}",
+                            kind="TAG_ERROR", actor="deck_upload"
+                        ))
 
-                results = await asyncio.gather(*[_tag_one(m) for m in question_models], return_exceptions=True)
-                for r in results:
-                    if isinstance(r, IngestionCancelled):
-                        raise r
-                    if isinstance(r, BaseException):
-                        logger.warning(f"Tagging task error: {r}")
-                del results
-                _trim_memory()
-                _log_mem("after tagging")
+            _trim_memory()
+            _log_mem("after tagging")
 
             doc.question_count = len(question_models)
             doc.processing_status = "COMPLETED"
             db.commit()
+
             _log_mem("end of pipeline")
 
-            progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Saved {len(question_models)} questions", detail="Finishing up")
+            progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Saved {len(saved_question_ids)} questions", detail="Finishing up")
             _tag_note = ""
-            if USE_QSHALA_TAGGER and question_models and done["failed"]:
-                _tag_note = f" (AI tagging failed for {done['failed']} of {len(question_models)}: {done['first_error']})"
+            if USE_QSHALA_TAGGER and saved_question_ids and done.get("failed"):
+                _tag_note = f" (AI tagging failed for {done['failed']} of {len(saved_question_ids)}: {done['first_error']})"
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "progress_percentage": 100,
                 "status": "COMPLETED",
                 "current_step": "Ingestion completed successfully" + _tag_note,
                 "slides_processed": len(slide_models),
-                "questions_extracted": len(question_models),
+                "questions_extracted": len(saved_question_ids),
                 "duplicates_filtered": len(duplicates)
             })
 
@@ -641,7 +662,8 @@ class IngestionPipeline:
                 db.rollback()
             except Exception:
                 pass
-            purge_document(db, document_id)
+            with SessionLocal() as cancel_db:
+                purge_document(cancel_db, document_id)
             clear_doc_cancel(document_id)
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "status": "CANCELLED",
@@ -651,12 +673,14 @@ class IngestionPipeline:
         except Exception as e:
             logger.exception(f"Error processing document {document_id}: {e}")
             try:
-                db.rollback()
-                doc.processing_status = "FAILED"
-                doc.processing_error = str(e)
-                db.commit()
-            except Exception:
-                pass
+                with SessionLocal() as err_db:
+                    err_doc = err_db.query(Document).filter(Document.id == document_id).first()
+                    if err_doc:
+                        err_doc.processing_status = "FAILED"
+                        err_doc.processing_error = str(e)
+                        err_db.commit()
+            except Exception as mark_err:
+                logger.warning(f"Failed to record FAILED status on document {document_id}: {mark_err}")
 
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "status": "FAILED",
@@ -664,7 +688,7 @@ class IngestionPipeline:
                 "current_step": f"Error: {str(e)}"
             })
         finally:
-            if own_session:
+            if own_session and db is not None:
                 try:
                     db.close()
                 except Exception:

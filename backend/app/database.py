@@ -111,7 +111,8 @@ if is_postgres:
             raw_db_url,
             echo=False,
             pool_pre_ping=True,   # test each connection before use; Neon pooler can drop idle SSL conns
-            pool_recycle=280,     # recycle connections before Neon/pgbouncer idle timeout kicks in
+            pool_recycle=300,     # recycle connections before idle timeout kicks in
+            connect_args={"options": "-c idle_in_transaction_session_timeout=0"},  # worker runs long jobs
         )
         with engine.connect() as conn:
             pass
@@ -124,7 +125,13 @@ if engine is None:
     import os
     from backend.app.config import default_db_url
     connect_args = {"check_same_thread": False}
-    engine = create_engine(default_db_url, connect_args=connect_args, echo=False)
+    engine = create_engine(
+        default_db_url,
+        connect_args=connect_args,
+        echo=False,
+        pool_pre_ping=True,
+        pool_recycle=300,
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
