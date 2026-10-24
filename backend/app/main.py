@@ -73,6 +73,21 @@ async def lifespan(app: FastAPI):
             logger.info("Auto-seeding completed.")
     except Exception as e:
         logger.warning(f"Lifespan seed check exception: {e}")
+
+    # Upload queue: reconcile jobs interrupted by a restart, then start the single serial worker.
+    try:
+        from backend.app.config import settings as _settings
+        if _settings.UPLOAD_QUEUE_ENABLED:
+            from backend.app.services.ingestion import upload_queue
+            _db = SessionLocal()
+            try:
+                upload_queue.reconcile_on_startup(_db)
+            finally:
+                _db.close()
+            upload_queue.start_worker()
+            logger.info("Upload queue worker started")
+    except Exception as e:
+        logger.warning(f"Upload queue startup skipped: {e}")
     yield
 
 import logging as _logging
@@ -157,5 +172,21 @@ def root():
 @app.get("/api/health")
 @app.get(f"{settings.API_V1_STR}/health")
 def health():
-    return {"status": "healthy"}
+    """Reports which database is live so persistence can be verified at a glance.
+    `persistent: false` means data will be lost on restart — fix DATABASE_URL."""
+    from backend.app.database import DB_BACKEND, DB_PERSISTENT, raw_db_url
+    host = "local file"
+    if DB_PERSISTENT:
+        try:
+            host = raw_db_url.split("@", 1)[1].split("/", 1)[0]   # host only, never credentials
+        except Exception:
+            host = "postgres"
+    return {
+        "status": "healthy",
+        "database": DB_BACKEND,
+        "persistent": DB_PERSISTENT,
+        "db_host": host,
+        "warning": None if DB_PERSISTENT else
+                   "Data is NOT persistent (SQLite on ephemeral disk). Set DATABASE_URL to Neon.",
+    }
 

@@ -21,6 +21,34 @@ from backend.app.services.ingestion.cancellation import (
 
 logger = logging.getLogger(__name__)
 
+
+def _schedule_ingestion(doc, db: Session, background_tasks: BackgroundTasks) -> None:
+    """Start ingestion for an uploaded deck.
+
+    With the upload queue on (default), enqueue a job and let the single serial worker process it
+    over time — several uploads then ingest one-at-a-time instead of all at once (which OOMs a small
+    host). With the queue off, fall back to the old immediate per-upload background task.
+    """
+    if settings.UPLOAD_QUEUE_ENABLED:
+        from backend.app.services.ingestion.upload_queue import enqueue_upload, queue_position
+        job = enqueue_upload(db, document_id=doc.id, filename=doc.filename)
+        pos = queue_position(db, job)
+        INGESTION_STATUS_REGISTRY[doc.id] = {
+            "document_id": doc.id, "status": "QUEUED", "progress_percentage": 0,
+            "current_step": f"Queued (position {pos + 1}) — processing one deck at a time",
+            "slides_processed": 0, "questions_extracted": 0, "error": None,
+        }
+        logger.info("[UPLOAD] queued doc_id=%s (job=%s, position=%d)", doc.id, job.id, pos)
+    else:
+        INGESTION_STATUS_REGISTRY[doc.id] = {
+            "document_id": doc.id, "status": "PROCESSING", "progress_percentage": 5,
+            "current_step": "1. Extracting content", "slides_processed": 0,
+            "questions_extracted": 0, "error": None,
+        }
+        background_tasks.add_task(IngestionPipeline().run, doc.id)
+        logger.info("[UPLOAD] background ingestion scheduled for doc_id=%s", doc.id)
+
+
 # Determine environment: Vercel serverless has a hard 4.5 MB request ceiling.
 # Off Vercel (Railway, a VM, local dev) the app streams the upload straight to disk,
 # so the ceiling is configurable via the MAX_UPLOAD_MB env var (default 2048 MB = 2 GB).
@@ -126,22 +154,7 @@ async def upload_document(
 
     logger.info(f"[UPLOAD] document record created: id={doc_id}, status=PROCESSING")
 
-    # Initialize tracking
-    INGESTION_STATUS_REGISTRY[doc_id] = {
-        "document_id": doc_id,
-        "status": "PROCESSING",
-        "progress_percentage": 5,
-        "current_step": "1. Extracting content",
-        "slides_processed": 0,
-        "questions_extracted": 0,
-        "error": None
-    }
-
-    # Run ingestion pipeline asynchronously with its own database session
-    pipeline = IngestionPipeline()
-    background_tasks.add_task(pipeline.run, doc_id)
-    logger.info(f"[UPLOAD] background ingestion scheduled for doc_id={doc_id}")
-
+    _schedule_ingestion(doc, db, background_tasks)
     return doc
 
 @router.post("/upload-chunk")
@@ -259,18 +272,7 @@ async def upload_document_chunk(
 
     logger.info(f"[UPLOAD-CHUNK] file reassembled successfully: doc_id={doc_id}, size={file_size} bytes")
 
-    INGESTION_STATUS_REGISTRY[doc_id] = {
-        "document_id": doc_id,
-        "status": "PROCESSING",
-        "progress_percentage": 5,
-        "current_step": "1. Extracting content",
-        "slides_processed": 0,
-        "questions_extracted": 0,
-        "error": None
-    }
-
-    pipeline = IngestionPipeline()
-    background_tasks.add_task(pipeline.run, doc_id)
+    _schedule_ingestion(doc, db, background_tasks)
 
     return {
         "status": "COMPLETED",
@@ -385,3 +387,24 @@ def delete_document(document_id: str, db: Session = Depends(get_db)):
     db.delete(doc)
     db.commit()
     return {"message": "Document deleted successfully"}
+
+@router.post("/{document_id}/retry")
+def retry_document_ingestion(document_id: str, db: Session = Depends(get_db)):
+    """Finds the manual-upload job for this document and re-queues it."""
+    from backend.app.models.job import IngestionJob
+    from backend.app.services.ingestion.upload_queue import requeue_job, enqueue_upload
+
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    job = db.query(IngestionJob).filter(
+        IngestionJob.document_id == document_id,
+        IngestionJob.source_type == "MANUAL_UPLOAD"
+    ).order_by(IngestionJob.created_at.desc()).first()
+
+    if not job:
+        job = enqueue_upload(db, document_id=doc.id, filename=doc.filename)
+
+    requeue_job(db, job)
+    return {"message": "Deck re-queued successfully", "job_id": job.id}

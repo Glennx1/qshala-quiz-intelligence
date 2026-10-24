@@ -11,6 +11,10 @@ import {
   Loader2,
   ArrowRight,
   X,
+  Clock,
+  ListOrdered,
+  RotateCcw,
+  Sparkles,
 } from 'lucide-react';
 import { api, isAbortError, UPLOAD_CHUNK_SIZE, UploadProgressInfo } from '../../lib/api';
 import { DocumentItem } from '../../lib/types';
@@ -38,6 +42,11 @@ export default function UploadPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Live upload numbers (slice i of N, MB sent) and the handles needed to cancel for real
   const [uploadDetail, setUploadDetail] = useState<UploadProgressInfo | null>(null);
+  const [uploadQueueStatus, setUploadQueueStatus] = useState<{
+    total: number;
+    completed: number;
+    currentFileName: string;
+  } | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const uploadIdRef = useRef<string | null>(null);
@@ -127,7 +136,48 @@ export default function UploadPage() {
     return () => clearInterval(interval);
   }, [activeDocId]);
 
-  const handleFileUpload = async (file: File) => {
+  // Auto-poll documents list if any document is currently in QUEUED or PROCESSING state
+  useEffect(() => {
+    const hasPending = documents.some(
+      (d) => d.processing_status === 'QUEUED' || d.processing_status === 'PROCESSING'
+    );
+    if (!hasPending && !activeDocId && !uploading) return;
+
+    const interval = setInterval(() => {
+      fetchDocuments();
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [documents, activeDocId, uploading]);
+
+  // Auto-connect to active processing document if activeDocId is null (e.g. after refresh or queue transition)
+  useEffect(() => {
+    if (!activeDocId) {
+      const processing = documents.find((d) => d.processing_status === 'PROCESSING');
+      if (processing) {
+        setActiveDocId(processing.id);
+        if (!timing || timing.finishedAt) {
+          setTiming({ startedAt: Date.now(), uploadEndedAt: Date.now(), finishedAt: null });
+        }
+      }
+    }
+  }, [documents, activeDocId, timing]);
+
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+
+  const handleRetry = async (id: string) => {
+    setRetryingId(id);
+    try {
+      await api.retryDocument(id);
+      await fetchDocuments();
+    } catch (err: any) {
+      alert(err.message || 'Failed to retry deck ingestion');
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
+  const handleFileUpload = async (file: File, fileIndex = 1, fileTotal = 1) => {
     const controller = new AbortController();
     abortRef.current = controller;
     uploadIdRef.current = null;
@@ -144,6 +194,7 @@ export default function UploadPage() {
       (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
     const directUploadLimit = isLocalhost ? 100 * 1024 * 1024 : UPLOAD_CHUNK_SIZE;
     const sliceMB = Math.round(UPLOAD_CHUNK_SIZE / (1024 * 1024));
+    const batchPrefix = fileTotal > 1 ? `[${fileIndex}/${fileTotal}] ` : '';
 
     try {
       let doc: DocumentItem;
@@ -158,7 +209,7 @@ export default function UploadPage() {
           chunkSize: UPLOAD_CHUNK_SIZE,
         });
         setPipelineProgress({
-          step: `Uploading ${file.name} (${mbSize} MB) in ${plannedSlices} slices of ${sliceMB} MB...`,
+          step: `${batchPrefix}Uploading ${file.name} (${mbSize} MB) in ${plannedSlices} slices of ${sliceMB} MB...`,
           percentage: 5,
           slides: 0,
           questions: 0,
@@ -170,7 +221,7 @@ export default function UploadPage() {
           (pct, currentChunk, totalChunks, info) => {
             setUploadDetail(info);
             setPipelineProgress({
-              step: `Uploading slice ${currentChunk} of ${totalChunks} (${pct}% of ${mbSize} MB)...`,
+              step: `${batchPrefix}Uploading ${file.name} slice ${currentChunk} of ${totalChunks} (${pct}% of ${mbSize} MB)...`,
               percentage: Math.min(Math.round(5 + pct * 0.2), 25), // 5% to 25% for upload stage
               slides: 0,
               questions: 0,
@@ -184,7 +235,7 @@ export default function UploadPage() {
         );
       } else {
         setPipelineProgress({
-          step: `Uploading ${file.name} (${mbSize} MB) to server...`,
+          step: `${batchPrefix}Uploading ${file.name} (${mbSize} MB) to server...`,
           percentage: 18,
           slides: 0,
           questions: 0,
@@ -199,7 +250,7 @@ export default function UploadPage() {
       setUploadDetail(null);
       setTiming((t) => (t ? { ...t, uploadEndedAt: Date.now() } : t));
       setActiveDocId(doc.id);
-      fetchDocuments();
+      await fetchDocuments();
     } catch (err: any) {
       if (isAbortError(err)) {
         stopClock();
@@ -211,7 +262,7 @@ export default function UploadPage() {
           status: 'CANCELLED',
         });
       } else {
-        alert(err.message || 'Upload failed');
+        alert(err.message || `Upload of ${file.name} failed`);
         setPipelineProgress(null);
         setTiming(null);
       }
@@ -221,6 +272,35 @@ export default function UploadPage() {
       abortRef.current = null;
       setCancelling(false);
     }
+  };
+
+  const handleFiles = async (files: FileList | File[]) => {
+    const list = Array.from(files).filter((f) =>
+      /\.(pptx|ppt|pdf)$/i.test(f.name)
+    );
+    if (list.length === 0) {
+      alert('Please select valid PowerPoint (.pptx, .ppt) or PDF files.');
+      return;
+    }
+
+    setUploadQueueStatus({
+      total: list.length,
+      completed: 0,
+      currentFileName: list[0].name,
+    });
+
+    for (let i = 0; i < list.length; i++) {
+      const file = list[i];
+      setUploadQueueStatus({
+        total: list.length,
+        completed: i,
+        currentFileName: file.name,
+      });
+      await handleFileUpload(file, i + 1, list.length);
+    }
+
+    setUploadQueueStatus(null);
+    await fetchDocuments();
   };
 
   // Cancel really stops the work: while slices are still going up it aborts the in-flight request
@@ -271,10 +351,17 @@ export default function UploadPage() {
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileUpload(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFiles(e.dataTransfer.files);
     }
   };
+
+  const queuedDocs = documents
+    .filter((d) => d.processing_status === 'QUEUED')
+    .slice()
+    .reverse();
+
+  const activeDoc = documents.find((d) => d.id === activeDocId);
 
   return (
     <div className="p-6 sm:p-8 lg:p-10 max-w-6xl mx-auto space-y-8">
@@ -298,9 +385,17 @@ export default function UploadPage() {
         <input
           ref={fileInputRef}
           type="file"
+          multiple
           accept=".pptx,.ppt,.pdf"
           className="hidden"
-          onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
+          onClick={(e) => {
+            (e.target as HTMLInputElement).value = '';
+          }}
+          onChange={(e) => {
+            if (e.target.files && e.target.files.length > 0) {
+              handleFiles(e.target.files);
+            }
+          }}
         />
 
         <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-blue-600 mb-3 group-hover:scale-105 transition-transform">
@@ -309,16 +404,29 @@ export default function UploadPage() {
 
         <h3 className="text-[16px] font-bold text-slate-900">Add new quiz material</h3>
         <p className="mt-1 text-[13px] text-slate-500 max-w-sm font-normal leading-relaxed">
-          Drag and drop your PowerPoint (<code className="font-mono text-slate-700">.pptx, .ppt</code>) or PDF files here
+          Drag and drop one or multiple PowerPoint (<code className="font-mono text-slate-700">.pptx, .ppt</code>) or PDF files here
         </p>
 
         <div className="mt-4">
           <button
             type="button"
             disabled={uploading}
-            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-[13px] sm:text-[14px] font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              fileInputRef.current?.click();
+            }}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-[13px] sm:text-[14px] font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-sm cursor-pointer disabled:opacity-50"
           >
-            {uploading ? 'Uploading...' : 'Browse files'}
+            {uploading ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                {uploadQueueStatus && uploadQueueStatus.total > 1
+                  ? `Uploading ${uploadQueueStatus.completed + 1} of ${uploadQueueStatus.total}...`
+                  : 'Uploading...'}
+              </span>
+            ) : (
+              'Browse files (multi-select enabled)'
+            )}
           </button>
         </div>
       </div>
@@ -348,14 +456,14 @@ export default function UploadPage() {
               <div>
                 <h4 className="text-[13px] font-semibold text-slate-900">
                   {pipelineProgress.status === 'COMPLETED' || pipelineProgress.percentage >= 100
-                    ? 'Ingestion Complete'
+                    ? `Ingestion Complete${activeDoc ? `: ${activeDoc.title}` : ''}`
                     : pipelineProgress.status === 'FAILED'
-                    ? 'Ingestion Failed'
+                    ? `Ingestion Failed${activeDoc ? `: ${activeDoc.title}` : ''}`
                     : pipelineProgress.status === 'CANCELLED'
                     ? 'Upload Cancelled'
                     : uploadDetail
-                    ? 'Uploading Material'
-                    : 'Processing Material'}
+                    ? `Uploading Material${activeDoc ? `: ${activeDoc.title}` : ''}`
+                    : `Processing Deck${activeDoc ? `: ${activeDoc.title}` : ''}`}
                 </h4>
                 <p className="text-[12px] text-slate-500 font-normal">{pipelineProgress.step}</p>
               </div>
@@ -562,6 +670,54 @@ export default function UploadPage() {
         </div>
       )}
 
+      {/* Waiting in Serial Queue */}
+      {queuedDocs.length > 0 && (
+        <div className="rounded-xl border border-amber-200/80 bg-amber-50/20 p-5 shadow-xs space-y-3 animate-in fade-in">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/60 pb-3">
+            <div className="flex items-center gap-2 text-amber-900 font-semibold text-[13.5px]">
+              <ListOrdered className="h-4 w-4 text-amber-600" />
+              <span>Ingestion Queue ({queuedDocs.length} presentation{queuedDocs.length > 1 ? 's' : ''} waiting)</span>
+            </div>
+            <span className="text-[11.5px] font-medium text-amber-800 bg-amber-100/80 border border-amber-200 px-2.5 py-0.5 rounded-full">
+              Serial Queue: Ingests 1 deck at a time to prevent server memory crashes
+            </span>
+          </div>
+
+          <div className="divide-y divide-amber-100/60 rounded-lg border border-amber-200/60 bg-white overflow-hidden shadow-xs">
+            {queuedDocs.map((doc, idx) => (
+              <div key={doc.id} className="flex items-center justify-between px-4 py-3 hover:bg-amber-50/30 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-800 text-[11px] font-bold">
+                    #{idx + 1}
+                  </span>
+                  <div className="min-w-0">
+                    <h5 className="truncate text-[13px] font-medium text-slate-900">{doc.title}</h5>
+                    <p className="text-[11px] text-slate-500">
+                      {doc.slide_count ? `${doc.slide_count} slides • ` : ''}
+                      Waiting in line — will begin automatically
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                    <Clock className="h-3 w-3 animate-spin" />
+                    Position #{idx + 1}
+                  </span>
+                  <button
+                    onClick={() => handleDelete(doc.id)}
+                    className="p-1.5 text-slate-400 hover:text-red-600 rounded transition-colors cursor-pointer"
+                    title="Remove from queue"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Ingested Decks Table */}
       <div className="rounded-xl border border-slate-200/80 bg-white shadow-sm shadow-slate-100/50 overflow-hidden">
         <div className="border-b border-slate-100 px-6 py-4 flex items-center justify-between">
@@ -587,7 +743,7 @@ export default function UploadPage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2.5">
                 <div className="flex items-center gap-1.5 text-[12px]">
                   <span
                     className={`h-2 w-2 rounded-full ${
@@ -595,13 +751,44 @@ export default function UploadPage() {
                         ? 'bg-emerald-500'
                         : doc.processing_status === 'FAILED'
                         ? 'bg-red-500'
+                        : doc.processing_status === 'QUEUED'
+                        ? 'bg-amber-500 animate-pulse'
                         : 'bg-blue-500 animate-pulse'
                     }`}
                   />
                   <span className="text-[12px] font-medium text-slate-600">
-                    {doc.processing_status === 'COMPLETED' ? 'Completed' : doc.processing_status}
+                    {doc.processing_status === 'COMPLETED'
+                      ? 'Completed'
+                      : doc.processing_status === 'QUEUED'
+                      ? 'In Queue'
+                      : doc.processing_status === 'PROCESSING'
+                      ? 'Processing'
+                      : doc.processing_status}
                   </span>
                 </div>
+
+                {doc.processing_status === 'COMPLETED' && doc.question_count > 0 && (
+                  <Link
+                    href={`/knowledge-base?document_id=${doc.id}`}
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11.5px] font-medium text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition-colors shadow-xs"
+                    title="View Questions in Knowledge Base"
+                  >
+                    <span>View Questions</span>
+                    <ArrowRight className="h-3 w-3" />
+                  </Link>
+                )}
+
+                {doc.processing_status === 'FAILED' && (
+                  <button
+                    onClick={() => handleRetry(doc.id)}
+                    disabled={retryingId === doc.id}
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11.5px] font-medium text-slate-700 hover:bg-slate-50 transition-colors shadow-xs cursor-pointer disabled:opacity-50"
+                    title="Retry this deck"
+                  >
+                    <RotateCcw className={`h-3 w-3 ${retryingId === doc.id ? 'animate-spin text-blue-600' : ''}`} />
+                    <span>Retry</span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => handleDelete(doc.id)}

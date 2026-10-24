@@ -106,36 +106,86 @@ def _ensure_vector_index(engine) -> None:
 # Database engine with automatic fallback
 engine = None
 if is_postgres:
-    try:
-        engine = create_engine(
-            raw_db_url,
-            echo=False,
-            pool_pre_ping=True,   # test each connection before use; Neon pooler can drop idle SSL conns
-            pool_recycle=300,     # recycle connections before idle timeout kicks in
-            connect_args={"options": "-c idle_in_transaction_session_timeout=0"},  # worker runs long jobs
-        )
-        with engine.connect() as conn:
-            pass
-    except Exception as exc:
-        logger.warning(f"PostgreSQL connection failed ({exc}), falling back to SQLite")
-        is_postgres = False
-        engine = None
+    # Disable Postgres' idle-in-transaction killer for this app's connections. It is a backstop only:
+    # the ingestion pipeline is structured so no transaction is ever held open across a slow AI stage
+    # (see IngestionPipeline.run). NOTE: through Neon's pooled (-pooler) endpoint PgBouncer may ignore
+    # or reject this startup option, so we never let it drop us to SQLite — if the option is refused we
+    # retry the engine without it.
+    _pg_base = dict(echo=False, pool_pre_ping=True, pool_recycle=280)
+    _pg_connect_args = {"options": "-c idle_in_transaction_session_timeout=0"}
+    for _attempt_args in (_pg_connect_args, None):
+        try:
+            _kwargs = dict(_pg_base)
+            if _attempt_args:
+                _kwargs["connect_args"] = _attempt_args
+            engine = create_engine(raw_db_url, **_kwargs)
+            with engine.connect() as conn:
+                pass
+            if _attempt_args:
+                logger.info("PostgreSQL engine ready (idle-in-transaction timeout disabled)")
+            else:
+                logger.info("PostgreSQL engine ready (plain; startup option not accepted by endpoint)")
+            break
+        except Exception as exc:
+            engine = None
+            if _attempt_args:
+                logger.warning(f"PostgreSQL connect with idle-timeout option failed ({exc}); retrying without it")
+                continue
+            logger.warning(f"PostgreSQL connection failed ({exc}), falling back to SQLite")
+            is_postgres = False
 
 if engine is None:
+    # About to use SQLite. On a deployed host this is a DATA-LOSS trap: the file lives on the
+    # container's ephemeral disk and is wiped on every restart/sleep. Refuse to start if the operator
+    # declared this environment must be persistent (REQUIRE_POSTGRES=1); otherwise run but warn loudly.
+    if getattr(settings, "REQUIRE_POSTGRES", False):
+        raise RuntimeError(
+            "REQUIRE_POSTGRES is set but no PostgreSQL connection is available. "
+            "DATABASE_URL is missing/empty or Neon was unreachable at startup, so the app would fall "
+            "back to SQLite on an ephemeral disk and LOSE all data on the next restart. "
+            "Set DATABASE_URL to your Neon connection string (…?sslmode=require) and redeploy."
+        )
     import os
     from backend.app.config import default_db_url
     connect_args = {"check_same_thread": False}
-    engine = create_engine(
-        default_db_url,
-        connect_args=connect_args,
-        echo=False,
-        pool_pre_ping=True,
-        pool_recycle=300,
-    )
+    engine = create_engine(default_db_url, connect_args=connect_args, echo=False)
+    logger.warning(
+        "=" * 78 + "\n"
+        "  DATA IS NOT PERSISTENT: running on SQLite (%s).\n"
+        "  On Render/Railway this file is deleted on restart or sleep — uploads will vanish.\n"
+        "  Set DATABASE_URL (Neon) and REQUIRE_POSTGRES=1 for a persistent database.\n"
+        + "=" * 78, default_db_url)
+
+# What database are we actually on? Read by the /health endpoint so the operator can verify
+# persistence without guessing.
+DB_BACKEND = "postgres" if is_postgres else "sqlite"
+DB_PERSISTENT = is_postgres
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
+
+
+from contextlib import contextmanager
+
+
+@contextmanager
+def short_session():
+    """A short-lived DB session that commits on success, rolls back on error, and always closes.
+
+    Use this for a bounded unit of DB work (insert a batch, run a query) — never hold one open
+    across a slow AI/network call. Keeping sessions short is what prevents the idle-in-transaction
+    connection drops that Neon enforces on long-running ingestion jobs.
+    """
+    db = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 def ensure_schema_columns():
     """Safely adds newly introduced columns to existing database tables."""

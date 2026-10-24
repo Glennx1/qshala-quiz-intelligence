@@ -7,19 +7,16 @@ on image-heavy decks without adding a slow pre-processing stage.
 import io
 import logging
 import os
-import sys
 import threading
-import concurrent.futures
-import asyncio
-from typing import Tuple, Optional
+from typing import Tuple
 
 from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-MAX_SIDE: int = int(os.getenv("VISION_MAX_SIDE", "1024"))
-JPEG_QUALITY: int = int(os.getenv("VISION_JPEG_QUALITY", "75"))
-MIN_BYTES: int = int(os.getenv("VISION_MIN_BYTES", str(15 * 1024)))
+MAX_SIDE: int = 1600
+JPEG_QUALITY: int = 82
+MIN_BYTES: int = 60 * 1024  # don't bother re-encoding small images
 
 # Decoding a picture costs width x height x 4 bytes of RAM (an 8192x4608 PNG is ~150 MB).
 # On a 512 MB server that is the difference between working and being killed, so:
@@ -80,113 +77,3 @@ def shrink_for_vision(data: bytes, mime_type: str) -> Tuple[bytes, str]:
     finally:
         if gate is not None:
             gate.release()
-
-
-def shrink_file_worker(file_path: str, mime_type: str) -> Tuple[bytes, str]:
-    """Worker executed in throwaway subprocess: reads file, shrinks it, returns small bytes and mime."""
-    try:
-        with open(file_path, "rb") as f:
-            data = f.read()
-        return shrink_for_vision(data, mime_type)
-    except Exception as e:
-        logger.debug("shrink_file_worker failed for %s: %s", file_path, e)
-        return b"", mime_type
-
-
-def shrink_data_worker(data: bytes, mime_type: str) -> Tuple[bytes, str]:
-    """Worker executed in throwaway subprocess: shrinks bytes, returns small bytes and mime."""
-    try:
-        return shrink_for_vision(data, mime_type)
-    except Exception as e:
-        logger.debug("shrink_data_worker failed: %s", e)
-        return data, mime_type
-
-
-def _use_subprocess() -> bool:
-    """Use throwaway subprocess on Linux/macOS to enforce memory return to OS."""
-    return not sys.platform.startswith("win")
-
-
-async def shrink_for_vision_subprocess(
-    file_path: Optional[str] = None,
-    data: Optional[bytes] = None,
-    mime_type: str = "image/jpeg"
-) -> Tuple[bytes, str]:
-    """Shrink image in a throwaway subprocess so decode memory returns to OS upon exit.
-
-    Passes file path directly to the child if present, keeping full-res bytes out of the parent process.
-    Falls back to in-process shrink_for_vision on any exception.
-    """
-    if _use_subprocess():
-        if file_path and os.path.exists(file_path):
-            try:
-                loop = asyncio.get_running_loop()
-                with concurrent.futures.ProcessPoolExecutor(max_workers=1, max_tasks_per_child=1) as pool:
-                    result = await loop.run_in_executor(pool, shrink_file_worker, str(file_path), mime_type)
-                    if result and result[0]:
-                        return result
-            except Exception as exc:
-                logger.debug("Subprocess shrink failed (%s), falling back to in-process", exc)
-        elif data:
-            try:
-                loop = asyncio.get_running_loop()
-                with concurrent.futures.ProcessPoolExecutor(max_workers=1, max_tasks_per_child=1) as pool:
-                    result = await loop.run_in_executor(pool, shrink_data_worker, data, mime_type)
-                    if result and result[0]:
-                        return result
-            except Exception as exc:
-                logger.debug("Subprocess shrink failed (%s), falling back to in-process", exc)
-
-    # In-process fallback
-    if file_path and os.path.exists(file_path):
-        try:
-            with open(file_path, "rb") as f:
-                raw_bytes = f.read()
-            return shrink_for_vision(raw_bytes, mime_type)
-        except Exception as read_exc:
-            logger.debug("Fallback file read failed: %s", read_exc)
-            return b"", mime_type
-    elif data:
-        return shrink_for_vision(data, mime_type)
-
-    return b"", mime_type
-
-def is_significant_visual_image(data: bytes, min_side: int = 120, min_bytes: int = 8 * 1024) -> bool:
-    """Inspects image header to discard tiny icons, bullets, and divider bars without decoding pixels."""
-    if not data or len(data) < min_bytes:
-        return False
-    try:
-        img = Image.open(io.BytesIO(data))
-        w, h = img.size
-        if w < min_side or h < min_side:
-            return False
-        aspect = max(w, h) / max(1, min(w, h))
-        if aspect > 5.0:  # Thin lines or banner strips
-            return False
-        return True
-    except Exception:
-        return True
-
-
-def is_significant_file(file_path: str, min_side: int = 120, min_bytes: int = 8 * 1024) -> bool:
-    """Checks if a file on disk is a meaningful quiz visual clue (not a layout icon or divider)."""
-    try:
-        if not os.path.exists(file_path) or os.path.getsize(file_path) < min_bytes:
-            return False
-        with open(file_path, "rb") as f:
-            header = f.read(4096)
-        img = Image.open(io.BytesIO(header))
-        w, h = img.size
-        if w < min_side or h < min_side:
-            return False
-        aspect = max(w, h) / max(1, min(w, h))
-        if aspect > 5.0:
-            return False
-        return True
-    except Exception:
-        try:
-            with open(file_path, "rb") as f:
-                return is_significant_visual_image(f.read(), min_side, min_bytes)
-        except Exception:
-            return True
-

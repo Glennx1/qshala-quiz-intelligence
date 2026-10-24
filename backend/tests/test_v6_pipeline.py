@@ -32,8 +32,8 @@ class FakeGemini:
         FakeGemini.calls += 1
         data = {
             "topics": [
-                {"subtopic_l2": "Modern History", "keywords": ["Captain Cook", "Endeavour", "Botany Bay"]},
-                {"subtopic_l2": "Indian Politics", "keywords": ["Parliament", "Coalition"]},
+                {"theme": "History", "subtopic_l2": "Modern History", "keywords": ["Captain Cook", "Endeavour", "Botany Bay"]},
+                {"theme": "Politics", "subtopic_l2": "Indian Politics", "keywords": ["Parliament", "Coalition"]},
             ],
             "geo_location": "Sydney, Australia",
             "india_international": "INTL",
@@ -41,6 +41,13 @@ class FakeGemini:
             "fit": "good",
             "search_summary": "A question about early British exploration.",
         }
+        # Batch mode: the chunked tagger asks for a `results` array and numbers each question with
+        # `[n=X]` in the prompt. Echo one canned item per marker, keyed by its n.
+        if isinstance(schema, dict) and "results" in (schema.get("properties") or {}):
+            import re as _re
+            ns = [int(m) for m in _re.findall(r"\[n=(\d+)\]", prompt)]
+            results = [{**data, "n": n} for n in ns]
+            return {"results": results}, {"in": 10, "out": 10 * max(1, len(ns)), "think": 0, "cached": 0}
         return data, {"in": 10, "out": 10, "think": 0, "cached": 0}
 
 

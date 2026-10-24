@@ -200,6 +200,17 @@ class Deduplicator:
         # Commit provenance for exact hash matches
         self._batch_commit_provenance(db, provenance_updates, doc_id)
 
+        # Explain the final count: raw candidates in, how many collapsed and why, how many kept.
+        n_exact_db = sum(1 for d in exact_duplicates if d.get("duplicate_type") == "EXACT_HASH")
+        n_exact_intra = sum(1 for d in exact_duplicates if d.get("duplicate_type") == "INTRA_BATCH_EXACT")
+        n_possible = sum(1 for c in final_candidates if c.get("duplicate_status") == "POSSIBLE_DUPLICATE")
+        logger.info(
+            "dedup[doc=%s]: raw=%d -> kept=%d | dropped_exact_in_vault=%d dropped_exact_in_batch=%d "
+            "| flagged_possible_dup=%d (threshold=%.2f)",
+            doc_id, len(candidates), len(final_candidates),
+            n_exact_db, n_exact_intra, n_possible, thresh,
+        )
+
         return final_candidates, exact_duplicates
 
     def _batch_commit_provenance(
