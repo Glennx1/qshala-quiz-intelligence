@@ -12,6 +12,7 @@ import {
   Tag,
   Plus,
   AlertTriangle,
+  Eye,
   CheckCircle,
   XCircle,
   Volume2,
@@ -45,8 +46,9 @@ function KnowledgeBaseContent() {
   const searchParams = useSearchParams();
   const initialTopic = searchParams.get('topic') || '';
 
-  const [activeTab, setActiveTab] = useState<'all' | 'duplicates'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'duplicates' | 'review'>('all');
   const [duplicateCount, setDuplicateCount] = useState<number>(0);
+  const [reviewCount, setReviewCount] = useState<number>(0);
 
   const [query, setQuery] = useState('');
   const [topic, setTopic] = useState(initialTopic);
@@ -97,6 +99,9 @@ function KnowledgeBaseContent() {
         setDocumentsList(docs);
         const dups = await api.getDuplicateCandidates();
         setDuplicateCount(dups.length);
+        try {
+          setReviewCount(await api.getReviewCount());
+        } catch { /* review count is best-effort */ }
       } catch (err) {
         console.error('Failed to load initial metadata:', err);
       }
@@ -119,6 +124,12 @@ function KnowledgeBaseContent() {
   const fetchQuestions = async () => {
     setLoading(true);
     try {
+      if (activeTab === 'review') {
+        const data = await api.getReviewCandidates();
+        setQuestions(data);
+        setReviewCount(data.length);
+        return;
+      }
       const data = await api.searchQuestions({
         query: query.trim() || undefined,
         topic: topic || undefined,
@@ -150,9 +161,28 @@ function KnowledgeBaseContent() {
   };
 
   const handleQuestionTagsSaved = (updated: HistoricalQuestion) => {
+    // Editing tags confirms a human label, so the question leaves the review queue.
+    if (activeTab === 'review') {
+      setQuestions((prev) => prev.filter((item) => item.id !== updated.id));
+      setReviewCount((prev) => Math.max(0, prev - 1));
+      return;
+    }
     setQuestions((prev) =>
       prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item))
     );
+  };
+
+  const handleAcceptReview = async (questionId: string) => {
+    setResolvingId(questionId);
+    try {
+      await api.acceptReview(questionId);
+      setQuestions((prev) => prev.filter((q) => q.id !== questionId));
+      setReviewCount((prev) => Math.max(0, prev - 1));
+    } catch (err) {
+      console.error('Failed to accept review question:', err);
+    } finally {
+      setResolvingId(null);
+    }
   };
 
   const handleResolveDuplicate = async (questionId: string, action: 'CONFIRM_DUPLICATE' | 'DISMISS_UNIQUE') => {
@@ -229,6 +259,25 @@ function KnowledgeBaseContent() {
                 activeTab === 'duplicates' ? 'bg-white text-amber-600' : 'bg-amber-200 text-amber-900'
               }`}>
                 {duplicateCount}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('review')}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-[13px] font-semibold transition-all cursor-pointer ${
+              activeTab === 'review'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-indigo-700 hover:text-indigo-800'
+            }`}
+          >
+            <Eye className="h-3.5 w-3.5" />
+            <span>Needs Review</span>
+            {reviewCount > 0 && (
+              <span className={`px-1.5 py-0.2 rounded-full text-[11px] font-bold ${
+                activeTab === 'review' ? 'bg-white text-indigo-600' : 'bg-indigo-200 text-indigo-900'
+              }`}>
+                {reviewCount}
               </span>
             )}
           </button>
@@ -413,6 +462,8 @@ function KnowledgeBaseContent() {
                     <td colSpan={3} className="py-12 text-center text-slate-400">
                       {activeTab === 'duplicates'
                         ? 'No possible duplicates pending review!'
+                        : activeTab === 'review'
+                        ? 'Nothing needs review — every tag is confirmed!'
                         : 'No questions match your current search and filters.'}
                     </td>
                   </tr>
@@ -705,13 +756,24 @@ function KnowledgeBaseContent() {
                             </button>
                           ) : (
                             <>
+                              {activeTab === 'review' && (
+                                <button
+                                  disabled={resolvingId === q.id}
+                                  onClick={() => handleAcceptReview(q.id)}
+                                  className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2 py-1 text-[11px] font-bold text-white hover:bg-emerald-700 cursor-pointer disabled:opacity-50"
+                                  title="Confirm the AI tag as-is"
+                                >
+                                  <CheckCircle className="h-3 w-3" />
+                                  <span>Accept</span>
+                                </button>
+                              )}
                               <button
                                 onClick={() => setSelectedQuestionForTags(q)}
                                 className="inline-flex items-center gap-1 text-[12px] font-semibold text-indigo-600 hover:text-indigo-700 cursor-pointer"
-                                title="View and edit every tag on this question"
+                                title={activeTab === 'review' ? 'Correct the tag (confirms a human label)' : 'View and edit every tag on this question'}
                               >
                                 <Tag className="h-3 w-3" />
-                                <span>Edit tags</span>
+                                <span>{activeTab === 'review' ? 'Correct' : 'Edit tags'}</span>
                               </button>
                               <button
                                 onClick={() => handleViewSlide(q)}
