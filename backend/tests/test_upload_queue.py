@@ -161,6 +161,30 @@ def test_reconcile_marks_interrupted_jobs_failed():
         _cleanup(doc_id)
 
 
+def test_stale_processing_job_is_reclaimed_and_unblocks_the_queue():
+    """A job stuck PROCESSING (dead worker / host slept) must not block every other upload forever.
+    After the stale window it is failed, and the next PENDING deck becomes claimable."""
+    from datetime import datetime, timezone, timedelta
+    from backend.app.services.ingestion import upload_queue as uqmod
+    db = SessionLocal()
+    a, b = _mk_doc(db), _mk_doc(db)
+    try:
+        stuck = uqmod.enqueue_upload(db, document_id=a, filename="stuck.pptx")
+        nxt = uqmod.enqueue_upload(db, document_id=b, filename="next.pptx")
+        # a is stuck PROCESSING with an old timestamp (older than the stale window)
+        stuck.status = "PROCESSING"
+        stuck.updated_at = datetime.now(timezone.utc) - timedelta(minutes=uqmod.STALE_PROCESSING_MINUTES + 5)
+        db.commit()
+
+        claimed = uqmod.claim_next(db)
+        assert claimed is not None and claimed.document_id == b   # the stuck one no longer blocks
+        db.refresh(stuck)
+        assert stuck.status == "FAILED"                           # it was reclaimed
+    finally:
+        db.close()
+        _cleanup(a, b)
+
+
 def test_requeue_purges_partial_artifacts_and_resets():
     db = SessionLocal()
     doc_id = _mk_doc(db)

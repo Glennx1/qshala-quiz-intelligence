@@ -10,6 +10,38 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/jobs", tags=["Ingestion Jobs"])
 
+
+@router.post("/process-upload-next")
+async def process_upload_next():
+    """Process ONE queued deck upload if the queue isn't already busy. Safe to call from an external
+    cron (e.g. every 1-2 min) as a reliable driver that doesn't depend on the in-process worker and
+    also keeps a sleepy free-tier host awake. Serial: it never starts a second deck while one runs."""
+    from backend.app.services.ingestion import upload_queue
+    try:
+        processed = await upload_queue.process_one()
+        return {"status": "SUCCESS" if processed else "IDLE", "processed": processed}
+    except Exception as e:
+        logger.exception("process-upload-next failed: %s", e)
+        return {"status": "ERROR", "error": str(e)[:300]}
+
+
+@router.get("/upload-queue")
+def upload_queue_status(db: Session = Depends(get_db)):
+    """What the upload queue is doing right now, so the state is never a mystery."""
+    from sqlalchemy import func
+    rows = db.query(IngestionJob).filter(IngestionJob.source_type == "MANUAL_UPLOAD").\
+        order_by(IngestionJob.created_at.desc()).limit(50).all()
+    counts = dict(db.query(IngestionJob.status, func.count(IngestionJob.id)).
+                  filter(IngestionJob.source_type == "MANUAL_UPLOAD").
+                  group_by(IngestionJob.status).all())
+    return {
+        "counts": {k: int(v) for k, v in counts.items()},
+        "jobs": [{"id": j.id, "filename": j.filename, "status": j.status,
+                  "step": j.current_step, "error": j.error_message,
+                  "document_id": j.document_id,
+                  "updated_at": j.updated_at.isoformat() if j.updated_at else None} for j in rows],
+    }
+
 def to_job_dict(job: IngestionJob) -> Dict[str, Any]:
     step_data = job.step_data or {}
     return {
