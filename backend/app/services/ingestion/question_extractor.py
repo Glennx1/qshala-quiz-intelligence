@@ -383,17 +383,39 @@ class QuestionExtractor:
         # and then repeated in the "Answer Reveal Run".
         consolidated = []
         seen_q: Dict[str, Dict[str, Any]] = {}
+        generic_headers = {"connect", "identify", "question", "visual", "audio", "video", "clue", "round", "what", "example"}
 
         for q in extracted_questions:
-            # Normalize first 10 words for fuzzy matching
-            words = re.sub(r"[^\w\s]", "", q["question_text"].lower()).split()
-            key = " ".join(words[:10]) if words else q["question_text"]
+            txt = (q.get("question_text") or "").strip()
+            curr_ans = (q.get("answer") or "").strip()
+
+            # Skip dummy slides that have neither text nor answer
+            if not txt and not curr_ans:
+                continue
+
+            # Normalize text for deduplication
+            words = re.sub(r"[^\w\s]", "", txt.lower()).split()
+
+            # If question text is empty or very generic (e.g. "Connect", "Identify"), key by answer or slide number
+            if len(words) < 3 or set(words).issubset(generic_headers):
+                if curr_ans:
+                    clean_ans = re.sub(r"[^\w\s]", "", curr_ans.lower())
+                    key = f"ans_{clean_ans}"
+                else:
+                    key = f"slide_{q.get('slide_number')}"
+            else:
+                key = " ".join(words[:10])
 
             if key in seen_q:
                 existing = seen_q[key]
-                curr_ans = (q.get("answer") or "").strip()
                 exist_ans = (existing.get("answer") or "").strip()
-                # Prioritize instance with verified answer from an answer slide
+                # If both have answers and they differ, they are distinct questions — do not merge!
+                if curr_ans and exist_ans and curr_ans.lower() != exist_ans.lower():
+                    unique_key = f"{key}_{q.get('slide_number')}"
+                    seen_q[unique_key] = q
+                    consolidated.append(q)
+                    continue
+
                 curr_is_better = (
                     (bool(curr_ans) and not bool(exist_ans)) or
                     (bool(q.get("answer_slide_number")) and not bool(existing.get("answer_slide_number"))) or
@@ -410,15 +432,15 @@ class QuestionExtractor:
                 if existing.get("round_number") is None and q.get("round_number") is not None:
                     existing["round_number"] = q["round_number"]
 
-                # Merge image lists while maintaining role segregation
+                # Merge image lists while maintaining role segregation (cap at 4 images per question)
                 if q.get("question_images"):
-                    existing["question_images"] = list(dict.fromkeys((existing.get("question_images") or []) + q["question_images"]))
+                    existing["question_images"] = list(dict.fromkeys((existing.get("question_images") or []) + q["question_images"]))[:4]
                 if q.get("answer_images"):
-                    existing["answer_images"] = list(dict.fromkeys((existing.get("answer_images") or []) + q["answer_images"]))
+                    existing["answer_images"] = list(dict.fromkeys((existing.get("answer_images") or []) + q["answer_images"]))[:4]
                 if q.get("image_refs"):
-                    existing["image_refs"] = list(dict.fromkeys((existing.get("image_refs") or []) + q["image_refs"]))
+                    existing["image_refs"] = list(dict.fromkeys((existing.get("image_refs") or []) + q["image_refs"]))[:4]
 
-                # Merge audio lists while maintaining role segregation
+                # Merge audio lists
                 if q.get("question_audio"):
                     existing["question_audio"] = list(dict.fromkeys((existing.get("question_audio") or []) + q["question_audio"]))
                 if q.get("answer_audio"):
@@ -426,7 +448,7 @@ class QuestionExtractor:
                 if q.get("audio_refs"):
                     existing["audio_refs"] = list(dict.fromkeys((existing.get("audio_refs") or []) + q["audio_refs"]))
 
-                # Merge video lists while maintaining role segregation
+                # Merge video lists
                 if q.get("question_videos"):
                     existing["question_videos"] = list(dict.fromkeys((existing.get("question_videos") or []) + q["question_videos"]))
                 if q.get("answer_videos"):
@@ -437,6 +459,10 @@ class QuestionExtractor:
                 if q.get("raw_media_refs"):
                     existing["raw_media_refs"] = list(dict.fromkeys((existing.get("raw_media_refs") or []) + q["raw_media_refs"]))
             else:
+                if q.get("question_images"):
+                    q["question_images"] = q["question_images"][:4]
+                if q.get("image_refs"):
+                    q["image_refs"] = q["image_refs"][:4]
                 seen_q[key] = q
                 consolidated.append(q)
 

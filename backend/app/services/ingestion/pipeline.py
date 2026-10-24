@@ -83,7 +83,7 @@ def is_image_dependent_question(q: Dict[str, Any]) -> bool:
     """Returns True only if the question's text references visual assets or lacks enough context without them."""
     text = (q.get("question_text") or "").strip()
     if not text:
-        return True
+        return bool(q.get("answer"))
     words = text.split()
     if len(words) < 15:
         return True
@@ -244,6 +244,7 @@ class IngestionPipeline:
             # (question number, format, star, answer type, language).
             deck_row = upsert_deck_metadata(db, doc)
             annotate_questions(raw_questions, classified_slides, deck_row_to_info(deck_row))
+            db.commit()  # Commit slides and metadata to release PostgreSQL transaction before AI calls
             _trim_memory()
             _log_mem("after question extraction")
 
@@ -342,8 +343,8 @@ class IngestionPipeline:
                     return None
 
                 visual_clues_list = []
-                # Prioritize question_images over broad image_refs
-                target_imgs = list(q.get("question_images") or q.get("image_refs") or [])
+                # Prioritize question_images over broad image_refs, capped at 4
+                target_imgs = list(q.get("question_images") or q.get("image_refs") or [])[:4]
                 for rel_img_path in target_imgs:
                     desc = await _describe_one_image(rel_img_path)
                     if desc:
@@ -560,6 +561,7 @@ class IngestionPipeline:
 
             for q_m, q_data in zip(question_models, unique_candidates):
                 ensure_question_metadata(db, q_m, q_data.get("_meta"), deck_row, doc)
+            db.commit()  # Commit created questions so db transaction is closed before tagging calls
 
             # Auto-tag newly ingested questions with the QShala tagger (v6: topic paths, geography, year).
             if USE_QSHALA_TAGGER and question_models:
