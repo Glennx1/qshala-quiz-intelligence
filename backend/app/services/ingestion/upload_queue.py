@@ -210,6 +210,37 @@ async def process_one() -> bool:
     return True
 
 
+_draining = False
+
+
+async def drain(max_decks: int = 200) -> int:
+    """Process queued decks one after another until the queue is empty (or this process is already
+    draining, or another process holds the serial lock). Kicked from each upload so processing does
+    NOT depend on the long-lived background worker running — the common reason decks "just queue".
+    Serial: process_one() returns False when another worker is busy, so this exits instead of
+    piling on. Returns how many decks it processed."""
+    global _draining
+    if _draining:                 # this process is already draining; don't start a second drainer
+        return 0
+    _draining = True
+    done = 0
+    try:
+        for _ in range(max_decks):
+            try:
+                did = await process_one()
+            except Exception as e:
+                logger.exception("[QUEUE] drain tick error: %s", e)
+                break
+            if not did:           # queue empty, or another worker is handling it
+                break
+            done += 1
+    finally:
+        _draining = False
+    if done:
+        logger.info("[QUEUE] drain processed %d deck(s)", done)
+    return done
+
+
 async def run_worker_loop() -> None:
     poll = max(1, int(settings.UPLOAD_QUEUE_POLL_SECONDS))
     logger.info("[QUEUE] upload worker started (poll=%ss, serial)", poll)

@@ -161,6 +161,43 @@ def test_reconcile_marks_interrupted_jobs_failed():
         _cleanup(doc_id)
 
 
+def test_drain_processes_the_whole_queue_serially(monkeypatch):
+    """A single drain kick must work off every queued deck, one after another."""
+    db = SessionLocal()
+    docs = [_mk_doc(db) for _ in range(3)]
+    try:
+        for d in docs:
+            uq.enqueue_upload(db, document_id=d, filename="d.pptx")
+    finally:
+        db.close()
+
+    order = []
+
+    class StubPipeline:
+        async def run(self, document_id):
+            order.append(document_id)
+            s = SessionLocal()
+            try:
+                s.query(Document).get(document_id).processing_status = "COMPLETED"
+                s.commit()
+            finally:
+                s.close()
+
+    monkeypatch.setattr("backend.app.services.ingestion.pipeline.IngestionPipeline", StubPipeline)
+    try:
+        import asyncio as _a
+        processed = _a.run(uq.drain())
+        assert processed == 3 and len(order) == 3            # all decks processed by one drainer
+        db = SessionLocal()
+        done = db.query(IngestionJob).filter(
+            IngestionJob.document_id.in_(docs), IngestionJob.status == "COMPLETED").count()
+        db.close()
+        assert done == 3
+    finally:
+        for d in docs:
+            _cleanup(d)
+
+
 def test_stale_processing_job_is_reclaimed_and_unblocks_the_queue():
     """A job stuck PROCESSING (dead worker / host slept) must not block every other upload forever.
     After the stale window it is failed, and the next PENDING deck becomes claimable."""
