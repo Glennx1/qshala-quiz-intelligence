@@ -213,6 +213,12 @@ class IngestionPipeline:
             # (question number, format, star, answer type, language).
             deck_row = upsert_deck_metadata(db, doc)
             annotate_questions(raw_questions, classified_slides, deck_row_to_info(deck_row))
+            # Show a clean quiz name in Recent Uploads instead of the raw ".pptx" filename: the deck
+            # parser already pulled a quiz_name out of the filename. Only override an auto-derived
+            # title (the filename), never a title the user typed in.
+            if getattr(deck_row, "quiz_name", None) and (doc.title or "") in ("", doc.filename,
+                    os.path.splitext(doc.filename)[0].replace("_", " ").title()):
+                doc.title = deck_row.quiz_name
             # Values needed later, captured BEFORE the commit expires the ORM rows.
             deck_year = deck_row.deck_year or doc.year
             doc_title = doc.title
