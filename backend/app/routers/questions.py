@@ -454,6 +454,78 @@ def list_duplicate_candidates(
 
     return _enrich(db, [to_question_response(q, doc, slide) for q, doc, slide in items])
 
+
+def _needs_review_ids(db: Session):
+    """Question ids whose current tag is a draft: a draft tag exists and no confirmed tag does."""
+    from backend.app.models.qshala_tag import QshalaTag
+    has_draft = db.query(QshalaTag.question_id).filter(QshalaTag.status == "draft")
+    has_confirmed = db.query(QshalaTag.question_id).filter(QshalaTag.status == "confirmed")
+    return has_draft, has_confirmed
+
+
+@router.get("/needs-review", response_model=List[QuestionResponse])
+def list_review_candidates(
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """Questions whose AI tag was low-confidence (status 'draft') and not yet human-confirmed.
+    These are the ones a quiz master should look at under the Review toggle."""
+    has_draft, has_confirmed = _needs_review_ids(db)
+    items = db.query(Question, Document, Slide).\
+        outerjoin(Document, Question.document_id == Document.id).\
+        outerjoin(Slide, Question.slide_id == Slide.id).\
+        filter(Question.id.in_(has_draft.subquery()), ~Question.id.in_(has_confirmed.subquery())).\
+        order_by(desc(Question.created_at)).\
+        offset(offset).limit(limit).all()
+    return _enrich(db, [to_question_response(q, doc, slide) for q, doc, slide in items])
+
+
+@router.get("/needs-review/count", response_model=Dict[str, int])
+def review_candidates_count(db: Session = Depends(get_db)):
+    has_draft, has_confirmed = _needs_review_ids(db)
+    n = db.query(func.count(Question.id)).filter(
+        Question.id.in_(has_draft.subquery()), ~Question.id.in_(has_confirmed.subquery())).scalar()
+    return {"count": int(n or 0)}
+
+
+@router.post("/{question_id}/accept-review", response_model=QuestionResponse)
+def accept_review(question_id: str, db: Session = Depends(get_db)):
+    """Confirm a question's draft tag as-is (the quiz master agrees with the AI). Promotes the latest
+    draft QshalaTag to 'confirmed' so it leaves the review queue. (To change the tag instead, the UI
+    uses the tag editor, which writes a human-confirmed tag and also feeds the learning loop.)"""
+    from datetime import datetime, timezone
+    from backend.app.models.qshala_tag import QshalaTag, QshalaTagChange
+    item = db.query(Question, Document, Slide).\
+        outerjoin(Document, Question.document_id == Document.id).\
+        outerjoin(Slide, Question.slide_id == Slide.id).\
+        filter(Question.id == question_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    tag = db.query(QshalaTag).filter(
+        QshalaTag.question_id == question_id, QshalaTag.status == "draft").\
+        order_by(desc(QshalaTag.created_at)).first()
+    if tag is not None:
+        for prev in db.query(QshalaTag).filter(
+                QshalaTag.question_id == question_id, QshalaTag.status == "confirmed").all():
+            prev.status = "superseded"
+        tag.status = "confirmed"
+        tag.verified_by = "quizmaster"
+        tag.verified_at = datetime.now(timezone.utc)
+        db.add(QshalaTagChange(question_id=question_id, from_tag_id=None, to_tag_id=tag.id,
+                               change_type="PROMOTE", actor="quizmaster", reason="accepted from review"))
+        try:
+            from backend.app.services.question_meta_service import apply_tag_to_meta
+            apply_tag_to_meta(db, question_id, tag)
+        except Exception:
+            pass
+        db.commit()
+
+    q, doc, slide = item
+    return _enrich_one(db, to_question_response(q, doc, slide))
+
+
 @router.get("/{question_id}", response_model=QuestionResponse)
 def get_question(question_id: str, db: Session = Depends(get_db)):
     item = db.query(Question, Document, Slide).\

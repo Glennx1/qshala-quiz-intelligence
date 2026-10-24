@@ -365,6 +365,25 @@ export const api = {
     return handleResponse<HistoricalQuestion[]>(res);
   },
 
+  getReviewCandidates: async (): Promise<HistoricalQuestion[]> => {
+    const res = await fetch(${getApiBase()}/questions/needs-review, { cache: 'no-store' });
+    return handleResponse<HistoricalQuestion[]>(res);
+  },
+
+  getReviewCount: async (): Promise<number> => {
+    const res = await fetch(${getApiBase()}/questions/needs-review/count, { cache: 'no-store' });
+    const data = await handleResponse<{ count: number }>(res);
+    return data.count;
+  },
+
+  acceptReview: async (questionId: string): Promise<HistoricalQuestion> => {
+    const res = await fetch(${getApiBase()}/questions//accept-review, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    return handleResponse<HistoricalQuestion>(res);
+  },
+
   resolveDuplicate: async (
     questionId: string,
     action: 'CONFIRM_DUPLICATE' | 'DISMISS_UNIQUE' | 'MERGE',
