@@ -93,10 +93,16 @@ async def retry_job(job_id: str, db: Session = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Ingestion job not found")
 
-    job.status = "PENDING"
-    job.retry_count = 0
-    job.error_message = None
-    db.commit()
+    # Manual-upload jobs re-run the full pipeline, which would duplicate slides/questions if any
+    # partial output from the failed attempt is still around — so purge the deck's artifacts first.
+    if job.source_type == "MANUAL_UPLOAD":
+        from backend.app.services.ingestion.upload_queue import requeue_job
+        requeue_job(db, job)
+    else:
+        job.status = "PENDING"
+        job.retry_count = 0
+        job.error_message = None
+        db.commit()
     db.refresh(job)
     return {"message": "Job re-queued successfully", "job": to_job_dict(job)}
 

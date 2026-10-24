@@ -73,6 +73,21 @@ async def lifespan(app: FastAPI):
             logger.info("Auto-seeding completed.")
     except Exception as e:
         logger.warning(f"Lifespan seed check exception: {e}")
+
+    # Upload queue: reconcile jobs interrupted by a restart, then start the single serial worker.
+    try:
+        from backend.app.config import settings as _settings
+        if _settings.UPLOAD_QUEUE_ENABLED:
+            from backend.app.services.ingestion import upload_queue
+            _db = SessionLocal()
+            try:
+                upload_queue.reconcile_on_startup(_db)
+            finally:
+                _db.close()
+            upload_queue.start_worker()
+            logger.info("Upload queue worker started")
+    except Exception as e:
+        logger.warning(f"Upload queue startup skipped: {e}")
     yield
 
 import logging as _logging
