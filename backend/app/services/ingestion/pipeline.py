@@ -271,6 +271,12 @@ class IngestionPipeline:
             deck_year = deck_row.deck_year or doc.year    # capture BEFORE commit expires the row
             db.commit()                                   # nothing below until dedup touches the DB
             _ensure_clean(db, "vision/embedding stage")   # assert the invariant at the phase boundary
+            if own_session and db is not None:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+                db = None
             _trim_memory()
             _log_mem("after question extraction")
 
@@ -513,18 +519,38 @@ class IngestionPipeline:
                 "current_step": "7. Deduplicating questions against knowledge base"
             })
 
-            _ensure_clean(db, "dedup")              # fresh, pre-pinged connection for phase C
             from sqlalchemy.exc import OperationalError, DBAPIError
-            try:
-                unique_candidates, duplicates = self.deduplicator.deduplicate_batch(
-                    db=db, candidates=enriched_questions,
-                    candidate_embeddings=embeddings, doc_id=doc.id)
-            except (OperationalError, DBAPIError) as db_err:
-                logger.warning("dedup hit a stale connection, retrying once: %s", safe_error(db_err))
-                db.rollback()                        # drop the dead transaction; pre_ping gives a live conn
-                unique_candidates, duplicates = self.deduplicator.deduplicate_batch(
-                    db=db, candidates=enriched_questions,
-                    candidate_embeddings=embeddings, doc_id=doc.id)
+            from backend.app.database import SessionLocal
+
+            if own_session or db is None:
+                db = SessionLocal()
+                own_session = True
+
+            doc = db.query(Document).filter(Document.id == document_id).first()
+            if not doc:
+                raise LookupError(f"Document {document_id} not found during dedupe/save")
+            deck_row = db.query(DeckMetadata).filter(DeckMetadata.document_id == document_id).first()
+
+            unique_candidates = []
+            duplicates = []
+            for attempt in range(2):
+                try:
+                    _ensure_clean(db, "dedup")              # fresh, pre-pinged connection for phase C
+                    unique_candidates, duplicates = self.deduplicator.deduplicate_batch(
+                        db=db, candidates=enriched_questions,
+                        candidate_embeddings=embeddings, doc_id=doc.id)
+                    break
+                except (OperationalError, DBAPIError) as db_err:
+                    if attempt == 1:
+                        raise
+                    logger.warning("dedup hit a stale connection, retrying once with fresh session: %s", safe_error(db_err))
+                    try:
+                        db.close()
+                    except Exception:
+                        pass
+                    db = SessionLocal()
+                    doc = db.query(Document).filter(Document.id == document_id).first()
+                    deck_row = db.query(DeckMetadata).filter(DeckMetadata.document_id == document_id).first()
 
             raise_if_cancelled(document_id)
 
@@ -637,9 +663,11 @@ class IngestionPipeline:
             _trim_memory()
             _log_mem("after tagging")
 
-            doc.question_count = len(question_models)
-            doc.processing_status = "COMPLETED"
-            db.commit()
+            doc = db.query(Document).filter(Document.id == document_id).first()
+            if doc:
+                doc.question_count = len(question_models)
+                doc.processing_status = "COMPLETED"
+                db.commit()
 
             _log_mem("end of pipeline")
 
