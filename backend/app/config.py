@@ -186,7 +186,7 @@ class Settings(BaseSettings):
     # Upload queue: when True, uploads enqueue a job and a single serial worker processes one deck
     # at a time (memory-safe on a 512 MB host). When False, falls back to immediate per-upload
     # background processing (the old behaviour). Flip off with UPLOAD_QUEUE_ENABLED=0 to revert.
-    UPLOAD_QUEUE_ENABLED: bool = True
+    UPLOAD_QUEUE_ENABLED: bool = False
     UPLOAD_QUEUE_POLL_SECONDS: int = 5          # how often the worker looks for the next deck
     UPLOAD_QUEUE_MAX_RETRIES: int = 2           # manual-retry cap per deck
 
@@ -200,7 +200,7 @@ class Settings(BaseSettings):
     @classmethod
     def _parse_safety_bools(cls, v, info):
         if v == "" or v is None:
-            return True if info.field_name == "UPLOAD_QUEUE_ENABLED" else False
+            return False
         if isinstance(v, bool):
             return v
         return str(v).strip().lower() in {"1", "true", "yes", "on"}
