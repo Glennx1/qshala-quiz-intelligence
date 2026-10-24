@@ -135,10 +135,31 @@ if is_postgres:
             is_postgres = False
 
 if engine is None:
+    # About to use SQLite. On a deployed host this is a DATA-LOSS trap: the file lives on the
+    # container's ephemeral disk and is wiped on every restart/sleep. Refuse to start if the operator
+    # declared this environment must be persistent (REQUIRE_POSTGRES=1); otherwise run but warn loudly.
+    if getattr(settings, "REQUIRE_POSTGRES", False):
+        raise RuntimeError(
+            "REQUIRE_POSTGRES is set but no PostgreSQL connection is available. "
+            "DATABASE_URL is missing/empty or Neon was unreachable at startup, so the app would fall "
+            "back to SQLite on an ephemeral disk and LOSE all data on the next restart. "
+            "Set DATABASE_URL to your Neon connection string (…?sslmode=require) and redeploy."
+        )
     import os
     from backend.app.config import default_db_url
     connect_args = {"check_same_thread": False}
     engine = create_engine(default_db_url, connect_args=connect_args, echo=False)
+    logger.warning(
+        "=" * 78 + "\n"
+        "  DATA IS NOT PERSISTENT: running on SQLite (%s).\n"
+        "  On Render/Railway this file is deleted on restart or sleep — uploads will vanish.\n"
+        "  Set DATABASE_URL (Neon) and REQUIRE_POSTGRES=1 for a persistent database.\n"
+        + "=" * 78, default_db_url)
+
+# What database are we actually on? Read by the /health endpoint so the operator can verify
+# persistence without guessing.
+DB_BACKEND = "postgres" if is_postgres else "sqlite"
+DB_PERSISTENT = is_postgres
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

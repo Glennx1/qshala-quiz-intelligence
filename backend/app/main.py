@@ -172,5 +172,21 @@ def root():
 @app.get("/api/health")
 @app.get(f"{settings.API_V1_STR}/health")
 def health():
-    return {"status": "healthy"}
+    """Reports which database is live so persistence can be verified at a glance.
+    `persistent: false` means data will be lost on restart — fix DATABASE_URL."""
+    from backend.app.database import DB_BACKEND, DB_PERSISTENT, raw_db_url
+    host = "local file"
+    if DB_PERSISTENT:
+        try:
+            host = raw_db_url.split("@", 1)[1].split("/", 1)[0]   # host only, never credentials
+        except Exception:
+            host = "postgres"
+    return {
+        "status": "healthy",
+        "database": DB_BACKEND,
+        "persistent": DB_PERSISTENT,
+        "db_host": host,
+        "warning": None if DB_PERSISTENT else
+                   "Data is NOT persistent (SQLite on ephemeral disk). Set DATABASE_URL to Neon.",
+    }
 

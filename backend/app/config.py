@@ -190,11 +190,17 @@ class Settings(BaseSettings):
     UPLOAD_QUEUE_POLL_SECONDS: int = 5          # how often the worker looks for the next deck
     UPLOAD_QUEUE_MAX_RETRIES: int = 2           # manual-retry cap per deck
 
-    @field_validator("UPLOAD_QUEUE_ENABLED", mode="before")
+    # Data safety: when True, the app refuses to start on a non-persistent SQLite database. Set
+    # REQUIRE_POSTGRES=1 in any deployed environment (Render, Railway) so a missing or unreachable
+    # DATABASE_URL fails loudly at boot instead of silently writing to a disk that gets wiped on
+    # restart. Leave False for local development, where SQLite is intentional.
+    REQUIRE_POSTGRES: bool = False
+
+    @field_validator("UPLOAD_QUEUE_ENABLED", "REQUIRE_POSTGRES", mode="before")
     @classmethod
-    def _parse_upload_queue_enabled(cls, v):
+    def _parse_safety_bools(cls, v, info):
         if v == "" or v is None:
-            return True
+            return True if info.field_name == "UPLOAD_QUEUE_ENABLED" else False
         if isinstance(v, bool):
             return v
         return str(v).strip().lower() in {"1", "true", "yes", "on"}
