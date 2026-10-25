@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from backend.app.config import settings
 from backend.app.database import engine, Base
-from backend.app.routers import documents, questions, quizzes, stats, jobs, sharepoint, qshala_tagging, question_meta
+from backend.app.routers import documents, questions, quizzes, stats, jobs, sharepoint, qshala_tagging, question_meta, prompt_quiz
 
 # Register ALL SQLAlchemy models here so Base.metadata.create_all sees them before
 # the first create_all call below. Importing the module is enough; the class
@@ -157,6 +157,7 @@ app.include_router(jobs.router, prefix=settings.API_V1_STR)
 app.include_router(sharepoint.router, prefix=settings.API_V1_STR)
 app.include_router(qshala_tagging.router, prefix=settings.API_V1_STR)
 app.include_router(qshala_tagging.router)  # Also mount at /qshala/* directly
+app.include_router(prompt_quiz.router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 @app.get("/api")
