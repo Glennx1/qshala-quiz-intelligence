@@ -15,6 +15,7 @@ Question dict shape (use your qshala_tags field names):
      image_dependent(bool)}
 """
 from __future__ import annotations
+import difflib
 import math, re
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional
@@ -63,6 +64,18 @@ SYNONYMS: Dict[str, List[str]] = {
     "festival": ["festival", "diwali", "mela", "celebration", "event"],
     "leader": ["ceo", "founder", "chairman", "billionaire", "entrepreneur"],
     "ceo": ["ceo", "chief executive", "founder", "chairman"],
+    "corporate": ["company", "business", "brand", "ceo", "industry", "merger", "corporate", "acquisition", "firm", "leader"],
+    "business": ["company", "brand", "startup", "market", "industry", "business", "corporate"],
+    "company": ["company", "brand", "corporate", "business", "founder", "ceo"],
+}
+
+WORD_NUMS: Dict[str, int] = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19, "twenty": 20, "twenty-five": 25, "thirty": 30,
+    "forty": 40, "fifty": 50,
 }
 
 _word = re.compile(r"[a-z0-9]+")
@@ -96,13 +109,27 @@ def question_style(text: str, answer: str = "", image_dependent: bool = False) -
     return "STANDARD"
 
 def expand(tokens: List[str]) -> Counter:
-    """Return a weighted bag of query terms: originals weight 1.0, expansions 0.4."""
+    """Return a weighted bag of query terms: originals weight 1.0, expansions 0.4.
+    Includes fuzzy matching for common typos against domain vocabulary."""
     bag: Counter = Counter()
+    expanded_tokens = list(tokens)
+    
+    # Check for close matches in SYNONYMS keys for any token not directly matched
+    known_keys = list(SYNONYMS.keys())
     for t in tokens:
+        if t not in SYNONYMS and len(t) >= 4:
+            close = difflib.get_close_matches(t, known_keys, n=1, cutoff=0.75)
+            if close:
+                matched_key = close[0]
+                if matched_key not in expanded_tokens:
+                    expanded_tokens.append(matched_key)
+                    bag[matched_key] += 0.8
+
+    for t in expanded_tokens:
         bag[t] += 1.0
-    text = " ".join(tokens)
+    text = " ".join(expanded_tokens)
     for key, extra in SYNONYMS.items():
-        if key in tokens or (" " in key and key in text):
+        if key in expanded_tokens or (" " in key and key in text):
             for e in extra:
                 for et in tokenize(e):
                     bag[et] = max(bag[et], 0.4)
@@ -155,7 +182,12 @@ class Index:
                 return False
             geo = filters.get("india_international")
             if geo and item.get("india_international") not in (geo, "MIXED"):
-                return False
+                if geo == "IN":
+                    txt = (item.get("question_text", "") + " " + (item.get("answer") or "") + " " + (item.get("topic_l1") or "")).lower()
+                    if "india" not in txt and "indian" not in txt:
+                        return False
+                else:
+                    return False
             if filters.get("evergreen_only") and item.get("shelf_life") == "TIME_SENSITIVE":
                 return False
             if filters.get("school_safe") and item.get("sensitivity") in ("POLITICAL", "MATURE_REFERENCE"):
@@ -179,14 +211,18 @@ class Index:
                         return False
             return True
         scored = []
+        is_broad = len(qbag) == 0
         for i, item in enumerate(self.q):
             if not passes(i, item):
                 continue
-            s = self._bm25(i, qbag)
-            # small boost if the query words appear in the chosen topic/subtopic
-            tl = ((item.get("topic_l1") or "") + " " + (item.get("subtopic_l2") or "")).lower()
-            if any(t in tl for t in qbag):
-                s += 0.5
+            if is_broad:
+                s = 1.0 + (0.5 if item.get("tagged") else 0.0)
+            else:
+                s = self._bm25(i, qbag)
+                # small boost if the query words appear in the chosen topic/subtopic
+                tl = ((item.get("topic_l1") or "") + " " + (item.get("subtopic_l2") or "")).lower()
+                if any(t in tl for t in qbag):
+                    s += 0.5
             if s > 0:
                 scored.append((s, i, item))
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -207,17 +243,28 @@ def parse_prompt(prompt: str):
         filters["evergreen_only"] = True
     if re.search(r"\bschool|kids|children|family|safe\b", p):
         filters["school_safe"] = True
-    if re.search(r"\bno image|text only|without image|non-?image\b", p):
+    if re.search(r"\bno image|text only|without images?|non-?image\b", p):
         filters["exclude_image"] = True
     if re.search(r"\bindia|indian\b", p):
         filters["india_international"] = "IN"
     elif re.search(r"\binternational|global|world\b", p):
         filters["india_international"] = "INTL"
     m = re.search(r"\b(\d{1,3})\b", p)
-    count = int(m.group(1)) if m else 20
+    count = None
+    if m:
+        count = int(m.group(1))
+    else:
+        for w, num in WORD_NUMS.items():
+            if re.search(r"\b" + re.escape(w) + r"\b", p):
+                count = num
+                break
+    final_count = count if count is not None else 20
     # strip filter words so they don't dominate the text match
-    q = re.sub(r"\b(\d{1,3}|questions?|quiz|round|evergreen|india|indian|international|global|"
-               r"school|safe|family|kids|children|no image|text only|on|about|a|the|of|give me|pull|me)\b",
+    word_num_pattern = "|".join(WORD_NUMS.keys())
+    q = re.sub(r"\b(\d{1,3}|" + word_num_pattern + r"|questions?|quiz|round|evergreen|international|global|"
+               r"school|safe|family|kids|children|without images?|without image|no images?|no image|text only|non-?image|"
+               r"easy|warm-?ups?|beginner|gentle|hard|tough|difficult|finals?|"
+               r"on|about|a|an|the|of|for|with|give me|pull|me|show me|create|generate|want)\b",
                " ", p)
     q = re.sub(r"[^a-z0-9 ]", " ", q)
-    return re.sub(r"\s+", " ", q).strip(), filters, count
+    return re.sub(r"\s+", " ", q).strip(), filters, final_count

@@ -233,7 +233,7 @@ class QuizExporter:
         return output.getvalue()
 
     @staticmethod
-    def to_pptx(quiz: Any) -> bytes:
+    def to_pptx(quiz: Any, theme: str = "bengaluru_south") -> bytes:
         """
         Exports the quiz into a crisp, minimalist, high-typography presentation deck (16:9 widescreen).
         
@@ -256,20 +256,38 @@ class QuizExporter:
         blank_layout = prs.slide_layouts[6]
 
         # -------------------------------------------------------------
-        # Minimalist Color Palette & Typography
+        # Theme Assets & Color Palette (Bengaluru South or Minimalist)
         # -------------------------------------------------------------
-        C_WHITE = RGBColor(255, 255, 255)
-        C_DARK_BG = RGBColor(15, 23, 42)          # #0F172A Slate 900
-        C_TEXT_DARK = RGBColor(15, 23, 42)        # #0F172A Deep Charcoal
-        C_TEXT_BODY = RGBColor(51, 65, 85)        # #334155 Slate 700
-        C_TEXT_MUTED = RGBColor(100, 116, 139)    # #64748B Slate 500
-        C_ACCENT_BLUE = RGBColor(37, 99, 235)     # #2563EB Blue 600
-        C_ACCENT_GREEN = RGBColor(5, 150, 105)    # #059669 Emerald 600
-        C_ACCENT_GOLD = RGBColor(217, 119, 6)     # #D97706 Amber 600
-        C_CARD_BG = RGBColor(241, 245, 249)       # #F1F5F9 Slate 100
-        C_CARD_BORDER = RGBColor(203, 213, 225)   # #CBD5E1 Slate 300
+        assets_dir = Path(__file__).resolve().parent / "templates" / "assets"
+        title_bg = assets_dir / "title_bg.png"
+        question_bg = assets_dir / "question_bg.png"
+        answer_bg = assets_dir / "answer_bg.png"
 
-        FONT_HEAD = "Trebuchet MS"
+        use_bengaluru_theme = (theme == "bengaluru_south" and question_bg.exists())
+
+        C_WHITE = RGBColor(255, 255, 255)
+        if use_bengaluru_theme:
+            C_DARK_BG = RGBColor(15, 23, 42)
+            C_TEXT_DARK = RGBColor(248, 250, 252)       # Off-white for dark tournament frame
+            C_TEXT_BODY = RGBColor(226, 232, 240)       # Slate 200
+            C_TEXT_MUTED = RGBColor(148, 163, 184)      # Slate 400
+            C_ACCENT_BLUE = RGBColor(96, 165, 250)      # Sky blue 400
+            C_ACCENT_GREEN = RGBColor(74, 222, 128)     # Emerald 400
+            C_ACCENT_GOLD = RGBColor(251, 191, 36)      # Amber 400
+            C_CARD_BG = RGBColor(30, 41, 59)            # Slate 800
+            C_CARD_BORDER = RGBColor(71, 85, 105)       # Slate 600
+        else:
+            C_DARK_BG = RGBColor(15, 23, 42)          # #0F172A Slate 900
+            C_TEXT_DARK = RGBColor(15, 23, 42)        # #0F172A Deep Charcoal
+            C_TEXT_BODY = RGBColor(51, 65, 85)        # #334155 Slate 700
+            C_TEXT_MUTED = RGBColor(100, 116, 139)    # #64748B Slate 500
+            C_ACCENT_BLUE = RGBColor(37, 99, 235)     # #2563EB Blue 600
+            C_ACCENT_GREEN = RGBColor(5, 150, 105)    # #059669 Emerald 600
+            C_ACCENT_GOLD = RGBColor(217, 119, 6)     # #D97706 Amber 600
+            C_CARD_BG = RGBColor(241, 245, 249)       # #F1F5F9 Slate 100
+            C_CARD_BORDER = RGBColor(203, 213, 225)   # #CBD5E1 Slate 300
+
+        FONT_HEAD = "Calibri"
         FONT_BODY = "Calibri"
 
         title_text = _get_val(quiz, "title", "QShala Tournament Quiz")
@@ -284,12 +302,15 @@ class QuizExporter:
         # 1. Clean Minimalist Title Slide
         # -------------------------------------------------------------
         s_title = prs.slides.add_slide(blank_layout)
-        bg_title = s_title.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
-        bg_title.fill.solid()
-        bg_title.fill.fore_color.rgb = C_DARK_BG
-        bg_title.line.fill.background()
-
-        tb_title = s_title.shapes.add_textbox(Inches(1.2), Inches(2.1), Inches(10.9), Inches(3.6))
+        if use_bengaluru_theme and title_bg.exists():
+            s_title.shapes.add_picture(str(title_bg), 0, 0, Inches(13.333), Inches(7.5))
+            tb_title = s_title.shapes.add_textbox(Inches(1.8), Inches(3.5), Inches(9.8), Inches(3.2))
+        else:
+            bg_title = s_title.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+            bg_title.fill.solid()
+            bg_title.fill.fore_color.rgb = C_DARK_BG
+            bg_title.line.fill.background()
+            tb_title = s_title.shapes.add_textbox(Inches(1.2), Inches(2.1), Inches(10.9), Inches(3.6))
         tf_title = tb_title.text_frame
         tf_title.word_wrap = True
 
@@ -393,10 +414,22 @@ class QuizExporter:
             # (A) QUESTION SLIDE
             # ---------------------------------------------------------
             sq = prs.slides.add_slide(blank_layout)
-            bg_q = sq.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
-            bg_q.fill.solid()
-            bg_q.fill.fore_color.rgb = C_WHITE
-            bg_q.line.fill.background()
+            if use_bengaluru_theme and question_bg.exists():
+                sq.shapes.add_picture(str(question_bg), 0, 0, Inches(13.333), Inches(7.5))
+                # Number badge top-right
+                tb_num = sq.shapes.add_textbox(Inches(10.2), Inches(0.4), Inches(2.4), Inches(0.9))
+                pn = tb_num.text_frame.paragraphs[0]
+                pn.text = f"{idx}."
+                pn.alignment = PP_ALIGN.RIGHT
+                pn.font.name = FONT_HEAD
+                pn.font.size = Pt(44)
+                pn.font.bold = True
+                pn.font.color.rgb = C_WHITE
+            else:
+                bg_q = sq.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+                bg_q.fill.solid()
+                bg_q.fill.fore_color.rgb = C_WHITE
+                bg_q.line.fill.background()
 
             # Top Clean Tag (Category & Question Number)
             media_type_tag = ""
@@ -538,10 +571,13 @@ class QuizExporter:
             # (B) ANSWER REVEAL SLIDE (Immediately follows the question!)
             # ---------------------------------------------------------
             sa = prs.slides.add_slide(blank_layout)
-            bg_a = sa.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
-            bg_a.fill.solid()
-            bg_a.fill.fore_color.rgb = C_WHITE
-            bg_a.line.fill.background()
+            if use_bengaluru_theme and answer_bg.exists():
+                sa.shapes.add_picture(str(answer_bg), 0, 0, Inches(13.333), Inches(7.5))
+            else:
+                bg_a = sa.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+                bg_a.fill.solid()
+                bg_a.fill.fore_color.rgb = C_WHITE
+                bg_a.line.fill.background()
 
             # Top Tag
             tb_atag = sa.shapes.add_textbox(Inches(1.0), Inches(0.6), Inches(11.3), Inches(0.5))

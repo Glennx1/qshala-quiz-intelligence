@@ -98,6 +98,7 @@ def delete_question(question_id: str, db: Session = Depends(get_db)):
 def export_quiz(
     quiz_id: str,
     format: str = Query("json", pattern="^(json|csv|pptx)$"),
+    theme: str = Query("bengaluru_south"),
     db: Session = Depends(get_db)
 ):
     quiz = db.query(Quiz).filter(Quiz.id == quiz_id).first()
@@ -119,7 +120,7 @@ def export_quiz(
             headers={"Content-Disposition": f"attachment; filename=quiz_{quiz.id[:8]}.csv"}
         )
     elif format == "pptx":
-        pptx_bytes = QuizExporter.to_pptx(quiz)
+        pptx_bytes = QuizExporter.to_pptx(quiz, theme=theme)
         return Response(
             content=pptx_bytes,
             media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -129,7 +130,8 @@ def export_quiz(
 @router.post("/export")
 def export_quiz_payload(
     payload: Dict[str, Any] = Body(...),
-    format: str = Query("pptx", pattern="^(json|csv|pptx)$")
+    format: str = Query("pptx", pattern="^(json|csv|pptx)$"),
+    theme: str = Query("bengaluru_south")
 ):
     quiz_id = payload.get("id", "custom")
     clean_id = str(quiz_id)[:8] if quiz_id else "custom"
@@ -148,7 +150,7 @@ def export_quiz_payload(
             headers={"Content-Disposition": f"attachment; filename=quiz_{clean_id}.csv"}
         )
     elif format == "pptx":
-        pptx_bytes = QuizExporter.to_pptx(payload)
+        pptx_bytes = QuizExporter.to_pptx(payload, theme=theme)
         return Response(
             content=pptx_bytes,
             media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",

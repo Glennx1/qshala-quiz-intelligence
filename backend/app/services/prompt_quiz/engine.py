@@ -21,7 +21,7 @@ try:  # tag table may be absent or renamed on some branches; engine degrades to 
     from backend.app.models.qshala_tag import QshalaTag
 except Exception:  # pragma: no cover
     QshalaTag = None
-from backend.app.services.prompt_quiz.retrieval import Index, parse_prompt, tokenize
+from backend.app.services.prompt_quiz.retrieval import Index, parse_prompt, tokenize, WORD_NUMS
 
 DIFF_RANK = {"easy": 0, "medium": 1, "hard": 2}
 
@@ -43,7 +43,7 @@ class Brief:
 def interpret(prompt: str, count: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Brief:
     query, filters, n = parse_prompt(prompt or "")
     p = (prompt or "").lower()
-    has_number = bool(re.search(r"\b\d{1,3}\b", p))
+    has_number = bool(re.search(r"\b\d{1,3}\b", p)) or any(re.search(r"\b" + re.escape(w) + r"\b", p) for w in WORD_NUMS)
     final_n = count or (n if has_number else 10)
     final_n = max(1, min(final_n, 50))
     bias = "hard" if re.search(r"\b(hard|tough|difficult|finals?)\b", p) else \
@@ -53,8 +53,7 @@ def interpret(prompt: str, count: Optional[int] = None, options: Optional[Dict[s
             filters.pop(k, None)
         else:
             filters[k] = v
-    if not query:  # "10 questions" alone -> broad pull
-        query = "business"
+    # Broad/zero-keyword queries stay "" so Index.search performs broad selection
     return Brief(prompt=prompt, query=query, count=final_n, filters=filters, hard_bias=bias)
 
 
@@ -105,6 +104,10 @@ def librarian(bank: List[Dict[str, Any]], brief: Brief, pool: int = 80) -> List[
         relaxed = {k: v for k, v in brief.filters.items() if k in ("school_safe", "exclude_image")}
         seen = {h["id"] for h in hits}
         hits += [h for h in idx.search(brief.query, relaxed, top_k=pool) if h["id"] not in seen]
+    if len(hits) < brief.count and brief.query:  # keyword not in bank: pull broad candidates matching safety
+        relaxed = {k: v for k, v in brief.filters.items() if k in ("school_safe", "exclude_image")}
+        seen = {h["id"] for h in hits}
+        hits += [h for h in idx.search("", relaxed, top_k=pool) if h["id"] not in seen]
     return hits
 
 
@@ -129,11 +132,17 @@ def guardian(hits: List[Dict[str, Any]], brief: Brief, exclude_ids: Optional[set
 # ---------- Editor ----------
 def editor(cands: List[Dict[str, Any]], brief: Brief) -> List[Dict[str, Any]]:
     n = brief.count
+    ordered_cands = list(cands)
+    if brief.hard_bias == "hard":
+        ordered_cands.sort(key=lambda c: -(c.get("difficulty_score") or 0.5))
+    elif brief.hard_bias == "easy":
+        ordered_cands.sort(key=lambda c: (c.get("difficulty_score") or 0.5))
+
     chosen: List[Dict[str, Any]] = []
     per_sub: Dict[str, int] = {}
     cap = max(2, -(-n // 3))  # no subtopic takes more than ~a third
     leftovers = []
-    for c in cands:
+    for c in ordered_cands:
         sub = c.get("subtopic_l2") or c.get("topic_l1") or "?"
         if per_sub.get(sub, 0) >= cap:
             leftovers.append(c)
