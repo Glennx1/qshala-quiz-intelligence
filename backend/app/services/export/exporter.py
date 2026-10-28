@@ -51,7 +51,19 @@ def _resolve_media_path(rel_url: Optional[str], download_dir: Optional[Path] = N
     # 0. Handle HTTPS/HTTP URLs (R2 media, external URLs)
     if clean_url.startswith("https://") or clean_url.startswith("http://"):
         if download_dir:
-            return _download_url_to_file(clean_url, download_dir)
+            downloaded = _download_url_to_file(clean_url, download_dir)
+            if downloaded and downloaded.exists() and downloaded.stat().st_size > 0:
+                return downloaded
+            # Direct S3 fallback if HTTP request failed (e.g. 403 or network issue)
+            try:
+                from backend.app.services.storage.r2_storage import get_media_storage
+                r2 = get_media_storage()
+                if r2 is not None:
+                    dest = download_dir / Path(clean_url.split("?")[0]).name
+                    return r2.download_to_file(clean_url, dest)
+            except Exception as e:
+                logger.warning(f"R2 direct S3 download fallback failed for {clean_url}: {e}")
+            return None
         else:
             logger.warning(f"HTTPS URL found but no download_dir provided: {clean_url}")
             return None
@@ -71,6 +83,23 @@ def _resolve_media_path(rel_url: Optional[str], download_dir: Optional[Path] = N
         for p_cand in candidates:
             if p_cand.exists() and p_cand.is_file():
                 return p_cand
+        # Fallback to R2 if not found locally
+        if download_dir:
+            try:
+                from backend.app.services.storage.r2_storage import get_media_storage
+                r2 = get_media_storage()
+                if r2 is not None:
+                    key = f"slides/{sub}"
+                    dest = download_dir / Path(sub).name
+                    try:
+                        p = r2.download_to_file(key, dest)
+                        if p.exists() and p.stat().st_size > 0:
+                            return p
+                    except Exception:
+                        pass
+                    return _download_url_to_file(f"{r2.public_base_url}/{key}", download_dir)
+            except Exception as e:
+                logger.warning(f"R2 fallback failed for {clean_url}: {e}")
     # 2. Storage directory general (/static/...)
     elif clean_url.startswith("/static/"):
         sub = clean_url.lstrip("/static/").lstrip("/\\")

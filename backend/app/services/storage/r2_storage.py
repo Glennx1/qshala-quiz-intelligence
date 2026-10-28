@@ -168,6 +168,26 @@ class CloudflareR2Service:
         resp = self._client.get_object(Bucket=self.bucket_name, Key=clean_key)
         return resp["Body"].read()
 
+    def download_to_file(self, key_or_url: str, dest_path: Union[str, Path]) -> Path:
+        """
+        Downloads an object from R2 directly to `dest_path`.
+        Accepts full public URL, /static/slides/... path, or raw S3 key.
+        """
+        if not self.is_configured or self._client is None:
+            raise RuntimeError("CloudflareR2Service is not configured")
+        clean_key = str(key_or_url).strip()
+        if self.public_base_url and clean_key.startswith(self.public_base_url):
+            clean_key = clean_key[len(self.public_base_url):].lstrip("/")
+        elif clean_key.startswith("/static/"):
+            clean_key = clean_key[len("/static/"):].lstrip("/")
+        elif clean_key.startswith("/"):
+            clean_key = clean_key.lstrip("/")
+
+        p = Path(dest_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        self._client.download_file(self.bucket_name, clean_key, str(p))
+        return p
+
 
 _global_r2_service: Optional[CloudflareR2Service] = None
 
