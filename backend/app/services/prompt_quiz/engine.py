@@ -74,6 +74,11 @@ def _load_bank(db: Session) -> List[Dict[str, Any]]:
         tags = {}
     bank = []
     for q in qs:
+        # Exclude questions with empty text unless they have valid visual clues
+        q_text_clean = (q.question_text or "").strip()
+        has_img = bool(getattr(q, 'question_images', None) or getattr(q, 'image_refs', None))
+        if len(q_text_clean) < 8 and not has_img:
+            continue
         t = tags.get(q.id)
         has_img = bool(getattr(q, 'question_images', None) or getattr(q, 'image_refs', None))
         bank.append({

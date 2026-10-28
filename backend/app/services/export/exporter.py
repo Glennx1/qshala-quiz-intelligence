@@ -112,34 +112,52 @@ def _get_val(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 def _get_hist_q_media(q: Any) -> Dict[str, Any]:
-    """Helper to retrieve raw media, audio, and videos from the source vault question if available."""
+    """Helper to retrieve raw media, audio, and videos from the source vault question or question object directly."""
+    direct_q_imgs = list(_get_val(q, "question_images", []) or [])
+    direct_a_imgs = list(_get_val(q, "answer_images", []) or [])
+    direct_img_refs = list(_get_val(q, "image_refs", []) or [])
+    direct_raw = list(_get_val(q, "raw_media_refs", []) or [])
+    direct_qa = list(_get_val(q, "question_audio", []) or [])
+    direct_qv = list(_get_val(q, "question_video", []) or [])
+
     sources = _get_val(q, "retrieval_sources", []) or _get_val(q, "sources", [])
-    if not sources:
-        return {}
-    hist_id = _get_val(sources[0], "historical_question_id")
-    if not hist_id:
-        return {}
-    try:
-        from backend.app.database import SessionLocal
-        from backend.app.models.question import Question
-        db = SessionLocal()
-        hq = db.query(Question).filter(Question.id == hist_id).first()
-        if not hq:
+    hist_id = _get_val(sources[0], "historical_question_id") if sources else None
+    q_id = _get_val(q, "id")
+
+    target_ids = [str(i) for i in [hist_id, q_id] if i]
+    if target_ids:
+        try:
+            from backend.app.database import SessionLocal
+            from backend.app.models.question import Question
+            db = SessionLocal()
+            hq = db.query(Question).filter(Question.id.in_(target_ids)).first()
+            if hq:
+                res = {
+                    "raw_media_refs": list(getattr(hq, "raw_media_refs", []) or []) + direct_raw,
+                    "question_audio": list(getattr(hq, "question_audio", []) or []) + direct_qa,
+                    "audio_refs": list(getattr(hq, "audio_refs", []) or []),
+                    "question_video": list(getattr(hq, "question_video", []) or []) + direct_qv,
+                    "video_refs": list(getattr(hq, "video_refs", []) or []),
+                    "question_images": list(getattr(hq, "question_images", []) or []) + direct_q_imgs,
+                    "answer_images": list(getattr(hq, "answer_images", []) or []) + direct_a_imgs,
+                    "image_refs": list(getattr(hq, "image_refs", []) or []) + direct_img_refs,
+                }
+                db.close()
+                return res
             db.close()
-            return {}
-        res = {
-            "raw_media_refs": list(getattr(hq, "raw_media_refs", []) or []),
-            "question_audio": list(getattr(hq, "question_audio", []) or []),
-            "audio_refs": list(getattr(hq, "audio_refs", []) or []),
-            "question_images": list(getattr(hq, "question_images", []) or []),
-            "answer_images": list(getattr(hq, "answer_images", []) or []),
-            "image_refs": list(getattr(hq, "image_refs", []) or []),
-        }
-        db.close()
-        return res
-    except Exception as e:
-        logger.warning(f"Error fetching historical question media: {e}")
-        return {}
+        except Exception as e:
+            logger.warning(f"Error fetching historical question media: {e}")
+
+    return {
+        "raw_media_refs": direct_raw,
+        "question_audio": direct_qa,
+        "audio_refs": [],
+        "question_video": direct_qv,
+        "video_refs": [],
+        "question_images": direct_q_imgs,
+        "answer_images": direct_a_imgs,
+        "image_refs": direct_img_refs,
+    }
 
 def _clean_quiz_title(raw_title: str, topic: str) -> str:
     """Sanitizes raw prompt text into a clean presentation title."""
@@ -422,6 +440,10 @@ class QuizExporter:
 
                 # Line 2: 'Win prizes worth ₹{prize_money}!' centered at y = 4.30"
                 p_raw = (prize_money or "3.5 lakh").strip()
+                # If raw integer like '1' or '5', format as '1 Lakh' or '5 Lakh'
+                if p_raw.isdigit():
+                    val = int(p_raw)
+                    p_raw = f"{val} Lakh" if val < 100 else f"{val:,}"
                 if not p_raw.startswith("₹") and not p_raw.lower().startswith("rs"):
                     p_disp = f"₹{p_raw}"
                 else:
@@ -611,6 +633,15 @@ class QuizExporter:
 
             poster_path = resolved_q_imgs[0] if resolved_q_imgs else None
             q_text = (_get_val(q, "question_text") or _get_val(q, "question", "")).strip()
+            if not q_text or len(q_text) < 5:
+                # Check visual clues or connect trivia
+                v_clue = (_get_val(q, "visual_clues") or "").strip()
+                if v_clue:
+                    q_text = v_clue
+                elif resolved_q_imgs:
+                    q_text = "Identify the connect or entity represented by the clues shown on this slide."
+                else:
+                    q_text = "Identify the person, brand, or concept based on the competition clues."
             options = _get_val(q, "options", []) or []
 
             # ---------------------------------------------------------
@@ -668,6 +699,7 @@ class QuizExporter:
                         po.font.color.rgb = C_TEXT_BODY
 
                 # Media Placement on Right Column
+                is_video_mention = bool(re.search(r"\bvideo\b|\bclip\b|\bwatch\b", q_text, re.I))
                 if video_path:
                     sq.shapes.add_movie(
                         str(video_path),
@@ -675,6 +707,17 @@ class QuizExporter:
                         poster_frame_image=str(poster_path) if poster_path else None,
                         mime_type="video/mp4"
                     )
+                elif is_video_mention and poster_path:
+                    # Video Clue Card with Poster Image
+                    _add_scaled_picture(sq, poster_path, Inches(8.80), Inches(1.50), Inches(3.90), Inches(4.20))
+                    tb_v = sq.shapes.add_textbox(Inches(8.80), Inches(5.80), Inches(3.90), Inches(0.50))
+                    pv = tb_v.text_frame.paragraphs[0]
+                    pv.text = "🎥 VIDEO CLUE"
+                    pv.font.name = FONT_HEAD
+                    pv.font.size = Pt(13)
+                    pv.font.bold = True
+                    pv.font.color.rgb = C_ACCENT_ORANGE
+                    pv.alignment = PP_ALIGN.CENTER
                 elif audio_path:
                     card = sq.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(8.80), Inches(1.80), Inches(3.80), Inches(3.60))
                     card.fill.solid()
@@ -794,7 +837,15 @@ class QuizExporter:
             if not ans_img_path and poster_path:
                 ans_img_path = poster_path
 
-            explanation = (_get_val(q, "explanation") or "").strip()
+            raw_exp = (_get_val(q, "explanation") or "").strip()
+            # Clean duplicate explanation: check if explanation merely repeats answer
+            is_dup_explanation = (
+                not raw_exp or
+                raw_exp.strip().lower() == ans_val.strip().lower() or
+                raw_exp.strip().lower() in ("n/a", "none", "historical qshala competition question.") or
+                len(raw_exp.strip()) < 3
+            )
+            explanation = "" if is_dup_explanation else raw_exp
             has_ans_img = bool(ans_img_path)
 
             if has_ans_img:
@@ -844,20 +895,21 @@ class QuizExporter:
                         pexp.font.size = Pt(14)
                         pexp.font.color.rgb = C_TEXT_MUTED
             else:
-                # Text-Only Answer Slide: Large green reveal at top, explanation card below
-                tb_a = sa.shapes.add_textbox(Inches(1.00), Inches(1.60), Inches(11.333), Inches(1.20))
-                tf_a = tb_a.text_frame
-                tf_a.word_wrap = True
-
-                pa_head = tf_a.paragraphs[0]
-                pa_head.alignment = PP_ALIGN.CENTER
-                pa_head.text = ans_val
-                pa_head.font.name = FONT_HEAD
-                pa_head.font.size = Pt(42) if len(ans_val) < 40 else (Pt(34) if len(ans_val) < 80 else Pt(26))
-                pa_head.font.bold = True
-                pa_head.font.color.rgb = C_ACCENT_GREEN
-
+                # Text-Only Answer Slide: Large green reveal
                 if explanation:
+                    # Answer at top, explanation card below
+                    tb_a = sa.shapes.add_textbox(Inches(1.00), Inches(1.60), Inches(11.333), Inches(1.20))
+                    tf_a = tb_a.text_frame
+                    tf_a.word_wrap = True
+
+                    pa_head = tf_a.paragraphs[0]
+                    pa_head.alignment = PP_ALIGN.CENTER
+                    pa_head.text = ans_val
+                    pa_head.font.name = FONT_HEAD
+                    pa_head.font.size = Pt(42) if len(ans_val) < 40 else (Pt(34) if len(ans_val) < 80 else Pt(26))
+                    pa_head.font.bold = True
+                    pa_head.font.color.rgb = C_ACCENT_GREEN
+
                     tb_exp = sa.shapes.add_textbox(Inches(1.50), Inches(3.20), Inches(10.333), Inches(3.20))
                     tf_exp = tb_exp.text_frame
                     tf_exp.word_wrap = True
@@ -868,6 +920,19 @@ class QuizExporter:
                     pexp.font.name = FONT_BODY
                     pexp.font.size = Pt(22)
                     pexp.font.color.rgb = C_TEXT_BODY
+                else:
+                    # No redundant explanation: Centered majestic single answer reveal
+                    tb_a = sa.shapes.add_textbox(Inches(1.00), Inches(2.70), Inches(11.333), Inches(2.20))
+                    tf_a = tb_a.text_frame
+                    tf_a.word_wrap = True
+
+                    pa_head = tf_a.paragraphs[0]
+                    pa_head.alignment = PP_ALIGN.CENTER
+                    pa_head.text = ans_val
+                    pa_head.font.name = FONT_HEAD
+                    pa_head.font.size = Pt(48) if len(ans_val) < 40 else (Pt(38) if len(ans_val) < 80 else Pt(28))
+                    pa_head.font.bold = True
+                    pa_head.font.color.rgb = C_ACCENT_GREEN
 
             # Speaker Notes for Answer Slide
             sa.notes_slide.notes_text_frame.text = (

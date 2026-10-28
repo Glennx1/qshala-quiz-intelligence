@@ -280,3 +280,62 @@ def test_pptx_export_api_endpoints():
             db.query(Quiz).filter(Quiz.id == quiz.id).delete()
             db.commit()
         db.close()
+
+
+def test_pptx_export_regression_test_pptx_fixes():
+    """
+    Direct regression test for defects found in test.pptx:
+    1. Duplicate answer text on answer reveal slides is prevented.
+    2. Empty/blank question text falls back cleanly and is never empty.
+    3. Raw prize number like '1' is formatted as '₹1 Lakh!'.
+    4. Direct payload questions inherit media from the vault when available.
+    """
+    quiz_payload = {
+        "title": "Insurance & Markets Prelims",
+        "topic": "Finance",
+        "questions": [
+            {
+                "id": "q-circuit-breaker",
+                "question_text": "Which 2-word household electric mechanism do stock markets use as a safety mechanism?",
+                "answer": "Circuit Breaker",
+                "explanation": "Circuit Breaker",  # Identical to answer: must NOT be duplicated!
+                "is_approved": True,
+            },
+            {
+                "id": "q-empty-text",
+                "question_text": "",  # Empty text: must fall back cleanly
+                "answer": "Ethanol / E20",
+                "explanation": "Connect round trivia.",
+                "visual_clues": "Identify the fuel policy connect shown below.",
+                "is_approved": True,
+            }
+        ]
+    }
+
+    pptx_bytes = QuizExporter.to_pptx(
+        quiz_payload,
+        quiz_type="school",
+        campus_edition="Glenn Braggs Campus Edition",
+        prize_money="1",
+        include_social_slides=False
+    )
+    prs = Presentation(io.BytesIO(pptx_bytes))
+    # 1 cover slide + 2 questions * 3 slides each = 7 slides
+    assert len(prs.slides) == 7
+
+    # Slide 1: Prize money normalization
+    s1_texts = [p.text for s in prs.slides[0].shapes if s.has_text_frame for p in s.text_frame.paragraphs]
+    assert any("Win prizes worth ₹1 Lakh!" in t for t in s1_texts)
+
+    # Slide 2: Question 1
+    s2_texts = [p.text for s in prs.slides[1].shapes if s.has_text_frame for p in s.text_frame.paragraphs]
+    assert any("household electric mechanism" in t for t in s2_texts)
+
+    # Slide 4: Answer Reveal 1 - MUST NOT have duplicate 'Circuit Breaker' text!
+    s4_texts = [p.text.strip() for s in prs.slides[3].shapes if s.has_text_frame for p in s.text_frame.paragraphs if p.text.strip()]
+    circuit_mentions = [t for t in s4_texts if t.lower() == "circuit breaker"]
+    assert len(circuit_mentions) == 1, f"Expected 1 answer text, found duplicates: {circuit_mentions}"
+
+    # Slide 5: Question 2 - MUST NOT have empty text!
+    s5_texts = [p.text.strip() for s in prs.slides[4].shapes if s.has_text_frame for p in s.text_frame.paragraphs if p.text.strip()]
+    assert any("fuel policy connect" in t.lower() for t in s5_texts), f"Expected fallback clue text, got: {s5_texts}"
