@@ -3,19 +3,59 @@ import csv
 import io
 import json
 import logging
+import tempfile
+import shutil
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union
 from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-def _resolve_media_path(rel_url: Optional[str]) -> Optional[Path]:
+def _download_url_to_file(url: str, dest_dir: Path) -> Optional[Path]:
+    """
+    Downloads a URL (R2 public URL or any HTTPS/HTTP media URL) to a local temp file.
+    Returns the local path or None on failure.
+    """
+    try:
+        import urllib.request
+        import urllib.error
+        from urllib.parse import urlparse, unquote
+
+        parsed = urlparse(url)
+        filename = Path(unquote(parsed.path)).name
+        if not filename:
+            filename = "media_file"
+
+        dest_path = dest_dir / filename
+        if dest_path.exists() and dest_path.stat().st_size > 0:
+            return dest_path
+
+        logger.info(f"Downloading media: {url} -> {dest_path}")
+        urllib.request.urlretrieve(url, str(dest_path))
+
+        if dest_path.exists() and dest_path.stat().st_size > 0:
+            return dest_path
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to download {url}: {e}")
+        return None
+
+
+def _resolve_media_path(rel_url: Optional[str], download_dir: Optional[Path] = None) -> Optional[Path]:
     """Resolves local filesystem paths for images, audio, and video files across storage and static directories."""
     if not rel_url or not isinstance(rel_url, str):
         return None
     from backend.app.config import settings
     clean_url = rel_url.strip()
-    
+
+    # 0. Handle HTTPS/HTTP URLs (R2 media, external URLs)
+    if clean_url.startswith("https://") or clean_url.startswith("http://"):
+        if download_dir:
+            return _download_url_to_file(clean_url, download_dir)
+        else:
+            logger.warning(f"HTTPS URL found but no download_dir provided: {clean_url}")
+            return None
+
     # 1. Slide extracts directory (/static/slides/...)
     if clean_url.startswith("/static/slides/"):
         sub = clean_url[len("/static/slides/"):].lstrip("/\\")
@@ -339,6 +379,40 @@ class QuizExporter:
             else:
                 quiz_type = "school"
 
+        media_tmp_dir = Path(tempfile.mkdtemp(prefix="qshala_export_media_"))
+        logger.info(f"Export media temp dir: {media_tmp_dir}")
+        try:
+            return QuizExporter._build_pptx(
+                quiz=quiz,
+                quiz_type=quiz_type,
+                campus_edition=campus_edition,
+                prize_money=prize_money,
+                custom_title=custom_title,
+                include_social_slides=include_social_slides,
+                media_tmp_dir=media_tmp_dir
+            )
+        finally:
+            try:
+                shutil.rmtree(media_tmp_dir, ignore_errors=True)
+                logger.info(f"Cleaned up export media temp dir: {media_tmp_dir}")
+            except Exception:
+                pass
+
+    @staticmethod
+    def _build_pptx(
+        quiz: Any,
+        quiz_type: str,
+        campus_edition: Optional[str],
+        prize_money: Optional[str],
+        custom_title: Optional[str],
+        include_social_slides: bool,
+        media_tmp_dir: Path
+    ) -> bytes:
+        from pptx import Presentation
+        from pptx.util import Inches, Pt
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN
+        from pptx.enum.shapes import MSO_SHAPE
         prs = Presentation()
         prs.slide_width = Inches(13.333)
         prs.slide_height = Inches(7.5)
@@ -597,7 +671,7 @@ class QuizExporter:
             video_path = None
             for cv in cand_videos:
                 if isinstance(cv, str) and cv.lower().endswith(('.mp4', '.m4v', '.mov', '.webm')):
-                    p = _resolve_media_path(cv)
+                    p = _resolve_media_path(cv, download_dir=media_tmp_dir)
                     if p and p.exists():
                         video_path = p
                         break
@@ -613,7 +687,7 @@ class QuizExporter:
             audio_path = None
             for ca in cand_audios:
                 if isinstance(ca, str) and ca.lower().endswith(('.mp3', '.wav', '.m4a', '.ogg')):
-                    p = _resolve_media_path(ca)
+                    p = _resolve_media_path(ca, download_dir=media_tmp_dir)
                     if p and p.exists():
                         audio_path = p
                         break
@@ -627,7 +701,7 @@ class QuizExporter:
             resolved_q_imgs = []
             for ci in cand_q_imgs:
                 if isinstance(ci, str) and not ci.lower().endswith(('.mp4', '.m4v', '.mov', '.mp3', '.wav')):
-                    p = _resolve_media_path(ci)
+                    p = _resolve_media_path(ci, download_dir=media_tmp_dir)
                     if p and p.exists() and p not in resolved_q_imgs:
                         resolved_q_imgs.append(p)
 
@@ -829,7 +903,7 @@ class QuizExporter:
             ans_img_path = None
             for ai in cand_ans_imgs:
                 if isinstance(ai, str) and not ai.lower().endswith(('.mp4', '.m4v', '.mov', '.mp3', '.wav')):
-                    p = _resolve_media_path(ai)
+                    p = _resolve_media_path(ai, download_dir=media_tmp_dir)
                     if p and p.exists():
                         ans_img_path = p
                         break
