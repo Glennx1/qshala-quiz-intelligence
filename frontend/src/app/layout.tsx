@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
 import { Plus_Jakarta_Sans } from 'next/font/google';
 import './globals.css';
-import Sidebar from '../components/Sidebar';
-import Topbar from '../components/Topbar';
+import AppShell from '../components/AppShell';
+import { SidebarProvider } from '../context/SidebarContext';
 import { UploadProvider } from '../context/UploadContext';
 import UploadProgressWidget from '../components/UploadProgressWidget';
 
@@ -27,12 +27,10 @@ export default function RootLayout({
     <html lang="en" className={`h-full bg-slate-50 text-slate-900 antialiased ${plusJakartaSans.variable}`}>
       <body className={`min-h-full flex bg-slate-50 font-sans ${plusJakartaSans.className}`}>
         <UploadProvider>
-          <Sidebar />
-          <div className="flex-1 pl-52 flex flex-col min-w-0">
-            <Topbar />
-            <main className="flex-1">{children}</main>
-          </div>
-          <UploadProgressWidget />
+          <SidebarProvider>
+            <AppShell>{children}</AppShell>
+            <UploadProgressWidget />
+          </SidebarProvider>
         </UploadProvider>
       </body>
     </html>

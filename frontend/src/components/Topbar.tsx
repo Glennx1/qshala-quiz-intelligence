@@ -1,13 +1,27 @@
 'use client';
 
 import Link from 'next/link';
-import { Search, ChevronDown, User } from 'lucide-react';
+import { Search, ChevronDown, PanelLeftOpen } from 'lucide-react';
+import { useSidebar } from '../context/SidebarContext';
 
 export default function Topbar() {
+  const { isCollapsed, toggleSidebar } = useSidebar();
+
   return (
     <header className="sticky top-0 z-20 flex h-16 w-full items-center justify-between border-b border-slate-200/60 bg-slate-50/80 px-6 backdrop-blur-md sm:px-8">
       {/* Left Context / Breadcrumb */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2.5">
+        {isCollapsed && (
+          <button
+            onClick={toggleSidebar}
+            type="button"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-200/70 hover:text-slate-900 transition-colors -ml-1 mr-1"
+            title="Expand sidebar (Ctrl+B)"
+            aria-label="Expand sidebar"
+          >
+            <PanelLeftOpen className="h-4.5 w-4.5" />
+          </button>
+        )}
         <span className="text-[13px] font-medium text-slate-400">Workspace</span>
         <span className="text-[13px] text-slate-300">/</span>
         <span className="text-[13px] font-semibold text-slate-700">QShala Questions Repository</span>
