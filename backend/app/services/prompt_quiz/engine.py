@@ -88,6 +88,9 @@ def _load_bank(db: Session) -> List[Dict[str, Any]]:
             "shelf_life": (getattr(t, 'shelf_life', None) if t else None) or ("TIME_SENSITIVE" if getattr(q, "temporal_nature", None) == "TIME_SENSITIVE" else "EVERGREEN"),
             "sensitivity": getattr(t, 'sensitivity', None) if t else None,
             "image_dependent": has_img,
+            "question_images": list(getattr(q, 'question_images', []) or []),
+            "answer_images": list(getattr(q, 'answer_images', []) or []),
+            "image_refs": list(getattr(q, 'image_refs', []) or []),
             "search_summary": getattr(t, 'search_summary', None) if t else None,
             "difficulty": (q.difficulty or "Medium"),
             "difficulty_score": q.difficulty_score if q.difficulty_score is not None else 0.5,
@@ -179,7 +182,8 @@ def host(brief: Brief, picked: List[Dict[str, Any]], bank_size: int) -> str:
 
 def _view(c: Dict[str, Any]) -> Dict[str, Any]:
     return {k: c.get(k) for k in ("id", "question_text", "answer", "topic_l1", "subtopic_l2",
-                                  "difficulty", "image_dependent", "shelf_life", "tagged", "score", "document_id")}
+                                  "difficulty", "image_dependent", "shelf_life", "tagged", "score", "document_id",
+                                  "question_images", "answer_images", "image_refs")}
 
 
 def build_draft(db: Session, prompt: str, count: Optional[int] = None,

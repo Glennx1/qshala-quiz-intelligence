@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowUp, Check, Eye, EyeOff, Lock, RefreshCw, Trash2, Unlock } from 'lucide-react';
-import { getApiBase } from '../../lib/api';
+import { getApiBase, resolveMediaUrl } from '../../lib/api';
 
 type DraftQ = {
   id: string;
@@ -13,6 +13,9 @@ type DraftQ = {
   subtopic_l2?: string | null;
   difficulty?: string | null;
   image_dependent?: boolean;
+  question_images?: string[];
+  answer_images?: string[];
+  image_refs?: string[];
 };
 type Draft = { message: string; questions: DraftQ[]; bank_size: number; brief: { count: number } };
 
@@ -176,7 +179,40 @@ export default function QuizzerHome() {
                   <span className="mt-0.5 w-6 shrink-0 text-right text-[13px] tabular-nums text-slate-400">{i + 1}</span>
                   <div className="min-w-0 flex-1">
                     <p className="whitespace-pre-line text-[15px] leading-relaxed text-slate-900">{q.question_text}</p>
-                    {shown.has(q.id) && <p className="mt-2 text-[14px] font-medium text-emerald-700">{q.answer}</p>}
+                    
+                    {/* Visual Clue Preview */}
+                    {((q.question_images && q.question_images.length > 0) || (q.image_refs && q.image_refs.length > 0)) && (
+                      <div className="mt-2.5 flex items-center gap-2.5">
+                        <img
+                          src={resolveMediaUrl((q.question_images && q.question_images[0]) || (q.image_refs && q.image_refs[0]))}
+                          alt="Question Clue"
+                          className="h-16 w-24 rounded-lg object-contain bg-slate-50 border border-slate-200 shadow-xs"
+                          loading="lazy"
+                        />
+                        <span className="text-[11px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
+                          Visual Clue
+                        </span>
+                      </div>
+                    )}
+
+                    {shown.has(q.id) && (
+                      <div className="mt-2.5">
+                        <p className="text-[14px] font-medium text-emerald-700">{q.answer}</p>
+                        {q.answer_images && q.answer_images.length > 0 && (
+                          <div className="mt-2 flex items-center gap-2">
+                            <img
+                              src={resolveMediaUrl(q.answer_images[0])}
+                              alt="Answer Diagram"
+                              className="h-16 w-24 rounded-lg object-contain bg-emerald-50/50 border border-emerald-200 shadow-xs"
+                              loading="lazy"
+                            />
+                            <span className="text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
+                              Answer Diagram
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <p className="mt-2 text-[12px] text-slate-400">{[q.subtopic_l2 || q.topic_l1, q.difficulty !== 'Unrated' ? q.difficulty : null, q.image_dependent ? 'has image' : null].filter(Boolean).join(' · ')}</p>
                   </div>
                   <div className="flex shrink-0 items-start gap-1 text-slate-400 opacity-60 transition group-hover:opacity-100 focus-within:opacity-100">

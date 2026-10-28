@@ -75,8 +75,11 @@ def save(req: SaveReq, db: Session = Depends(get_db)):
             answer=q.answer, explanation=q.explanation, difficulty=q.difficulty or "Medium",
             grade_min=q.grade_min, grade_max=q.grade_max, topic=q.topic,
             question_type=q.question_type or "SLIDE_QA",
-            image_refs=q.image_refs or [], question_images=q.question_images or [],
-            answer_images=q.answer_images or [], visual_clues=q.visual_clues)
+            image_refs=list(q.image_refs or []),
+            question_images=list(q.question_images or []),
+            answer_images=list(q.answer_images or []),
+            raw_media_refs=list(getattr(q, "raw_media_refs", []) or []),
+            visual_clues=q.visual_clues)
         db.add(g)
         db.flush()
         db.add(RetrievalSource(generated_question_id=g.id, historical_question_id=q.id,

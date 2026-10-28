@@ -216,13 +216,15 @@ class Index:
             if not passes(i, item):
                 continue
             if is_broad:
-                s = 1.0 + (0.5 if item.get("tagged") else 0.0)
+                s = 1.0 + (0.5 if item.get("tagged") else 0.0) + (0.4 if item.get("image_dependent") and not filters.get("exclude_image") else 0.0)
             else:
                 s = self._bm25(i, qbag)
                 # small boost if the query words appear in the chosen topic/subtopic
                 tl = ((item.get("topic_l1") or "") + " " + (item.get("subtopic_l2") or "")).lower()
                 if any(t in tl for t in qbag):
                     s += 0.5
+                if item.get("image_dependent") and not filters.get("exclude_image"):
+                    s += 0.35
             if s > 0:
                 scored.append((s, i, item))
         scored.sort(key=lambda x: x[0], reverse=True)

@@ -10,7 +10,7 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 def _resolve_media_path(rel_url: Optional[str]) -> Optional[Path]:
-    """Resolves local filesystem paths for images, audio, and video files."""
+    """Resolves local filesystem paths for images, audio, and video files across storage and static directories."""
     if not rel_url or not isinstance(rel_url, str):
         return None
     from backend.app.config import settings
@@ -18,28 +18,54 @@ def _resolve_media_path(rel_url: Optional[str]) -> Optional[Path]:
     
     # 1. Slide extracts directory (/static/slides/...)
     if clean_url.startswith("/static/slides/"):
-        sub = clean_url[len("/static/slides/"):]
-        p = settings.SLIDES_DIR / sub
-        if p.exists() and p.is_file():
-            return p
+        sub = clean_url[len("/static/slides/"):].lstrip("/\\")
+        candidates = [
+            settings.SLIDES_DIR / sub,
+            Path("frontend/public/static/slides") / sub,
+            Path(__file__).resolve().parents[4] / "frontend" / "public" / "static" / "slides" / sub,
+            Path(r"c:\Users\aaksh\Downloads\qshala-pq-worktree\frontend\public\static\slides") / sub,
+            Path(r"c:\Users\aaksh\Downloads\qshala\frontend\public\static\slides") / sub,
+            Path(r"c:\Users\aaksh\Downloads\qshala-pq-worktree\backend\storage\slides") / sub,
+            Path(r"c:\Users\aaksh\Downloads\qshala\backend\storage\slides") / sub,
+        ]
+        for p_cand in candidates:
+            if p_cand.exists() and p_cand.is_file():
+                return p_cand
     # 2. Storage directory general (/static/...)
     elif clean_url.startswith("/static/"):
-        sub = clean_url.lstrip("/static/")
-        p = settings.STORAGE_DIR / sub
-        if p.exists() and p.is_file():
-            return p
+        sub = clean_url.lstrip("/static/").lstrip("/\\")
+        candidates = [
+            settings.STORAGE_DIR / sub,
+            Path("frontend/public/static") / sub,
+            Path(__file__).resolve().parents[4] / "frontend" / "public" / "static" / sub,
+            Path(r"c:\Users\aaksh\Downloads\qshala-pq-worktree\frontend\public\static") / sub,
+            Path(r"c:\Users\aaksh\Downloads\qshala\frontend\public\static") / sub,
+        ]
+        for p_cand in candidates:
+            if p_cand.exists() and p_cand.is_file():
+                return p_cand
             
     # 3. Public media videos directory (/media/videos/...)
     if clean_url.startswith("/media/videos/") or clean_url.startswith("media/videos/"):
         name = Path(clean_url).name
-        p = Path("frontend/public/media/videos") / name
-        if p.exists() and p.is_file():
-            return p
+        candidates = [
+            Path("frontend/public/media/videos") / name,
+            Path(r"c:\Users\aaksh\Downloads\qshala\frontend\public\media\videos") / name,
+            Path(r"c:\Users\aaksh\Downloads\qshala-pq-worktree\frontend\public\media\videos") / name,
+        ]
+        for p_cand in candidates:
+            if p_cand.exists() and p_cand.is_file():
+                return p_cand
     elif clean_url.startswith("/media/") or clean_url.startswith("media/"):
         name = Path(clean_url).name
-        p = Path("frontend/public/media") / name
-        if p.exists() and p.is_file():
-            return p
+        candidates = [
+            Path("frontend/public/media") / name,
+            Path(r"c:\Users\aaksh\Downloads\qshala\frontend\public\media") / name,
+            Path(r"c:\Users\aaksh\Downloads\qshala-pq-worktree\frontend\public\media") / name,
+        ]
+        for p_cand in candidates:
+            if p_cand.exists() and p_cand.is_file():
+                return p_cand
 
     # 4. Direct filesystem path
     p_direct = Path(clean_url)
@@ -54,9 +80,11 @@ def _resolve_media_path(rel_url: Optional[str]) -> Optional[Path]:
     # 6. Check within slides directory recursively by filename if needed
     filename = Path(clean_url).name
     if filename:
-        matches = list(settings.SLIDES_DIR.glob(f"**/{filename}"))
-        if matches and matches[0].is_file():
-            return matches[0]
+        for root_dir in [settings.SLIDES_DIR, Path("frontend/public/static/slides"), Path(r"c:\Users\aaksh\Downloads\qshala\frontend\public\static\slides")]:
+            if root_dir.exists():
+                matches = list(root_dir.glob(f"**/{filename}"))
+                if matches and matches[0].is_file():
+                    return matches[0]
 
     return None
 
