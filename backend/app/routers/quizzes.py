@@ -98,11 +98,14 @@ def delete_question(question_id: str, db: Session = Depends(get_db)):
 def export_quiz(
     quiz_id: str,
     format: str = Query("json", pattern="^(json|csv|pptx)$"),
-    theme: str = Query("bengaluru_south"),
+    quiz_type: str = Query("school", pattern="^(school|corporate|minimalist)$"),
+    campus_edition: Optional[str] = Query("Bangalore Campus Edition"),
+    prize_money: Optional[str] = Query("3.5 lakh"),
     custom_title: Optional[str] = Query(None),
-    custom_subtitle: Optional[str] = Query(None),
     include_social_slides: bool = Query(True),
-    show_answer_divider: bool = Query(False),
+    theme: Optional[str] = Query(None),
+    custom_subtitle: Optional[str] = Query(None),
+    show_answer_divider: Optional[bool] = Query(None),
     db: Session = Depends(get_db)
 ):
     quiz = db.query(Quiz).filter(Quiz.id == quiz_id).first()
@@ -124,7 +127,19 @@ def export_quiz(
             headers={"Content-Disposition": f"attachment; filename=quiz_{quiz.id[:8]}.csv"}
         )
     elif format == "pptx":
-        pptx_bytes = QuizExporter.to_pptx(quiz, theme=theme, custom_title=custom_title, custom_subtitle=custom_subtitle, include_social_slides=include_social_slides, show_answer_divider=show_answer_divider)
+        effective_quiz_type = quiz_type
+        if theme and theme in ("corporate", "corp"):
+            effective_quiz_type = "corporate"
+        elif theme and theme in ("minimalist", "clean"):
+            effective_quiz_type = "minimalist"
+        pptx_bytes = QuizExporter.to_pptx(
+            quiz,
+            quiz_type=effective_quiz_type,
+            campus_edition=campus_edition,
+            prize_money=prize_money,
+            custom_title=custom_title,
+            include_social_slides=include_social_slides,
+        )
         return Response(
             content=pptx_bytes,
             media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -135,11 +150,14 @@ def export_quiz(
 def export_quiz_payload(
     payload: Dict[str, Any] = Body(...),
     format: str = Query("pptx", pattern="^(json|csv|pptx)$"),
-    theme: str = Query("bengaluru_south"),
+    quiz_type: str = Query("school", pattern="^(school|corporate|minimalist)$"),
+    campus_edition: Optional[str] = Query("Bangalore Campus Edition"),
+    prize_money: Optional[str] = Query("3.5 lakh"),
     custom_title: Optional[str] = Query(None),
-    custom_subtitle: Optional[str] = Query(None),
     include_social_slides: bool = Query(True),
-    show_answer_divider: bool = Query(False),
+    theme: Optional[str] = Query(None),
+    custom_subtitle: Optional[str] = Query(None),
+    show_answer_divider: Optional[bool] = Query(None),
 ):
     quiz_id = payload.get("id", "custom")
     clean_id = str(quiz_id)[:8] if quiz_id else "custom"
@@ -158,7 +176,19 @@ def export_quiz_payload(
             headers={"Content-Disposition": f"attachment; filename=quiz_{clean_id}.csv"}
         )
     elif format == "pptx":
-        pptx_bytes = QuizExporter.to_pptx(payload, theme=theme, custom_title=custom_title, custom_subtitle=custom_subtitle, include_social_slides=include_social_slides, show_answer_divider=show_answer_divider)
+        effective_quiz_type = quiz_type
+        if theme and theme in ("corporate", "corp"):
+            effective_quiz_type = "corporate"
+        elif theme and theme in ("minimalist", "clean"):
+            effective_quiz_type = "minimalist"
+        pptx_bytes = QuizExporter.to_pptx(
+            payload,
+            quiz_type=effective_quiz_type,
+            campus_edition=campus_edition,
+            prize_money=prize_money,
+            custom_title=custom_title,
+            include_social_slides=include_social_slides,
+        )
         return Response(
             content=pptx_bytes,
             media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",

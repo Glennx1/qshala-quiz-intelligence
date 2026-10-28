@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { X, FileDown, Loader2, Sparkles, Check, Layout, QrCode } from 'lucide-react';
+import { X, FileDown, Loader2, Sparkles, Check, Building2, GraduationCap, QrCode, IndianRupee } from 'lucide-react';
 import { Quiz } from '@/lib/types';
 import { ExportOptions } from '@/lib/api';
 
@@ -34,11 +34,11 @@ export default function ExportQuizModal({
   quiz,
   onExport,
 }: ExportQuizModalProps) {
+  const [quizType, setQuizType] = useState<'school' | 'corporate'>('school');
+  const [campusEdition, setCampusEdition] = useState('Bangalore Campus Edition');
+  const [prizeMoney, setPrizeMoney] = useState('3.5 lakh');
   const [customTitle, setCustomTitle] = useState('');
-  const [customSubtitle, setCustomSubtitle] = useState('Preliminary Round Questions & Answers');
-  const [theme, setTheme] = useState<'bengaluru_south' | 'minimalist'>('bengaluru_south');
   const [includeSocialSlides, setIncludeSocialSlides] = useState(true);
-  const [showAnswerDivider, setShowAnswerDivider] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
@@ -53,11 +53,11 @@ export default function ExportQuizModal({
     try {
       setIsExporting(true);
       await onExport('pptx', {
-        theme,
+        quizType,
+        campusEdition: campusEdition.trim() || undefined,
+        prizeMoney: prizeMoney.trim() || undefined,
         customTitle: customTitle.trim() || undefined,
-        customSubtitle: customSubtitle.trim() || undefined,
         includeSocialSlides,
-        showAnswerDivider,
       });
       onClose();
     } catch (err) {
@@ -81,7 +81,7 @@ export default function ExportQuizModal({
             </div>
             <div>
               <h3 className="text-lg font-bold text-slate-900">Export Presentation (.pptx)</h3>
-              <p className="text-xs text-slate-500">Configure tournament title, branding, and slide options</p>
+              <p className="text-xs text-slate-500">Configure quiz type, custom edition, and tournament slides</p>
             </div>
           </div>
           <button
@@ -95,132 +95,167 @@ export default function ExportQuizModal({
 
         {/* Content Body */}
         <div className="space-y-5 px-6 py-5">
-          {/* Theme Selector */}
+          {/* Quiz Type Selector */}
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
-              Presentation Theme
+              Quiz Type
             </label>
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
-                onClick={() => setTheme('bengaluru_south')}
+                onClick={() => setQuizType('school')}
                 className={`flex flex-col items-start p-3.5 rounded-xl border text-left transition ${
-                  theme === 'bengaluru_south'
+                  quizType === 'school'
                     ? 'border-orange-500 bg-orange-50/50 shadow-sm ring-1 ring-orange-500/20'
                     : 'border-slate-200 hover:border-slate-300 bg-white'
                 }`}
               >
                 <div className="flex items-center justify-between w-full mb-1">
                   <span className="text-xs font-bold text-orange-800 uppercase tracking-wider flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5 text-orange-600" />
-                    Tournament Master
+                    <GraduationCap className="h-3.5 w-3.5 text-orange-600" />
+                    School Quiz
                   </span>
-                  {theme === 'bengaluru_south' && (
+                  {quizType === 'school' && (
                     <div className="h-4 w-4 rounded-full bg-orange-600 text-white flex items-center justify-center">
                       <Check className="h-2.5 w-2.5" />
                     </div>
                   )}
                 </div>
-                <div className="text-sm font-semibold text-slate-900">Bengaluru South Zone</div>
-                <div className="text-xs text-slate-500 mt-0.5">Authentic 16:9 master artwork with Inter typography & QR codes</div>
+                <div className="text-sm font-semibold text-slate-900">School & Campus Deck</div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  South Zone master artwork (PPT.png, Red border, QR slides & prize badge)
+                </div>
               </button>
 
               <button
                 type="button"
-                onClick={() => setTheme('minimalist')}
+                onClick={() => setQuizType('corporate')}
                 className={`flex flex-col items-start p-3.5 rounded-xl border text-left transition ${
-                  theme === 'minimalist'
+                  quizType === 'corporate'
                     ? 'border-blue-500 bg-blue-50/50 shadow-sm ring-1 ring-blue-500/20'
                     : 'border-slate-200 hover:border-slate-300 bg-white'
                 }`}
               >
                 <div className="flex items-center justify-between w-full mb-1">
                   <span className="text-xs font-bold text-blue-800 uppercase tracking-wider flex items-center gap-1.5">
-                    <Layout className="h-3.5 w-3.5 text-blue-600" />
-                    Clean Slate
+                    <Building2 className="h-3.5 w-3.5 text-blue-600" />
+                    Corporate Quiz
                   </span>
-                  {theme === 'minimalist' && (
+                  {quizType === 'corporate' && (
                     <div className="h-4 w-4 rounded-full bg-blue-600 text-white flex items-center justify-center">
                       <Check className="h-2.5 w-2.5" />
                     </div>
                   )}
                 </div>
-                <div className="text-sm font-semibold text-slate-900">Minimalist Modern</div>
-                <div className="text-xs text-slate-500 mt-0.5">Dark title frame with high-typography clean layout</div>
+                <div className="text-sm font-semibold text-slate-900">Corporate Master</div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  Dark corporate backdrop theme with professional executive layout
+                </div>
               </button>
             </div>
           </div>
 
-          {/* Presentation Title */}
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
-              Deck Title (Slide 1)
-            </label>
-            <input
-              type="text"
-              value={customTitle}
-              onChange={(e) => setCustomTitle(e.target.value)}
-              placeholder="e.g., Bengaluru South Zone, National Prelims 2026"
-              className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
-            />
-            <p className="mt-1 text-[11px] text-slate-400">
-              Rendered in crisp dark 38pt bold typography in the lower half of the title card.
-            </p>
-          </div>
-
-          {/* Subtitle / Edition */}
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
-              Round / Subtitle
-            </label>
-            <input
-              type="text"
-              value={customSubtitle}
-              onChange={(e) => setCustomSubtitle(e.target.value)}
-              placeholder="e.g., Preliminary Round Questions & Answers, Campus Edition"
-              className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
-            />
-          </div>
-
-          {/* Options Toggles */}
-          {theme === 'bengaluru_south' && (
-            <div className="space-y-2.5 rounded-xl bg-slate-50 p-3.5 border border-slate-200/80">
-              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+          {/* School Quiz Fields */}
+          {quizType === 'school' ? (
+            <>
+              {/* Campus Edition Input */}
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+                  Campus Edition Name (Slide 1)
+                </label>
                 <input
-                  type="checkbox"
-                  checked={includeSocialSlides}
-                  onChange={(e) => setIncludeSocialSlides(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-orange-600 focus:ring-orange-500"
+                  type="text"
+                  value={campusEdition}
+                  onChange={(e) => setCampusEdition(e.target.value)}
+                  placeholder="e.g., Bangalore Campus Edition, Mumbai Campus Edition"
+                  className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
                 />
-                <div className="text-xs text-slate-700">
-                  <span className="font-semibold text-slate-900 flex items-center gap-1.5">
-                    <QrCode className="h-3.5 w-3.5 text-slate-500" />
-                    Include Social Media & QR Code slides
-                  </span>
-                  <span className="block text-slate-500 text-[11px] mt-0.5">
-                    Inserts Slide 2 (#varsityquiz) and Slide 3 (Varsity, Instagram, WhatsApp QR codes)
-                  </span>
-                </div>
-              </label>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Rendered centrally on cover slide: <span className="font-semibold text-orange-700">— {campusEdition || 'Bangalore Campus Edition'} —</span>
+                </p>
+              </div>
 
-              <label className="flex items-center gap-2.5 cursor-pointer select-none border-t border-slate-200/60 pt-2">
-                <input
-                  type="checkbox"
-                  checked={showAnswerDivider}
-                  onChange={(e) => setShowAnswerDivider(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-orange-600 focus:ring-orange-500"
-                />
-                <div className="text-xs text-slate-700">
-                  <span className="font-semibold text-slate-900">
-                    Include &quot;Answer&quot; Transition slides
-                  </span>
-                  <span className="block text-slate-500 text-[11px] mt-0.5">
-                    Inserts a 3-slide rhythm (Question → &quot;Answer&quot; divider → Reveal). Unchecked keeps agile 2-slide reveal.
-                  </span>
+              {/* Prize Money Input */}
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+                  Prize Money Amount (Slide 1)
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                    <IndianRupee className="h-4 w-4 text-slate-500" />
+                  </div>
+                  <input
+                    type="text"
+                    value={prizeMoney}
+                    onChange={(e) => setPrizeMoney(e.target.value)}
+                    placeholder="e.g., 3.5 lakh, 50,000, 10,000"
+                    className="w-full rounded-xl border border-slate-300 pl-9 pr-3.5 py-2.5 text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
+                  />
                 </div>
-              </label>
-            </div>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Dynamic cover prize callout: <span className="font-semibold text-slate-700">Win prizes worth ₹{prizeMoney || '3.5 lakh'}!</span>
+                </p>
+              </div>
+
+              {/* Social Slides Toggle */}
+              <div className="rounded-xl bg-slate-50 p-3.5 border border-slate-200/80">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={includeSocialSlides}
+                    onChange={(e) => setIncludeSocialSlides(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-orange-600 focus:ring-orange-500"
+                  />
+                  <div className="text-xs text-slate-700">
+                    <span className="font-semibold text-slate-900 flex items-center gap-1.5">
+                      <QrCode className="h-3.5 w-3.5 text-slate-500" />
+                      Include Social Media & QR Code slides
+                    </span>
+                    <span className="block text-slate-500 text-[11px] mt-0.5">
+                      Inserts Slide 2 (#varsityquiz) and Slide 3 (Varsity, Instagram, WhatsApp QR codes)
+                    </span>
+                  </div>
+                </label>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Corporate Quiz Fields */}
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+                  Deck Title (Slide 1)
+                </label>
+                <input
+                  type="text"
+                  value={customTitle}
+                  onChange={(e) => setCustomTitle(e.target.value)}
+                  placeholder="e.g., Corporate Finance Challenge 2026"
+                  className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+                  Cohort / Track Subtitle (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={campusEdition}
+                  onChange={(e) => setCampusEdition(e.target.value)}
+                  placeholder="e.g., Executive Track, FinTech Edition"
+                  className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+            </>
           )}
+
+          {/* Mandatory Transition Notice */}
+          <div className="flex items-center gap-2 rounded-lg bg-orange-50/70 border border-orange-200/60 px-3 py-2 text-[11px] text-orange-800">
+            <Sparkles className="h-3.5 w-3.5 text-orange-600 shrink-0" />
+            <span>
+              <strong>Mandatory 3-Slide Rhythm:</strong> Question → &quot;Answer&quot; divider slide → Answer reveal slide.
+            </span>
+          </div>
         </div>
 
         {/* Footer */}

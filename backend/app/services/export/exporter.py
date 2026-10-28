@@ -253,22 +253,29 @@ class QuizExporter:
     @staticmethod
     def to_pptx(
         quiz: Any,
-        theme: str = "bengaluru_south",
+        quiz_type: str = "school",
+        campus_edition: Optional[str] = "Bangalore Campus Edition",
+        prize_money: Optional[str] = "3.5 lakh",
         custom_title: Optional[str] = None,
-        custom_subtitle: Optional[str] = None,
         include_social_slides: bool = True,
-        show_answer_divider: bool = False,
+        theme: Optional[str] = None,
     ) -> bytes:
         """
         Exports the quiz into a crisp, high-typography presentation deck (16:9 widescreen)
-        modeled directly after the Bengaluru South Zone tournament deck.
+        using the official QShala template backdrops for School and Corporate quizzes.
         
-        Properly embeds all media types:
-        1. High-resolution images (proportional PIL scaling without distortion)
-        2. Videos (embedded directly into PowerPoint slides via add_movie with poster frames)
-        3. Audio clues (embedded into slides with clean interactive sound effect cards)
-        4. Authentic Social Media & QR slides (Slides 2 & 3)
-        5. Beautiful question & answer typography in Inter font with high contrast
+        Strictly observes:
+        1. Background pairing:
+           - Question Slide: school/question_bg.png (PPT.png, peach border) or corporate/question_bg.png
+           - Answer Transition Slide: school/answer_intro_bg.png (PPT-3.png) or corporate/answer_intro_bg.png
+           - Answer Reveal Slide: school/answer_bg.png (Red border 2.png, coral red border) or corporate/answer_bg.png
+        2. Cover Slide:
+           - School: Common Cover slide with dynamic '— {campus_edition} —' and 'Win prizes worth ₹{prize_money}!'
+           - Zero redundant bottom text or round subtitles
+        3. Mandatory 3-Slide Rhythm:
+           Question Slide -> Answer Transition Slide ('Answer') -> Answer Reveal Slide
+        4. South Zone image placement protocol (2-column question layout & centered answer diagrams)
+        5. Inter typography strictly retained with WCAG AAA contrast (#0F172A / #059669)
         """
         from pptx import Presentation
         from pptx.util import Inches, Pt
@@ -276,97 +283,159 @@ class QuizExporter:
         from pptx.enum.text import PP_ALIGN
         from pptx.enum.shapes import MSO_SHAPE
 
+        # Backward compatibility for theme argument
+        if theme:
+            t_lower = str(theme).lower()
+            if t_lower in ("corporate", "corp"):
+                quiz_type = "corporate"
+            elif t_lower in ("minimalist", "clean"):
+                quiz_type = "minimalist"
+            else:
+                quiz_type = "school"
+
         prs = Presentation()
         prs.slide_width = Inches(13.333)
         prs.slide_height = Inches(7.5)
         blank_layout = prs.slide_layouts[6]
 
         # -------------------------------------------------------------
-        # Theme Assets & Color Palette (Bengaluru South or Minimalist)
+        # Template Asset Directory Setup
         # -------------------------------------------------------------
-        assets_dir = Path(__file__).resolve().parent / "templates" / "assets"
-        title_bg = assets_dir / "title_bg.png"
-        question_bg = assets_dir / "question_bg.png"
-        answer_bg = assets_dir / "answer_bg.png"
-        round_bg = assets_dir / "round_bg.png"
-        answer_intro_bg = assets_dir / "answer_intro_bg.png"
-        qr_varsity = assets_dir / "qr_varsity.png"
-        qr_insta = assets_dir / "qr_instagram.jpg"
-        qr_wa = assets_dir / "qr_whatsapp.jpg"
-
-        use_bengaluru_theme = (theme == "bengaluru_south" and question_bg.exists())
-
-        C_WHITE = RGBColor(255, 255, 255)
-        if use_bengaluru_theme:
-            # Bengaluru South Zone theme uses clean white interior card (255, 255, 255)
-            C_DARK_BG = RGBColor(15, 23, 42)          # #0F172A Slate 900
-            C_TEXT_DARK = RGBColor(15, 23, 42)        # #0F172A Deep Charcoal / Black
-            C_TEXT_BODY = RGBColor(51, 65, 85)        # #334155 Slate 700
-            C_TEXT_MUTED = RGBColor(100, 116, 139)    # #64748B Slate 500
-            C_ACCENT_ORANGE = RGBColor(194, 65, 12)   # #C2410C Tournament Burnt Orange
-            C_ACCENT_GREEN = RGBColor(5, 150, 105)    # #059669 Emerald 600
-            C_ACCENT_GOLD = RGBColor(217, 119, 6)     # #D97706 Amber 600
-            C_CARD_BG = RGBColor(248, 250, 252)       # Slate 50
-            C_CARD_BORDER = RGBColor(226, 232, 240)   # Slate 200
+        assets_base = Path(__file__).resolve().parent / "templates" / "assets"
+        if quiz_type == "corporate":
+            track_dir = assets_base / "corporate"
         else:
-            C_DARK_BG = RGBColor(15, 23, 42)          # #0F172A Slate 900
-            C_TEXT_DARK = RGBColor(15, 23, 42)        # #0F172A Deep Charcoal
-            C_TEXT_BODY = RGBColor(51, 65, 85)        # #334155 Slate 700
-            C_TEXT_MUTED = RGBColor(100, 116, 139)    # #64748B Slate 500
-            C_ACCENT_ORANGE = RGBColor(194, 65, 12)
-            C_ACCENT_GREEN = RGBColor(5, 150, 105)    # #059669 Emerald 600
-            C_ACCENT_GOLD = RGBColor(217, 119, 6)     # #D97706 Amber 600
-            C_CARD_BG = RGBColor(241, 245, 249)       # #F1F5F9 Slate 100
-            C_CARD_BORDER = RGBColor(203, 213, 225)   # #CBD5E1 Slate 300
+            track_dir = assets_base / "school"
 
+        cover_bg = track_dir / "cover_bg.png"
+        question_bg = track_dir / "question_bg.png"
+        answer_intro_bg = track_dir / "answer_intro_bg.png"
+        answer_bg = track_dir / "answer_bg.png"
+        round_bg = track_dir / "round_bg.png"
+        qr_varsity = track_dir / "qr_varsity.png"
+        qr_insta = track_dir / "qr_instagram.jpg"
+        qr_wa = track_dir / "qr_whatsapp.jpg"
+
+        # Fallback to base assets if subdirectories not populated
+        if not cover_bg.exists():
+            cover_bg = assets_base / "title_bg.png"
+        if not question_bg.exists():
+            question_bg = assets_base / "question_bg.png"
+        if not answer_intro_bg.exists():
+            answer_intro_bg = assets_base / "answer_intro_bg.png"
+        if not answer_bg.exists():
+            answer_bg = assets_base / "answer_bg.png"
+        if not qr_varsity.exists():
+            qr_varsity = assets_base / "qr_varsity.png"
+        if not qr_insta.exists():
+            qr_insta = assets_base / "qr_instagram.jpg"
+        if not qr_wa.exists():
+            qr_wa = assets_base / "qr_whatsapp.jpg"
+
+        is_minimalist = (quiz_type == "minimalist")
+
+        # -------------------------------------------------------------
+        # Typography & Color Standards (Strict Inter retention)
+        # -------------------------------------------------------------
         FONT_HEAD = "Inter"
         FONT_BODY = "Inter"
+
+        C_WHITE = RGBColor(255, 255, 255)
+        C_DARK_BG = RGBColor(15, 23, 42)          # #0F172A Slate 900
+        C_TEXT_DARK = RGBColor(15, 23, 42)        # #0F172A Deep Charcoal / Black
+        C_TEXT_BODY = RGBColor(51, 65, 85)        # #334155 Slate 700
+        C_TEXT_MUTED = RGBColor(100, 116, 139)    # #64748B Slate 500
+        C_ACCENT_ORANGE = RGBColor(194, 65, 12)   # #C2410C Tournament Burnt Orange
+        C_ACCENT_GREEN = RGBColor(5, 150, 105)    # #059669 Emerald 600
+        C_ACCENT_GOLD = RGBColor(217, 119, 6)     # #D97706 Amber 600
+        C_CARD_BG = RGBColor(248, 250, 252)       # Slate 50
+        C_CARD_BORDER = RGBColor(226, 232, 240)   # Slate 200
 
         raw_title = _get_val(quiz, "title", "")
         topic_text = _get_val(quiz, "topic", "General Knowledge")
         difficulty = _get_val(quiz, "difficulty", "Balanced")
 
-        if custom_title and custom_title.strip():
-            final_title = custom_title.strip()
-        else:
-            final_title = _clean_quiz_title(raw_title, topic_text)
-
-        if custom_subtitle and custom_subtitle.strip():
-            final_subtitle = custom_subtitle.strip()
-        else:
-            final_subtitle = "Preliminary Round Questions & Answers"
+        clean_topic_title = _clean_quiz_title(raw_title, topic_text)
+        final_title = custom_title.strip() if (custom_title and custom_title.strip()) else clean_topic_title
 
         questions_raw = _get_val(quiz, "questions", [])
         approved_questions = [q for q in questions_raw if _get_val(q, "is_approved", True)]
         total_q = len(approved_questions)
 
         # -------------------------------------------------------------
-        # 1. Clean Title Slide (High Contrast, Centered in Lower Half)
+        # 1. Cover Slide
         # -------------------------------------------------------------
         s_title = prs.slides.add_slide(blank_layout)
-        if use_bengaluru_theme and title_bg.exists():
-            s_title.shapes.add_picture(str(title_bg), 0, 0, Inches(13.333), Inches(7.5))
-            tb_title = s_title.shapes.add_textbox(Inches(2.0), Inches(4.80), Inches(9.333), Inches(2.20))
-            tf_title = tb_title.text_frame
-            tf_title.word_wrap = True
 
-            p_h1 = tf_title.paragraphs[0]
-            p_h1.alignment = PP_ALIGN.CENTER
-            p_h1.text = final_title
-            p_h1.font.name = FONT_HEAD
-            p_h1.font.size = Pt(38)
-            p_h1.font.bold = True
-            p_h1.font.color.rgb = C_TEXT_DARK
+        if not is_minimalist and cover_bg.exists():
+            s_title.shapes.add_picture(str(cover_bg), 0, 0, Inches(13.333), Inches(7.5))
 
-            p_sub = tf_title.add_paragraph()
-            p_sub.alignment = PP_ALIGN.CENTER
-            p_sub.space_before = Pt(8)
-            p_sub.text = final_subtitle
-            p_sub.font.name = FONT_HEAD
-            p_sub.font.size = Pt(24)
-            p_sub.font.bold = True
-            p_sub.font.color.rgb = C_ACCENT_ORANGE
+            if quiz_type == "school":
+                # Clean School Cover Layout (Common Cover slide):
+                # Pre-printed at top: Zerodha Varsity Quiz / India's Premier Finance Quiz
+                # Line 1: '— {campus_edition} —' centered between peach rules at y = 3.65"
+                ed_raw = (campus_edition or "Bangalore Campus Edition").strip()
+                if not ed_raw.startswith("—") and not ed_raw.startswith("-"):
+                    edition_display = f"— {ed_raw} —"
+                else:
+                    edition_display = ed_raw
+
+                tb_ed = s_title.shapes.add_textbox(Inches(1.50), Inches(3.60), Inches(10.333), Inches(0.65))
+                tf_ed = tb_ed.text_frame
+                tf_ed.word_wrap = True
+                p_ed = tf_ed.paragraphs[0]
+                p_ed.alignment = PP_ALIGN.CENTER
+                p_ed.text = edition_display
+                p_ed.font.name = FONT_HEAD
+                p_ed.font.size = Pt(24)
+                p_ed.font.bold = False
+                p_ed.font.italic = True
+                p_ed.font.color.rgb = C_ACCENT_ORANGE
+
+                # Line 2: 'Win prizes worth ₹{prize_money}!' centered at y = 4.30"
+                p_raw = (prize_money or "3.5 lakh").strip()
+                if not p_raw.startswith("₹") and not p_raw.lower().startswith("rs"):
+                    p_disp = f"₹{p_raw}"
+                else:
+                    p_disp = p_raw
+                prize_display = f"Win prizes worth {p_disp}!"
+
+                tb_prz = s_title.shapes.add_textbox(Inches(1.50), Inches(4.30), Inches(10.333), Inches(0.65))
+                tf_prz = tb_prz.text_frame
+                tf_prz.word_wrap = True
+                p_prz = tf_prz.paragraphs[0]
+                p_prz.alignment = PP_ALIGN.CENTER
+                p_prz.text = prize_display
+                p_prz.font.name = FONT_HEAD
+                p_prz.font.size = Pt(28)
+                p_prz.font.bold = False
+                p_prz.font.color.rgb = C_TEXT_BODY
+
+                # NO redundant text below Line 2 (no duplicate bottom title, no round subtitle)
+            else:
+                # Corporate Cover Layout
+                tb_corp = s_title.shapes.add_textbox(Inches(1.50), Inches(2.80), Inches(10.333), Inches(2.20))
+                tf_c = tb_corp.text_frame
+                tf_c.word_wrap = True
+
+                p_c1 = tf_c.paragraphs[0]
+                p_c1.alignment = PP_ALIGN.CENTER
+                p_c1.text = final_title
+                p_c1.font.name = FONT_HEAD
+                p_c1.font.size = Pt(40)
+                p_c1.font.bold = True
+                p_c1.font.color.rgb = C_TEXT_DARK
+
+                if campus_edition:
+                    p_c2 = tf_c.add_paragraph()
+                    p_c2.alignment = PP_ALIGN.CENTER
+                    p_c2.space_before = Pt(12)
+                    p_c2.text = campus_edition.strip()
+                    p_c2.font.name = FONT_HEAD
+                    p_c2.font.size = Pt(24)
+                    p_c2.font.color.rgb = C_ACCENT_ORANGE
         else:
+            # Minimalist fallback title slide
             bg_title = s_title.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
             bg_title.fill.solid()
             bg_title.fill.fore_color.rgb = C_DARK_BG
@@ -375,15 +444,7 @@ class QuizExporter:
             tf_title = tb_title.text_frame
             tf_title.word_wrap = True
 
-            p_super = tf_title.paragraphs[0]
-            p_super.text = "QSHALA TOURNAMENT DECK"
-            p_super.font.name = FONT_HEAD
-            p_super.font.size = Pt(13)
-            p_super.font.bold = True
-            p_super.font.color.rgb = C_ACCENT_GOLD
-
-            p_h1 = tf_title.add_paragraph()
-            p_h1.space_before = Pt(10)
+            p_h1 = tf_title.paragraphs[0]
             p_h1.text = final_title
             p_h1.font.name = FONT_HEAD
             p_h1.font.size = Pt(46)
@@ -392,26 +453,19 @@ class QuizExporter:
 
             p_sub = tf_title.add_paragraph()
             p_sub.space_before = Pt(16)
-            p_sub.text = f"{final_subtitle}   •   {total_q} Questions   •   Difficulty: {difficulty}"
+            p_sub.text = f"{campus_edition or 'Tournament Prelims'}   •   {total_q} Questions"
             p_sub.font.name = FONT_BODY
             p_sub.font.size = Pt(19)
             p_sub.font.color.rgb = RGBColor(148, 163, 184)
 
-        s_title.notes_slide.notes_text_frame.text = (
-            f"Host Welcome Note:\n"
-            f"Tournament: {final_title}\n"
-            f"Round: {final_subtitle}\n"
-            f"Total Questions: {total_q}\n"
-            f"Welcome teams and ensure score sheets are distributed."
-        )
-
         # -------------------------------------------------------------
-        # 2. Authentic Social Media & QR Slides (Slides 2 & 3)
+        # 2. Social Media & QR Slides (School Quiz)
         # -------------------------------------------------------------
-        if use_bengaluru_theme and include_social_slides:
+        if quiz_type == "school" and include_social_slides and not is_minimalist:
             # Slide 2: Social Media Guidelines
             s_soc = prs.slides.add_slide(blank_layout)
-            s_soc.shapes.add_picture(str(question_bg), 0, 0, Inches(13.333), Inches(7.5))
+            if question_bg.exists():
+                s_soc.shapes.add_picture(str(question_bg), 0, 0, Inches(13.333), Inches(7.5))
 
             tb_stitle = s_soc.shapes.add_textbox(Inches(2.0), Inches(1.35), Inches(9.333), Inches(1.10))
             pst = tb_stitle.text_frame.paragraphs[0]
@@ -454,7 +508,8 @@ class QuizExporter:
 
             # Slide 3: QR Codes (Follow @Zerodhavarsity)
             s_qr = prs.slides.add_slide(blank_layout)
-            s_qr.shapes.add_picture(str(question_bg), 0, 0, Inches(13.333), Inches(7.5))
+            if question_bg.exists():
+                s_qr.shapes.add_picture(str(question_bg), 0, 0, Inches(13.333), Inches(7.5))
 
             tb_qrtitle = s_qr.shapes.add_textbox(Inches(1.0), Inches(1.30), Inches(11.333), Inches(1.30))
             pqt = tb_qrtitle.text_frame.paragraphs[0]
@@ -472,39 +527,16 @@ class QuizExporter:
             if qr_wa.exists():
                 s_qr.shapes.add_picture(str(qr_wa), Inches(8.60), Inches(2.95), Inches(3.30), Inches(3.30))
 
-            # Slide 4: Round Divider
-            if round_bg.exists():
-                s_rnd = prs.slides.add_slide(blank_layout)
-                s_rnd.shapes.add_picture(str(round_bg), 0, 0, Inches(13.333), Inches(7.5))
-                tb_rnd = s_rnd.shapes.add_textbox(Inches(2.0), Inches(4.80), Inches(9.333), Inches(2.00))
-                prt = tb_rnd.text_frame.paragraphs[0]
-                prt.alignment = PP_ALIGN.CENTER
-                prt.text = final_title
-                prt.font.name = FONT_HEAD
-                prt.font.size = Pt(38)
-                prt.font.bold = True
-                prt.font.color.rgb = C_TEXT_DARK
-
-                prs_sub = tb_rnd.text_frame.add_paragraph()
-                prs_sub.alignment = PP_ALIGN.CENTER
-                prs_sub.space_before = Pt(8)
-                prs_sub.text = final_subtitle
-                prs_sub.font.name = FONT_HEAD
-                prs_sub.font.size = Pt(24)
-                prs_sub.font.bold = True
-                prs_sub.font.color.rgb = C_ACCENT_ORANGE
-
         # -------------------------------------------------------------
-        # 3. Question & Answer Slides
+        # 3. Mandatory 3-Slide Question Loop
         # -------------------------------------------------------------
         for idx, q in enumerate(approved_questions, start=1):
             is_starred = (idx % 5 == 0)
             star_tag = " *" if is_starred else ""
 
-            # Check historical source media fallback
             hist_media = _get_hist_q_media(q)
 
-            # --- VIDEO DETECTION ---
+            # --- MEDIA DETECTION ---
             cand_videos = (
                 list(_get_val(q, "question_video", []) or []) +
                 list(_get_val(q, "video_refs", []) or []) +
@@ -520,7 +552,6 @@ class QuizExporter:
                         video_path = p
                         break
 
-            # --- AUDIO DETECTION ---
             cand_audios = (
                 list(_get_val(q, "question_audio", []) or []) +
                 list(_get_val(q, "audio_refs", []) or []) +
@@ -537,7 +568,6 @@ class QuizExporter:
                         audio_path = p
                         break
 
-            # --- IMAGE DETECTION ---
             cand_q_imgs = (
                 list(_get_val(q, "question_images", []) or []) +
                 list(_get_val(q, "image_refs", []) or []) +
@@ -556,12 +586,12 @@ class QuizExporter:
             options = _get_val(q, "options", []) or []
 
             # ---------------------------------------------------------
-            # (A) QUESTION SLIDE
+            # (A) QUESTION SLIDE (uses question_bg: PPT.png with peach border)
             # ---------------------------------------------------------
             sq = prs.slides.add_slide(blank_layout)
-            if use_bengaluru_theme and question_bg.exists():
+            if not is_minimalist and question_bg.exists():
                 sq.shapes.add_picture(str(question_bg), 0, 0, Inches(13.333), Inches(7.5))
-                # Top number badge slot matching the original template
+                # Number badge slot matching South Zone template: top=0.40", left=6.67", width=4.13"
                 tb_num = sq.shapes.add_textbox(Inches(6.67), Inches(0.40), Inches(4.13), Inches(1.08))
                 pn = tb_num.text_frame.paragraphs[0]
                 pn.text = f"{idx}."
@@ -587,7 +617,7 @@ class QuizExporter:
             has_media = bool(video_path or audio_path or resolved_q_imgs)
 
             if has_media:
-                # 2-Column Multimodal Layout: Question text left, Media right
+                # South Zone 2-Column Protocol: Question text left (7.80 in), Media clue right (3.90 in)
                 tb_q = sq.shapes.add_textbox(Inches(0.80), Inches(1.50), Inches(7.80), Inches(4.80))
                 tf_q = tb_q.text_frame
                 tf_q.word_wrap = True
@@ -609,7 +639,7 @@ class QuizExporter:
                         po.font.size = Pt(18)
                         po.font.color.rgb = C_TEXT_BODY
 
-                # Media Placement on Right Side
+                # Media Placement on Right Column
                 if video_path:
                     sq.shapes.add_movie(
                         str(video_path),
@@ -649,9 +679,10 @@ class QuizExporter:
                         mime_type="audio/mpeg"
                     )
                 elif resolved_q_imgs:
+                    # South Zone image placement: aspect ratio preserved, fitting within right column box
                     _add_scaled_picture(sq, resolved_q_imgs[0], Inches(8.80), Inches(1.50), Inches(3.90), Inches(4.80))
             else:
-                # Full Width Layout (Text Only)
+                # Full Width Text-Only Layout
                 tb_q = sq.shapes.add_textbox(Inches(0.80), Inches(1.60), Inches(11.70), Inches(4.80))
                 tf_q = tb_q.text_frame
                 tf_q.word_wrap = True
@@ -686,25 +717,31 @@ class QuizExporter:
             sq.notes_slide.notes_text_frame.text = "\n".join(host_notes)
 
             # ---------------------------------------------------------
-            # (B) OPTIONAL ANSWER TRANSITION SLIDE
+            # (B) MANDATORY ANSWER TRANSITION SLIDE (PPT-3.png)
             # ---------------------------------------------------------
-            if show_answer_divider and answer_intro_bg.exists():
-                s_ai = prs.slides.add_slide(blank_layout)
+            s_ai = prs.slides.add_slide(blank_layout)
+            if not is_minimalist and answer_intro_bg.exists():
                 s_ai.shapes.add_picture(str(answer_intro_bg), 0, 0, Inches(13.333), Inches(7.5))
-                tb_ai = s_ai.shapes.add_textbox(Inches(4.00), Inches(2.75), Inches(5.333), Inches(1.90))
-                pai = tb_ai.text_frame.paragraphs[0]
-                pai.alignment = PP_ALIGN.CENTER
-                pai.text = "Answer"
-                pai.font.name = FONT_HEAD
-                pai.font.size = Pt(50)
-                pai.font.bold = True
-                pai.font.color.rgb = C_TEXT_DARK
+            else:
+                bg_ai = s_ai.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+                bg_ai.fill.solid()
+                bg_ai.fill.fore_color.rgb = C_WHITE
+                bg_ai.line.fill.background()
+
+            tb_ai = s_ai.shapes.add_textbox(Inches(4.00), Inches(2.75), Inches(5.333), Inches(1.90))
+            pai = tb_ai.text_frame.paragraphs[0]
+            pai.alignment = PP_ALIGN.CENTER
+            pai.text = "Answer"
+            pai.font.name = FONT_HEAD
+            pai.font.size = Pt(50)
+            pai.font.bold = True
+            pai.font.color.rgb = C_TEXT_DARK
 
             # ---------------------------------------------------------
-            # (C) ANSWER REVEAL SLIDE
+            # (C) ANSWER REVEAL SLIDE (uses answer_bg: Red border 2.png)
             # ---------------------------------------------------------
             sa = prs.slides.add_slide(blank_layout)
-            if use_bengaluru_theme and answer_bg.exists():
+            if not is_minimalist and answer_bg.exists():
                 sa.shapes.add_picture(str(answer_bg), 0, 0, Inches(13.333), Inches(7.5))
             else:
                 bg_a = sa.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
@@ -712,7 +749,6 @@ class QuizExporter:
                 bg_a.fill.fore_color.rgb = C_WHITE
                 bg_a.line.fill.background()
 
-            # Resolve Answer Media
             cand_ans_imgs = (
                 list(_get_val(q, "answer_images", []) or []) +
                 list(hist_media.get("answer_images", []) or []) +
@@ -735,7 +771,7 @@ class QuizExporter:
 
             if has_ans_img:
                 if explanation and len(explanation) > 100:
-                    # 2-Column Layout: Answer + detailed explanation on left, media right
+                    # 2-Column Solution Layout
                     tb_a = sa.shapes.add_textbox(Inches(0.80), Inches(1.50), Inches(6.80), Inches(5.00))
                     tf_a = tb_a.text_frame
                     tf_a.word_wrap = True
@@ -756,7 +792,7 @@ class QuizExporter:
 
                     _add_scaled_picture(sa, ans_img_path, Inches(8.00), Inches(1.50), Inches(4.70), Inches(5.00))
                 else:
-                    # Centered Layout: Answer title on top, Image centered below
+                    # South Zone Protocol: Answer heading top, Solution Media horizontally centered below
                     tb_a = sa.shapes.add_textbox(Inches(1.00), Inches(1.30), Inches(11.333), Inches(1.10))
                     tf_a = tb_a.text_frame
                     tf_a.word_wrap = True
@@ -780,7 +816,7 @@ class QuizExporter:
                         pexp.font.size = Pt(14)
                         pexp.font.color.rgb = C_TEXT_MUTED
             else:
-                # Text-Only Answer Slide: Large green reveal at top, trivia explanation card below
+                # Text-Only Answer Slide: Large green reveal at top, explanation card below
                 tb_a = sa.shapes.add_textbox(Inches(1.00), Inches(1.60), Inches(11.333), Inches(1.20))
                 tf_a = tb_a.text_frame
                 tf_a.word_wrap = True

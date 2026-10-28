@@ -660,12 +660,12 @@ export const api = {
   exportQuizUrl: (quizId: string, format: 'json' | 'csv' | 'pptx', options?: ExportOptions): string => {
     let url = `${getApiBase()}/quizzes/${quizId}/export?format=${format}`;
     if (format === 'pptx') {
-      const theme = options?.theme || 'bengaluru_south';
-      url += `&theme=${encodeURIComponent(theme)}`;
+      const quizType = options?.quizType || (options?.theme === 'corporate' ? 'corporate' : 'school');
+      url += `&quiz_type=${encodeURIComponent(quizType)}`;
+      if (options?.campusEdition) url += `&campus_edition=${encodeURIComponent(options.campusEdition)}`;
+      if (options?.prizeMoney) url += `&prize_money=${encodeURIComponent(options.prizeMoney)}`;
       if (options?.customTitle) url += `&custom_title=${encodeURIComponent(options.customTitle)}`;
-      if (options?.customSubtitle) url += `&custom_subtitle=${encodeURIComponent(options.customSubtitle)}`;
       if (options?.includeSocialSlides !== undefined) url += `&include_social_slides=${options.includeSocialSlides}`;
-      if (options?.showAnswerDivider !== undefined) url += `&show_answer_divider=${options.showAnswerDivider}`;
     }
     return url;
   },
@@ -677,11 +677,12 @@ export const api = {
   ): Promise<Blob> => {
     const params = new URLSearchParams({ format });
     if (format === 'pptx') {
-      params.append('theme', options?.theme || 'bengaluru_south');
+      const quizType = options?.quizType || (options?.theme === 'corporate' ? 'corporate' : 'school');
+      params.append('quiz_type', quizType);
+      if (options?.campusEdition) params.append('campus_edition', options.campusEdition);
+      if (options?.prizeMoney) params.append('prize_money', options.prizeMoney);
       if (options?.customTitle) params.append('custom_title', options.customTitle);
-      if (options?.customSubtitle) params.append('custom_subtitle', options.customSubtitle);
       if (options?.includeSocialSlides !== undefined) params.append('include_social_slides', String(options.includeSocialSlides));
-      if (options?.showAnswerDivider !== undefined) params.append('show_answer_divider', String(options.showAnswerDivider));
     }
     const queryStr = params.toString();
 
@@ -709,10 +710,13 @@ export const api = {
 };
 
 export interface ExportOptions {
-  theme?: 'bengaluru_south' | 'minimalist';
+  quizType?: 'school' | 'corporate' | 'minimalist';
+  campusEdition?: string;
+  prizeMoney?: string;
   customTitle?: string;
-  customSubtitle?: string;
   includeSocialSlides?: boolean;
+  theme?: string;
+  customSubtitle?: string;
   showAnswerDivider?: boolean;
 }
 
