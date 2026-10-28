@@ -657,14 +657,37 @@ export const api = {
     return handleResponse<{ message: string }>(res);
   },
 
-  exportQuizUrl: (quizId: string, format: 'json' | 'csv' | 'pptx'): string => {
-    return `${getApiBase()}/quizzes/${quizId}/export?format=${format}`;
+  exportQuizUrl: (quizId: string, format: 'json' | 'csv' | 'pptx', options?: ExportOptions): string => {
+    let url = `${getApiBase()}/quizzes/${quizId}/export?format=${format}`;
+    if (format === 'pptx') {
+      const theme = options?.theme || 'bengaluru_south';
+      url += `&theme=${encodeURIComponent(theme)}`;
+      if (options?.customTitle) url += `&custom_title=${encodeURIComponent(options.customTitle)}`;
+      if (options?.customSubtitle) url += `&custom_subtitle=${encodeURIComponent(options.customSubtitle)}`;
+      if (options?.includeSocialSlides !== undefined) url += `&include_social_slides=${options.includeSocialSlides}`;
+      if (options?.showAnswerDivider !== undefined) url += `&show_answer_divider=${options.showAnswerDivider}`;
+    }
+    return url;
   },
 
-  exportQuizDirect: async (quiz: Quiz, format: 'json' | 'csv' | 'pptx' = 'pptx'): Promise<Blob> => {
+  exportQuizDirect: async (
+    quiz: Quiz,
+    format: 'json' | 'csv' | 'pptx' = 'pptx',
+    options?: ExportOptions
+  ): Promise<Blob> => {
+    const params = new URLSearchParams({ format });
+    if (format === 'pptx') {
+      params.append('theme', options?.theme || 'bengaluru_south');
+      if (options?.customTitle) params.append('custom_title', options.customTitle);
+      if (options?.customSubtitle) params.append('custom_subtitle', options.customSubtitle);
+      if (options?.includeSocialSlides !== undefined) params.append('include_social_slides', String(options.includeSocialSlides));
+      if (options?.showAnswerDivider !== undefined) params.append('show_answer_divider', String(options.showAnswerDivider));
+    }
+    const queryStr = params.toString();
+
     // 1. Try GET /quizzes/{id}/export first
     try {
-      const getRes = await fetch(`${getApiBase()}/quizzes/${quiz.id}/export?format=${format}`);
+      const getRes = await fetch(`${getApiBase()}/quizzes/${quiz.id}/export?${queryStr}`);
       if (getRes.ok) {
         return await getRes.blob();
       }
@@ -673,7 +696,7 @@ export const api = {
     }
 
     // 2. Fallback to POST /quizzes/export with full quiz payload
-    const postRes = await fetch(`${getApiBase()}/quizzes/export?format=${format}`, {
+    const postRes = await fetch(`${getApiBase()}/quizzes/export?${queryStr}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(quiz),
@@ -685,8 +708,20 @@ export const api = {
   },
 };
 
-export async function downloadQuizFile(quiz: Quiz, format: 'json' | 'csv' | 'pptx' = 'pptx'): Promise<void> {
-  const blob = await api.exportQuizDirect(quiz, format);
+export interface ExportOptions {
+  theme?: 'bengaluru_south' | 'minimalist';
+  customTitle?: string;
+  customSubtitle?: string;
+  includeSocialSlides?: boolean;
+  showAnswerDivider?: boolean;
+}
+
+export async function downloadQuizFile(
+  quiz: Quiz,
+  format: 'json' | 'csv' | 'pptx' = 'pptx',
+  options?: ExportOptions
+): Promise<void> {
+  const blob = await api.exportQuizDirect(quiz, format, options);
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

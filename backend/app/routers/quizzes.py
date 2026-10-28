@@ -99,6 +99,10 @@ def export_quiz(
     quiz_id: str,
     format: str = Query("json", pattern="^(json|csv|pptx)$"),
     theme: str = Query("bengaluru_south"),
+    custom_title: Optional[str] = Query(None),
+    custom_subtitle: Optional[str] = Query(None),
+    include_social_slides: bool = Query(True),
+    show_answer_divider: bool = Query(False),
     db: Session = Depends(get_db)
 ):
     quiz = db.query(Quiz).filter(Quiz.id == quiz_id).first()
@@ -120,7 +124,7 @@ def export_quiz(
             headers={"Content-Disposition": f"attachment; filename=quiz_{quiz.id[:8]}.csv"}
         )
     elif format == "pptx":
-        pptx_bytes = QuizExporter.to_pptx(quiz, theme=theme)
+        pptx_bytes = QuizExporter.to_pptx(quiz, theme=theme, custom_title=custom_title, custom_subtitle=custom_subtitle, include_social_slides=include_social_slides, show_answer_divider=show_answer_divider)
         return Response(
             content=pptx_bytes,
             media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -131,7 +135,11 @@ def export_quiz(
 def export_quiz_payload(
     payload: Dict[str, Any] = Body(...),
     format: str = Query("pptx", pattern="^(json|csv|pptx)$"),
-    theme: str = Query("bengaluru_south")
+    theme: str = Query("bengaluru_south"),
+    custom_title: Optional[str] = Query(None),
+    custom_subtitle: Optional[str] = Query(None),
+    include_social_slides: bool = Query(True),
+    show_answer_divider: bool = Query(False),
 ):
     quiz_id = payload.get("id", "custom")
     clean_id = str(quiz_id)[:8] if quiz_id else "custom"
@@ -150,7 +158,7 @@ def export_quiz_payload(
             headers={"Content-Disposition": f"attachment; filename=quiz_{clean_id}.csv"}
         )
     elif format == "pptx":
-        pptx_bytes = QuizExporter.to_pptx(payload, theme=theme)
+        pptx_bytes = QuizExporter.to_pptx(payload, theme=theme, custom_title=custom_title, custom_subtitle=custom_subtitle, include_social_slides=include_social_slides, show_answer_divider=show_answer_divider)
         return Response(
             content=pptx_bytes,
             media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",

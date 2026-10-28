@@ -17,7 +17,8 @@ import {
   Sparkles,
   Tag,
 } from 'lucide-react';
-import { api, resolveMediaUrl, getFallbackMediaUrl, downloadQuizFile } from '../../../lib/api';
+import { api, resolveMediaUrl, getFallbackMediaUrl, downloadQuizFile, ExportOptions } from '../../../lib/api';
+import ExportQuizModal from '../../../components/ExportQuizModal';
 import { Quiz, GeneratedQuestion, RetrievalSource } from '../../../lib/types';
 import { getLocalQuiz, saveLocalQuiz } from '../../../lib/quizStorage';
 import QuestionCard from '../../../components/QuestionCard';
@@ -36,6 +37,7 @@ export default function QuizReviewStudioPage() {
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [imgFallbackUrls, setImgFallbackUrls] = useState<Record<string, string>>({});
   const [isExporting, setIsExporting] = useState<string | null>(null);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
   const getImageSrc = (rawUrl: string | null | undefined) => {
     if (!rawUrl) return '';
@@ -161,14 +163,14 @@ export default function QuizReviewStudioPage() {
     });
   };
 
-  const handleDownload = async (format: 'pptx' | 'json' | 'csv') => {
+  const handleDownload = async (format: 'pptx' | 'json' | 'csv', options?: ExportOptions) => {
     if (!quiz) return;
     try {
       setIsExporting(format);
-      await downloadQuizFile(quiz, format);
+      await downloadQuizFile(quiz, format, options);
     } catch (err: any) {
       console.warn('Direct blob export error, falling back to export link:', err);
-      window.location.href = api.exportQuizUrl(quiz.id, format);
+      window.location.href = api.exportQuizUrl(quiz.id, format, options);
     } finally {
       setIsExporting(null);
     }
@@ -241,7 +243,7 @@ export default function QuizReviewStudioPage() {
           )}
 
           <button
-            onClick={() => handleDownload('pptx')}
+            onClick={() => setIsExportModalOpen(true)}
             disabled={!!isExporting}
             className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-60 cursor-pointer"
             title="Download authentic QShala tournament presentation deck"
@@ -506,6 +508,15 @@ export default function QuizReviewStudioPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {quiz && (
+        <ExportQuizModal
+          isOpen={isExportModalOpen}
+          onClose={() => setIsExportModalOpen(false)}
+          quiz={quiz}
+          onExport={handleDownload}
+        />
       )}
     </div>
   );

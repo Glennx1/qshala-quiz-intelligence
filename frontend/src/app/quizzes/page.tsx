@@ -11,13 +11,15 @@ import {
   Loader2,
   Trash2,
 } from 'lucide-react';
-import { api, downloadQuizFile } from '../../lib/api';
+import { api, downloadQuizFile, ExportOptions } from '../../lib/api';
+import ExportQuizModal from '../../components/ExportQuizModal';
 import { Quiz } from '../../lib/types';
 import { getLocalQuizzes, deleteLocalQuiz, mergeQuizzes, saveLocalQuiz } from '../../lib/quizStorage';
 
 export default function QuizzesLibraryPage() {
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [loading, setLoading] = useState(true);
+  const [exportingQuiz, setExportingQuiz] = useState<Quiz | null>(null);
 
   const fetchQuizzes = async () => {
     try {
@@ -163,9 +165,12 @@ export default function QuizzesLibraryPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={(e) => handleDownloadQuiz(quiz, 'pptx', e)}
-                        className="rounded p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
-                        title="Download QShala Master PPTX"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExportingQuiz(quiz);
+                        }}
+                        className="rounded p-1 text-slate-400 hover:text-orange-600 hover:bg-orange-50 transition-colors cursor-pointer"
+                        title="Download Tournament PPTX"
                       >
                         <Presentation className="h-3.5 w-3.5" />
                       </button>
@@ -200,6 +205,17 @@ export default function QuizzesLibraryPage() {
           </table>
         )}
       </div>
+
+      {exportingQuiz && (
+        <ExportQuizModal
+          isOpen={!!exportingQuiz}
+          onClose={() => setExportingQuiz(null)}
+          quiz={exportingQuiz}
+          onExport={async (fmt, opts) => {
+            await downloadQuizFile(exportingQuiz, fmt, opts);
+          }}
+        />
+      )}
     </div>
   );
 }
