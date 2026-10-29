@@ -456,11 +456,45 @@ def list_duplicate_candidates(
 
 
 def _needs_review_ids(db: Session):
-    """Question ids whose current tag is a draft: a draft tag exists and no confirmed tag does."""
+    """Determine which questions belong in the review queue vs well-tagged.
+    
+    A question needs review if:
+    1. Truly uncategorized: No QshalaTag at all, or subtopic_l2 is missing/empty/Uncategorized.
+    2. Confused / low-confidence: Model marked fit='weak' or fit='none', confidence < 0.65, or chunk failed.
+    
+    A question is well-tagged (excluded from review) if:
+    - It has been reviewed/confirmed by a human (source='HUMAN' or verified_by is set), OR
+    - It has a high-confidence, valid canonical taxonomy subtopic tagged by AI.
+    """
     from backend.app.models.qshala_tag import QshalaTag
-    has_draft = db.query(QshalaTag.question_id).filter(QshalaTag.status == "draft")
-    has_confirmed = db.query(QshalaTag.question_id).filter(QshalaTag.status == "confirmed")
-    return has_draft, has_confirmed
+    from sqlalchemy import select, not_, or_, and_, func
+
+    notes = func.coalesce(QshalaTag.verification_notes, "")
+    well_tagged = select(QshalaTag.question_id).filter(
+        or_(
+            and_(
+                QshalaTag.status == "confirmed",
+                or_(QshalaTag.source == "HUMAN", QshalaTag.verified_by.isnot(None)),
+            ),
+            and_(
+                QshalaTag.subtopic_l2.isnot(None),
+                QshalaTag.subtopic_l2 != "",
+                not_(QshalaTag.subtopic_l2.in_(["Uncategorized", "None", "Unknown"])),
+                or_(
+                    QshalaTag.status == "confirmed",
+                    and_(
+                        QshalaTag.fit == "good",
+                        QshalaTag.confidence >= 0.65,
+                        ~notes.like("%mismatch%"),
+                        ~notes.like("%failed%"),
+                    ),
+                ),
+            ),
+        )
+    ).scalar_subquery()
+
+    needs_review = select(Question.id).filter(~Question.id.in_(well_tagged)).scalar_subquery()
+    return needs_review, well_tagged
 
 
 @router.get("/needs-review", response_model=List[QuestionResponse])
@@ -469,13 +503,13 @@ def list_review_candidates(
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
-    """Questions whose AI tag was low-confidence (status 'draft') and not yet human-confirmed.
-    These are the ones a quiz master should look at under the Review toggle."""
-    has_draft, has_confirmed = _needs_review_ids(db)
+    """Questions that need human review: truly uncategorized questions or low-confidence/confused tags.
+    Well-tagged questions with valid canonical taxonomy subtopics bypass this queue."""
+    needs_review, well_tagged = _needs_review_ids(db)
     items = db.query(Question, Document, Slide).\
         outerjoin(Document, Question.document_id == Document.id).\
         outerjoin(Slide, Question.slide_id == Slide.id).\
-        filter(Question.id.in_(has_draft.subquery()), ~Question.id.in_(has_confirmed.subquery())).\
+        filter(Question.id.in_(needs_review), ~Question.id.in_(well_tagged)).\
         order_by(desc(Question.created_at)).\
         offset(offset).limit(limit).all()
     return _enrich(db, [to_question_response(q, doc, slide) for q, doc, slide in items])
@@ -483,17 +517,19 @@ def list_review_candidates(
 
 @router.get("/needs-review/count", response_model=Dict[str, int])
 def review_candidates_count(db: Session = Depends(get_db)):
-    has_draft, has_confirmed = _needs_review_ids(db)
+    needs_review, well_tagged = _needs_review_ids(db)
     n = db.query(func.count(Question.id)).filter(
-        Question.id.in_(has_draft.subquery()), ~Question.id.in_(has_confirmed.subquery())).scalar()
+        Question.id.in_(needs_review), ~Question.id.in_(well_tagged)
+    ).scalar()
     return {"count": int(n or 0)}
 
 
 @router.post("/{question_id}/accept-review", response_model=QuestionResponse)
 def accept_review(question_id: str, db: Session = Depends(get_db)):
-    """Confirm a question's draft tag as-is (the quiz master agrees with the AI). Promotes the latest
-    draft QshalaTag to 'confirmed' so it leaves the review queue. (To change the tag instead, the UI
-    uses the tag editor, which writes a human-confirmed tag and also feeds the learning loop.)"""
+    """Confirm a question's draft or uncategorized status.
+    Promotes the latest QshalaTag to 'confirmed' with verified_by='quizmaster'
+    so it leaves the review queue. If the question was completely untagged,
+    creates a confirmed human tag."""
     from datetime import datetime, timezone
     from backend.app.models.qshala_tag import QshalaTag, QshalaTagChange
     item = db.query(Question, Document, Slide).\
@@ -504,7 +540,7 @@ def accept_review(question_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Question not found")
 
     tag = db.query(QshalaTag).filter(
-        QshalaTag.question_id == question_id, QshalaTag.status == "draft").\
+        QshalaTag.question_id == question_id).\
         order_by(desc(QshalaTag.created_at)).first()
     if tag is not None:
         for prev in db.query(QshalaTag).filter(
@@ -513,8 +549,40 @@ def accept_review(question_id: str, db: Session = Depends(get_db)):
         tag.status = "confirmed"
         tag.verified_by = "quizmaster"
         tag.verified_at = datetime.now(timezone.utc)
+        if not tag.subtopic_l2 or tag.subtopic_l2 in ("Uncategorized", "General Knowledge", "None", "Unknown"):
+            q, doc, slide = item
+            tag.subtopic_l2 = q.subtopic or tag.topic_l1 or q.topic or "General Knowledge"
+        if tag.fit in ("weak", "none", None):
+            tag.fit = "good"
+        if (tag.confidence or 0.0) < 0.70:
+            tag.confidence = 0.90
         db.add(QshalaTagChange(question_id=question_id, from_tag_id=None, to_tag_id=tag.id,
                                change_type="PROMOTE", actor="quizmaster", reason="accepted from review"))
+        try:
+            from backend.app.services.question_meta_service import apply_tag_to_meta
+            apply_tag_to_meta(db, question_id, tag)
+        except Exception:
+            pass
+        db.commit()
+    else:
+        q, doc, slide = item
+        topic_l1 = q.topic or "General Knowledge"
+        subtopic_l2 = q.subtopic or topic_l1
+        tag = QshalaTag(
+            question_id=question_id,
+            taxonomy_version="v6",
+            model_version="manual",
+            source="HUMAN",
+            topic_l1=topic_l1,
+            subtopic_l2=subtopic_l2,
+            fit="good",
+            confidence=0.90,
+            status="confirmed",
+            verified_by="quizmaster",
+            verified_at=datetime.now(timezone.utc),
+            verification_notes="accepted from review"
+        )
+        db.add(tag)
         try:
             from backend.app.services.question_meta_service import apply_tag_to_meta
             apply_tag_to_meta(db, question_id, tag)

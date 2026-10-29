@@ -319,35 +319,46 @@ async def _call_llm(provider: GeminiLLMProvider, model: str, question_text: str,
 def _route(rules: qshala_rules.RuleSignals, llm: Dict[str, Any]) -> Tuple[str, float, str]:
     """Decide status (confirmed / draft) and a confidence estimate.
 
-    - LLM fit='good' AND no rule conflict → confirmed, 0.90.
-    - LLM fit='weak' or fit='none'       → draft, 0.50.
-    - Rule geography disagrees with LLM  → draft, 0.60. (route to review.)
-    - LLM-only, no rule hits at all      → draft, 0.70.  (reviewer should look.)
+    - Canonical taxonomy subtopic with fit='good' -> confirmed (0.88 - 0.92)
+    - Uncategorized (no subtopic, generic GK with no L2, or 'Uncategorized') -> draft (0.35)
+    - Confused fit ('weak' or 'none') -> draft (0.50)
+    - Geography disagreement -> draft (0.60)
+    - Rule brand-hint mismatch -> draft (0.65)
     """
     fit = llm.get("fit", "weak")
-    reasons: List[str] = []
+    l2 = (llm.get("subtopic_l2") or "").strip()
 
+    # 1. Truly uncategorized (missing subtopic, generic GK with no L2, or 'Uncategorized')
+    if not l2 or l2.lower() in ("uncategorized", "none", "unknown", "general knowledge"):
+        return ("draft", 0.35, "uncategorized: missing or generic subtopic")
+
+    # 2. Model was confused or found no good fit in taxonomy
     if fit in ("weak", "none"):
         return ("draft", 0.50, f"model marked fit={fit}")
 
-    # Geography disagreement is the strongest cheap signal we have.
+    tax = _load_taxonomy()
+    llm_l1 = tax.get("l2_to_l1", {}).get(l2)
+    if not llm_l1:
+        # Subtopic not in canonical taxonomy
+        return ("draft", 0.45, f"subtopic '{l2}' not in canonical taxonomy")
+
+    # 3. Geography disagreement
     if (rules.india_international and llm.get("india_international") not in (None, "NA")
             and rules.india_international != llm["india_international"]):
-        reasons.append(f"geography mismatch (rule {rules.india_international} vs LLM {llm['india_international']})")
-        return ("draft", 0.60, "; ".join(reasons))
+        return ("draft", 0.60, f"geography mismatch (rule {rules.india_international} vs LLM {llm['india_international']})")
 
-    # Brand-hint agreement is a soft confirmation but not a hard rule — the LLM can override.
+    # 4. Brand-hint agreement / mismatch
     rule_l1s = set(rules.brand_hints_l1 or [])
-    llm_l1 = _load_taxonomy()["l2_to_l1"].get(llm.get("subtopic_l2", ""))
     rule_signals_fired = bool(rules.city_name or rules.brand_hints_l1 or rules.shelf_life or rules.sensitivity)
 
-    if rule_signals_fired and (not rule_l1s or llm_l1 in rule_l1s):
-        return ("confirmed", 0.90, "LLM fit=good, no rule conflict")
-    if not rule_signals_fired:
-        return ("draft", 0.70, "no rule signals fired; recommend quick review")
+    if rule_signals_fired and rule_l1s and llm_l1 not in rule_l1s:
+        return ("draft", 0.65, f"brand hints suggested {sorted(rule_l1s)}; LLM chose {llm_l1}")
 
-    # Rules fired but L1 doesn't match any brand-hint L1 — not fatal, but worth a look.
-    return ("draft", 0.75, f"brand hints suggested {sorted(rule_l1s)}; LLM chose {llm_l1}")
+    if rule_signals_fired:
+        return ("confirmed", 0.92, "LLM fit=good, corroborated by rule signals")
+
+    # 5. Well-tagged question with canonical taxonomy subtopic: automatically confirmed!
+    return ("confirmed", 0.88, "LLM fit=good with canonical taxonomy subtopic")
 
 
 # ---------------------------------------------------------------------- v6 helpers
