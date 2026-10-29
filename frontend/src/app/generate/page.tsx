@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowUp, Check, Eye, EyeOff, Lock, RefreshCw, Trash2, Unlock } from 'lucide-react';
+import { ArrowUp, Check, Lock, RefreshCw, Trash2, Unlock } from 'lucide-react';
 import { getApiBase, resolveMediaUrl } from '../../lib/api';
 
 type DraftQ = {
@@ -68,7 +68,6 @@ export default function QuizzerHome() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [qs, setQs] = useState<DraftQ[]>([]);
   const [locked, setLocked] = useState<Set<string>>(new Set());
-  const [shown, setShown] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [lastPrompt, setLastPrompt] = useState('');
   const area = useRef<HTMLTextAreaElement>(null);
@@ -97,7 +96,7 @@ export default function QuizzerHome() {
     setError(''); setStage(0); setLoading(true); setDraft(null);
     try {
       const d = await api<Draft>('/prompt-quiz/draft', { prompt: p });
-      setDraft(d); setQs(d.questions); setLocked(new Set()); setShown(new Set()); setLastPrompt(p);
+      setDraft(d); setQs(d.questions); setLocked(new Set()); setLastPrompt(p);
     } catch (e) { setError(e instanceof Error ? e.message : 'Something went wrong'); }
     finally { setLoading(false); }
   }
@@ -195,9 +194,10 @@ export default function QuizzerHome() {
                       </div>
                     )}
 
-                    {shown.has(q.id) && (
+                    {/* Answer shown by default */}
+                    {q.answer && (
                       <div className="mt-2.5">
-                        <p className="text-[14px] font-medium text-emerald-700">{q.answer}</p>
+                        <p className="text-[14px] font-semibold text-emerald-700">{q.answer}</p>
                         {q.answer_images && q.answer_images.length > 0 && (
                           <div className="mt-2 flex items-center gap-2">
                             <img
@@ -216,8 +216,7 @@ export default function QuizzerHome() {
                     <p className="mt-2 text-[12px] text-slate-400">{[q.subtopic_l2 || q.topic_l1, q.difficulty !== 'Unrated' ? q.difficulty : null, q.image_dependent ? 'has image' : null].filter(Boolean).join(' · ')}</p>
                   </div>
                   <div className="flex shrink-0 items-start gap-1 text-slate-400 opacity-60 transition group-hover:opacity-100 focus-within:opacity-100">
-                    <button aria-label="Show answer" onClick={() => toggle(shown, q.id, setShown)} className="p-1.5 hover:text-slate-900">{shown.has(q.id) ? <EyeOff size={16} /> : <Eye size={16} />}</button>
-                    <button aria-label={locked.has(q.id) ? 'Unlock' : 'Lock'} onClick={() => toggle(locked, q.id, setLocked)} className="p-1.5 hover:text-slate-900">{locked.has(q.id) ? <Lock size={16} /> : <Unlock size={16} />}</button>
+                    <button aria-label={locked.has(q.id) ? 'Unlock' : 'Lock'} onClick={() => toggle(locked, q.id, setLocked)} className="p-1.5 hover:text-slate-900" title={locked.has(q.id) ? 'Unlock' : 'Lock'}>{locked.has(q.id) ? <Lock size={16} /> : <Unlock size={16} />}</button>
                     <button aria-label="Swap for another" disabled={locked.has(q.id)} onClick={() => swap(q.id)} className="p-1.5 hover:text-slate-900 disabled:opacity-30"><RefreshCw size={16} /></button>
                     <button aria-label="Remove" disabled={locked.has(q.id)} onClick={() => setQs((c) => c.filter((x) => x.id !== q.id))} className="p-1.5 hover:text-red-600 disabled:opacity-30"><Trash2 size={16} /></button>
                   </div>
