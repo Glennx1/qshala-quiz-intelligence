@@ -518,6 +518,10 @@ class QshalaTagger:
                    llm_out: Dict[str, Any], usage: Dict[str, int], latency_ms: int, actor: str,
                    commit: bool, existing: Optional[QshalaTag], question: Optional[Any]) -> QshalaTag:
         paths = _v6_paths(llm_out)
+        if question is not None:
+            paths = qshala_rules.apply_disambiguation(
+                paths, getattr(question, "question_text", "") or "",
+                getattr(question, "answer", "") or "", taxonomy_version=TAXONOMY_VERSION)
         first = paths[0] if paths else {}
         routed = {"fit": llm_out.get("fit", "weak"), "india_international": llm_out.get("india_international"),
                   "subtopic_l2": first.get("l2")}

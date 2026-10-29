@@ -16,9 +16,11 @@ a terminal state.
 
 Quiz-master feedback loop
 -------------------------
-`recent_human_exemplars()` pulls the most recent HUMAN-confirmed tags and injects them into each
+`recent_human_exemplars()` pulls the most recent human-confirmed tags and injects them into each
 chunk prompt as worked examples. Every correction a quiz master makes in the review UI therefore
-improves tagging on the next deck, with no training step.
+improves tagging on the next deck, with no training step. "Human-confirmed" covers BOTH review
+actions: Correct (writes a new source="HUMAN" tag) and Accept (promotes the AI draft and stamps
+verified_by) — see recent_human_exemplars.
 
 This module reuses the tagger's taxonomy, prompt, schema, routing and path-normalisation helpers;
 it does not duplicate that logic.
@@ -30,6 +32,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from backend.app.models.qshala_tag import QshalaTag, QshalaTagChange
@@ -49,27 +52,34 @@ MAX_CHUNK_RETRIES = 3
 
 
 def _batch_schema() -> Dict[str, Any]:
-    """A list of per-question v6 payloads, each echoing its input index `n`."""
+    """The per-question v6 schema wrapped in a `results` array carrying each item's `n`."""
     item = _tag_schema_v6()
-    props = dict(item["properties"])
-    props["n"] = {"type": "INTEGER"}
-    item = {**item, "properties": props, "required": ["n"] + list(item.get("required", []))}
+    item_props = dict(item.get("properties", {}))
+    item_props["n"] = {"type": "INTEGER"}
+    wrapped_item = {"type": "OBJECT", "properties": item_props,
+                    "required": list({*item.get("required", []), "n"})}
     return {"type": "OBJECT",
-            "properties": {"results": {"type": "ARRAY", "items": item}},
+            "properties": {"results": {"type": "ARRAY", "items": wrapped_item}},
             "required": ["results"]}
 
 
 # --------------------------------------------------------------------- feedback loop
 
 def recent_human_exemplars(db: Session, limit: int = 8) -> List[Dict[str, str]]:
-    """Most recent HUMAN-confirmed tags as compact worked examples. These are what quiz masters
-    produced by clarifying/accepting in the review UI; reusing them teaches the model this vault's
-    judgement. One indexed query; the caller reads it once per deck."""
+    """Most recent human-confirmed tags as compact worked examples. These are what quiz masters
+    produced in the review UI; reusing them teaches the model this vault's judgement. One indexed
+    query; the caller reads it once per deck.
+
+    A tag counts as human-confirmed when it is `confirmed` AND either the quiz master wrote it
+    (source='HUMAN', via the Correct/tag-editor path) OR a quiz master promoted it (verified_by
+    set, via the one-click Accept path). Earlier this filtered on source='HUMAN' alone, so Accept
+    actions — which keep source='LLM' and only stamp verified_by — never reached the loop."""
     try:
         rows = (db.query(QshalaTag, Question.question_text)
                 .join(Question, Question.id == QshalaTag.question_id)
-                .filter(QshalaTag.source == "HUMAN", QshalaTag.status == "confirmed",
-                        QshalaTag.topic_l1.isnot(None))
+                .filter(QshalaTag.status == "confirmed",
+                        QshalaTag.topic_l1.isnot(None),
+                        or_(QshalaTag.source == "HUMAN", QshalaTag.verified_by.isnot(None)))
                 .order_by(QshalaTag.created_at.desc())
                 .limit(limit).all())
     except Exception as e:                       # never let the feedback query break ingestion
@@ -120,6 +130,10 @@ def _write_item(db: Session, q: Dict[str, Any], llm_out: Dict[str, Any], model: 
     topic-path writing are identical to the single-question path."""
     rules = q["rules"]
     paths = _v6_paths(llm_out)
+    # High-precedence deterministic L2 guards (ruling_sheet_22). Re-orders paths so a ruled subtopic
+    # becomes primary and the model's original primary drops to secondary_l2.
+    paths = qshala_rules.apply_disambiguation(paths, q.get("question_text", ""), q.get("answer", ""),
+                                              taxonomy_version=TAXONOMY_VERSION)
     first = paths[0] if paths else {}
     routed = {"fit": llm_out.get("fit", "weak"),
               "india_international": llm_out.get("india_international"),

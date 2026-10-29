@@ -24,6 +24,9 @@ class DraftReq(BaseModel):
     prompt: str = Field(..., min_length=2, max_length=600)
     count: Optional[int] = Field(default=None, ge=1, le=50)
     options: Dict[str, Any] = {}
+    # Refinement: pass the `brief` from a prior /draft response alongside a follow-up prompt
+    # ("make it harder", "swap cricket for tech", "give me 5 more") to refine instead of restart.
+    previous_brief: Optional[Dict[str, Any]] = None
 
 
 class SwapReq(BaseModel):
@@ -46,7 +49,7 @@ def starters():
 
 @router.post("/draft")
 def draft(req: DraftReq, db: Session = Depends(get_db)):
-    return engine.build_draft(db, req.prompt, req.count, req.options)
+    return engine.build_draft(db, req.prompt, req.count, req.options, req.previous_brief)
 
 
 @router.post("/swap")

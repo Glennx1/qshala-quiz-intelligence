@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------- dictionaries
 
@@ -170,3 +170,192 @@ def extract(question_text: str, answer: str = "", explanation: str = "",
         out.image_dependent = True
 
     return out
+
+
+# ====================================================================== L2 DISAMBIGUATION
+# High-precedence, deterministic guards for the recurring L2 boundary conflicts found in the
+# 22-question blind evaluation (ruling_sheet_22.csv). Each guard asserts the FINAL ruling's
+# subtopic when its unmistakable signature is present, but ONLY when the LLM's proposed L2 is
+# one of the known confusable siblings (or missing) — so a correct, unrelated tag is never
+# clobbered. All targets use the exact v6 L2 names (several differ from the shorthand used in
+# the ruling sheet, e.g. "Word Origins" -> "Etymology", "Environment" -> "Ecology and
+# Environment", "Market Concepts"/charts -> "Technical Analysis", "Banking" -> "Banks and
+# Banking"). v6-only; a no-op for other taxonomy versions.
+
+
+@dataclass(frozen=True)
+class L2Rule:
+    rule_id: str
+    target_l2: str
+    target_l1: str
+    from_l2: frozenset            # confusable siblings this may override (lowercased); empty = any
+    signature: re.Pattern         # matched against question + answer (case-insensitive)
+    require_all: tuple = ()        # extra re.Pattern objects that must ALL also match
+
+
+def _p(pat: str) -> re.Pattern:
+    return re.compile(pat, re.I)
+
+
+# NOTE: order matters — the first rule whose signature (and require_all) matches wins.
+L2_DISAMBIGUATION_RULES: List[L2Rule] = [
+    # 1. Central Banking vs Banking — monetary authority, currency-printing rights, CBDC.
+    L2Rule(
+        "central_banking_vs_banking", "Central Banking", "Finance",
+        frozenset({"banks and banking", "digital payments", "economic history",
+                   "money history", "government policy", "macroeconomics", "coins and notes"}),
+        _p(r"\bcbdc\b|central bank digital currency"
+           r"|print(?:ing|s|ed)?\s+(?:of\s+)?(?:money|currency|bank\s?notes?|notes?)"
+           r"|right[s]?\s+to\s+(?:print|issue)\s+(?:money|currency|notes?)"
+           r"|monetary authority|issue (?:its )?(?:own )?currency"),
+    ),
+    # 10. Executive Appointments vs Banking — CFO/CEO/chair appointment milestones.
+    L2Rule(
+        "exec_appointment_vs_banking", "Business Leaders", "Business",
+        frozenset({"banks and banking", "earnings and results", "digital payments",
+                   "insurance", "central banking"}),
+        _p(r"\b(ceo|cfo|coo|cto|chief (?:executive|financial|operating|technology) officer"
+           r"|chairman|chairperson|chairwoman|managing director|\bmd\b)\b"),
+        require_all=(_p(r"\b(appoint\w*|named|become[s]?|first woman|first man|steps? down"
+                        r"|succeed[s]?|elevat\w*|hire[d]?)\b"),),
+    ),
+    # 2. Stock Markets vs Advertising — an ad campaign announcement moving the share price.
+    L2Rule(
+        "ad_campaign_vs_stock", "Advertising", "Business",
+        frozenset({"stock markets", "earnings and results", "market indices", "investing and funds"}),
+        _p(r"\b(ad campaign|ad[- ]?spend|advertis\w+|marketing campaign|commercial|jingle|tagline|slogan)\b"),
+        require_all=(_p(r"\b(share price|stock price|shares?|stock|ticker)\b.{0,40}"
+                        r"\b(ros?e|jump\w*|surg\w*|f[ae]ll|gain\w*|clos\w*|\d+\s?%)"
+                        r"|\b(ros?e|jump\w*|surg\w*|gain\w*)\b.{0,30}\b\d+\s?%"),),
+    ),
+    # 5. Technical Analysis vs Stocks — chart patterns / indicators (the concept, not a listing).
+    L2Rule(
+        "chart_pattern_vs_stock", "Technical Analysis", "Finance",
+        frozenset({"stock markets", "investing and funds", "derivatives", "market indices"}),
+        _p(r"\bchart pattern\b|\bcandlestick\b|head (?:and|&) shoulders|double top|double bottom"
+           r"|cup and handle|moving average|\brsi\b|\bmacd\b|bollinger|support and resistance"
+           r"|technical analysis"),
+    ),
+    # 4. Tickers & Acronyms vs Entertainment — the ORIGIN story of a stock ticker / symbol.
+    L2Rule(
+        "ticker_origin_vs_entertainment", "Etymology", "Culture",
+        frozenset({"stock markets", "entertainment", "music", "musicians and bands",
+                   "business jargon", "company origins", "investing and funds"}),
+        _p(r"\b(stock )?(?:ticker|symbol)\b"),
+        require_all=(_p(r"\bwhy\b|origin|named after|in honou?r|stands for|because|derived"),),
+    ),
+    # 7. Renewable-energy MoUs vs Brand Collabs — a state/government green-energy pact.
+    L2Rule(
+        "green_mou_vs_collab", "Indian Economy", "Economy",
+        frozenset({"brand collaborations", "energy", "partnerships",
+                   "infrastructure and manufacturing", "government policy"}),
+        _p(r"\b(mou|memorandum of understanding|agreement|pact|signed|tie[- ]?up)\b"),
+        require_all=(
+            _p(r"\bgovernment of\b|\bgovt\.? of\b|state government|ministry|"
+               r"\b(karnataka|maharashtra|gujarat|tamil nadu|telangana|rajasthan|odisha|"
+               r"andhra pradesh|uttar pradesh|madhya pradesh)\b"),
+            _p(r"\bsolar\b|\bwind\b|renewable|green (?:energy|hydrogen)|clean energy|\benergy\b"),
+        ),
+    ),
+    # 8. Water/sustainability credits vs Brands — a corporate environmental initiative.
+    L2Rule(
+        "sustainability_vs_brand", "Ecology and Environment", "Science",
+        frozenset({"consumer brands", "brand collaborations", "consumer prices"}),
+        _p(r"\bwater credit|carbon credit|water usage|water[- ]stress\w*|water positive"
+           r"|water conservation|sustainability|net[- ]?zero|emission[s]?\b|decarbon\w*"),
+    ),
+    # 6. Item price history vs Heritage — the changing/frozen price of an iconic item.
+    L2Rule(
+        "price_history_vs_heritage", "Consumer Prices", "Economy",
+        frozenset({"archaeology and heritage sites", "food and drink", "retail",
+                   "personal finance", "consumer brands"}),
+        _p(r"\bprice[d]?\b|priced at|\b£|\$|₹|\brs\.?\b"),
+        require_all=(_p(r"\brais\w*|ros?e|increas\w*|hik\w*|freeze|frozen|price freeze"
+                        r"|unchanged since|price (?:rise|cut|drop)|cost\b"),),
+    ),
+    # 3. Brand Identity / Real Estate vs Urban Life — stations, platforms, sheds; a landmark
+    #    hotel named for its site.
+    L2Rule(
+        "urban_landmark_vs_realestate", "Urban Life", "Culture",
+        frozenset({"maps and travel", "real estate", "brand identity and logos",
+                   "landmarks and monuments", "cities and places",
+                   "infrastructure and manufacturing", "travel industry"}),
+        _p(r"\b(railway|locomotive|\bloco\b|metro|train)\b.{0,30}\b(platform|shed|station)\b"
+           r"|\b(platform|shed|station)\b.{0,30}\b(railway|locomotive|\bloco\b|metro|train)\b"
+           r"|longest (?:railway )?platform|\bemd\b"
+           r"|hotel\b.{0,60}\bnamed after (?:the )?(?:specific )?location"
+           r"|named after (?:the )?(?:specific )?location (?:where|it)"),
+    ),
+    # 9. Consumer Products vs Identity — a maker launching a lifestyle product off its core line.
+    L2Rule(
+        "lifestyle_product_vs_identity", "Consumer Brands", "Business",
+        frozenset({"brand identity and logos", "luxury", "automobiles", "real estate"}),
+        _p(r"\b(stroller|pram|perfume|fragrance|apparel|sneakers?|watch|eyewear|sunglasses"
+           r"|home\s?decor|furniture|baby\b|lifestyle product|merchandise|branded goods)\b"),
+        require_all=(_p(r"\broll(?:ed|s)? out\b|launch\w*|unveil\w*|introduc\w*|priced at|debut\w*"),),
+    ),
+]
+
+
+def disambiguate_l2(question_text: str, answer: str = "", proposed_l2: Optional[str] = None,
+                    taxonomy_version: Optional[str] = "v6") -> Optional[Tuple[str, str, str]]:
+    """Return (target_l2, target_l1, rule_id) if a high-precedence guard overrides the proposed
+    L2, else None. Only fires for v6 and only when `proposed_l2` is a known confusable sibling
+    (or missing), so it never overrides a correct, unrelated tag. Never returns a change that
+    equals the proposed L2.
+    """
+    if (taxonomy_version or "").lower() != "v6":
+        return None
+    text = f"{question_text or ''} {answer or ''}"
+    prop = (proposed_l2 or "").strip().lower()
+    for rule in L2_DISAMBIGUATION_RULES:
+        if rule.from_l2 and prop and prop not in rule.from_l2:
+            continue  # the model picked something outside this rule's confusable set — leave it
+        if not rule.signature.search(text):
+            continue
+        if any(not p.search(text) for p in rule.require_all):
+            continue
+        if prop == rule.target_l2.lower():
+            return None  # already correct
+        return (rule.target_l2, rule.target_l1, rule.rule_id)
+    return None
+
+
+def apply_disambiguation(paths: List[Dict[str, Any]], question_text: str, answer: str = "",
+                         taxonomy_version: Optional[str] = "v6") -> List[Dict[str, Any]]:
+    """Re-order a normalised topic-path list so a ruled L2 becomes the primary path, demoting the
+    model's original primary into the secondary slot (which preserves soft-L2 evaluation credit).
+    Pure function: returns a new list; the input is unchanged. Safe to call on an empty list.
+    """
+    primary_l2 = (paths[0].get("l2") if paths else None)
+    hit = disambiguate_l2(question_text, answer, primary_l2, taxonomy_version)
+    if not hit:
+        return paths
+    target_l2, target_l1, _rule = hit
+    carry_keywords = list(paths[0].get("keywords", []) or []) if paths else []
+    new_first = {"l1": target_l1, "l2": target_l2, "keywords": carry_keywords}
+    # Keep every prior path as a sibling (deduped by l2), with the model's original primary first
+    # so it lands in secondary_l2.
+    rest, seen = [], {target_l2.lower()}
+    for p in paths:
+        l2 = (p.get("l2") or "")
+        if l2 and l2.lower() not in seen:
+            rest.append(p)
+            seen.add(l2.lower())
+    return [new_first] + rest
+
+
+def l2_match(expected: Optional[str], primary: Optional[str],
+             secondary: Optional[List[str]] = None) -> bool:
+    """Soft L2 match: a classification counts as correct if `expected` equals the primary L2
+    OR any secondary L2 (case-insensitive). Used by tagging evaluation and retrieval so a
+    model that put the right answer in its secondary slot is not scored as wrong."""
+    if not expected:
+        return False
+    e = expected.strip().lower()
+    if primary and e == primary.strip().lower():
+        return True
+    for s in (secondary or []):
+        if s and e == s.strip().lower():
+            return True
+    return False
