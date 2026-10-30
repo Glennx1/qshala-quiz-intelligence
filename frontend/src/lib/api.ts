@@ -63,9 +63,13 @@ export function getFallbackMediaUrl(currentUrl: string): string | null {
 }
 
 // Size of each slice sent by uploadDocumentChunked. Exported so the UI can show the same number.
-// 50 MB: probed against the live Render service, which accepted single requests of 120 MB, so the
-// platform is not the limit. The real cost of a bigger slice is only what a failed slice must resend.
-export const UPLOAD_CHUNK_SIZE = 50 * 1024 * 1024;
+// 16 MB: Cloud Run enforces a hard 32 MiB request-body cap on HTTP/1 (no limit only if the service
+// speaks HTTP/2 end-to-end, which the backend doesn't). A 50 MB slice was fine on Render -- which
+// has no such cap -- but silently gets dropped mid-request on Cloud Run, which looks like the
+// upload resetting rather than a clean error. 16 MB leaves real headroom under the 32 MiB ceiling
+// (multipart overhead, any proxy in front, etc). The real cost of a smaller slice is only that a
+// failed slice has to resend less.
+export const UPLOAD_CHUNK_SIZE = 16 * 1024 * 1024;
 
 /** Live numbers the Upload Center shows while a file is going up. */
 export interface UploadProgressInfo {
@@ -202,8 +206,8 @@ export const api = {
     ) => void,
     title?: string,
     year?: number,
-    chunkSize: number = UPLOAD_CHUNK_SIZE, // 50 MB slices: chunking is for resilience (a dropped connection
-    // only costs one slice), not for a payload ceiling -- the backend runs on Render, not Vercel serverless
+    chunkSize: number = UPLOAD_CHUNK_SIZE, // chunking is for resilience (a dropped connection only costs
+    // one slice) AND, on Cloud Run specifically, a real payload ceiling -- see UPLOAD_CHUNK_SIZE above
     options?: { signal?: AbortSignal; onUploadId?: (uploadId: string) => void }
   ): Promise<DocumentItem> => {
     const signal = options?.signal;
