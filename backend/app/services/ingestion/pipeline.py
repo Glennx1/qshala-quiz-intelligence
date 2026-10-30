@@ -500,6 +500,7 @@ class IngestionPipeline:
                     provenance_decks=[{"document_id": doc.id, "slide_id": q_data.get("slide_id")}],
                     occurrence_count=1,
                     question_type=q_data.get("question_type", "SLIDE_QA"),
+                    format_payload=q_data.get("format_payload"),
                     source_year=q_data.get("source_year", doc.year),
                     round_number=(q_data.get("_meta") or {}).get("round_number"),
                     image_refs=q_data.get("image_refs", []),

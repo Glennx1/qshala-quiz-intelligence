@@ -426,11 +426,30 @@ def annotate_questions(
         if star and cleaned:
             q["question_text"] = cleaned
         lang_default = deck.language if deck and deck.language else None
+        round_fmt = fmt_by_slide.get(int(sn), "QA") if sn else "QA"
+        try:
+            from backend.app.services.ingestion.question_formats import detect_and_structure_format
+            detected_fmt, payload = detect_and_structure_format(
+                question_text=q.get("question_text") or "",
+                answer=q.get("answer") or "",
+                options=q.get("options"),
+                image_refs=q.get("question_images") or q.get("image_refs"),
+                audio_refs=q.get("question_audio") or q.get("audio_refs"),
+                video_refs=q.get("question_videos") or q.get("video_refs"),
+                raw_context=slide_text_by_no.get(int(sn), "") if sn else "",
+                deck_round_format=round_fmt,
+            )
+            q["question_type"] = detected_fmt
+            q["format_payload"] = payload
+            final_fmt = detected_fmt
+        except Exception:
+            final_fmt = round_fmt
+
         q["_meta"] = {
             "question_number": idx,
             "round_number": rnd,
             "question_in_round": per_round[rnd],
-            "question_format": fmt_by_slide.get(int(sn), "QA") if sn else "QA",
+            "question_format": final_fmt,
             "star_marked": star,
             "answer_type": answer_type_for(q),
             "media_type": clue_media_type(q),

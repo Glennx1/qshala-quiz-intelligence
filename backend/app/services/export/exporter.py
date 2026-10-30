@@ -427,6 +427,662 @@ class QuizExporter:
             except Exception:
                 pass
 
+
+    @staticmethod
+    def _render_connect4_slides(
+        prs, blank_layout, q, idx, payload, resolved_q_imgs,
+        question_bg, answer_intro_bg, answer_bg, is_minimalist, is_starred,
+        FONT_HEAD, FONT_BODY, C_TEXT_DARK, C_TEXT_BODY, C_TEXT_MUTED,
+        C_ACCENT_GREEN, C_ACCENT_ORANGE, C_ACCENT_GOLD, C_CARD_BG, C_CARD_BORDER,
+        media_tmp_dir, ans_val, explanation
+    ):
+        from pptx.util import Inches, Pt
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN
+        from pptx.enum.shapes import MSO_SHAPE
+
+        # 1. Question slide
+        sq = prs.slides.add_slide(blank_layout)
+        if not is_minimalist and question_bg.exists():
+            sq.shapes.add_picture(str(question_bg), 0, 0, Inches(13.333), Inches(7.5))
+            tb_num = sq.shapes.add_textbox(Inches(6.67), Inches(0.40), Inches(4.13), Inches(1.08))
+            pn = tb_num.text_frame.paragraphs[0]
+            pn.text = f"{idx}."
+            pn.alignment = PP_ALIGN.CENTER
+            pn.font.name = FONT_HEAD
+            pn.font.size = Pt(40)
+            pn.font.bold = True
+            pn.font.color.rgb = C_TEXT_DARK
+        else:
+            bg_q = sq.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+            bg_q.fill.solid()
+            bg_q.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            bg_q.line.fill.background()
+            tb_num = sq.shapes.add_textbox(Inches(10.2), Inches(0.4), Inches(2.4), Inches(0.9))
+            pn = tb_num.text_frame.paragraphs[0]
+            pn.text = f"{idx}."
+            pn.alignment = PP_ALIGN.RIGHT
+            pn.font.name = FONT_HEAD
+            pn.font.size = Pt(44)
+            pn.font.bold = True
+            pn.font.color.rgb = C_TEXT_DARK
+
+        prompt_text = payload.get("prompt") or _get_val(q, "question_text") or "What common link unites all 4 clues?"
+        tb_prompt = sq.shapes.add_textbox(Inches(0.80), Inches(1.15), Inches(11.733), Inches(0.70))
+        tf_p = tb_prompt.text_frame
+        tf_p.word_wrap = True
+        p_badge = tf_p.paragraphs[0]
+        p_badge.text = "★ CONNECT 4 • COMMON LINK"
+        p_badge.font.name = FONT_HEAD
+        p_badge.font.size = Pt(12)
+        p_badge.font.bold = True
+        p_badge.font.color.rgb = C_ACCENT_ORANGE
+        
+        p_prompt = tf_p.add_paragraph()
+        p_prompt.text = prompt_text
+        p_prompt.font.name = FONT_HEAD
+        p_prompt.font.size = Pt(20) if len(prompt_text) < 120 else Pt(17)
+        p_prompt.font.bold = True
+        p_prompt.font.color.rgb = C_TEXT_DARK
+
+        # 2x2 Grid of 4 Clue Cards
+        elements = list(payload.get("elements", []) or [])
+        if not elements:
+            elements = [{"label": f"Clue {chr(65+i)}", "image": None} for i in range(4)]
+        while len(elements) < 4:
+            elements.append({"label": f"Clue {chr(65+len(elements))}", "image": None})
+
+        coords = [
+            (Inches(0.80), Inches(1.95)),
+            (Inches(6.833), Inches(1.95)),
+            (Inches(0.80), Inches(4.65)),
+            (Inches(6.833), Inches(4.65)),
+        ]
+        card_w, card_h = Inches(5.70), Inches(2.50)
+
+        for i in range(4):
+            left, top = coords[i]
+            elem = elements[i] if i < len(elements) else {}
+            letter = chr(65 + i)
+            card = sq.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, left, top, card_w, card_h)
+            card.fill.solid()
+            card.fill.fore_color.rgb = C_CARD_BG
+            card.line.color.rgb = C_CARD_BORDER
+            card.line.width = Pt(1.5)
+
+            badge = sq.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, left + Inches(0.18), top + Inches(0.18), Inches(0.55), Inches(0.38))
+            badge.fill.solid()
+            badge.fill.fore_color.rgb = C_TEXT_DARK
+            badge.line.fill.background()
+            pb = badge.text_frame.paragraphs[0]
+            pb.text = letter
+            pb.font.name = FONT_HEAD
+            pb.font.size = Pt(13)
+            pb.font.bold = True
+            pb.font.color.rgb = RGBColor(255, 255, 255)
+            pb.alignment = PP_ALIGN.CENTER
+
+            img_ref = elem.get("image")
+            img_path = None
+            if img_ref:
+                img_path = _resolve_media_path(img_ref, download_dir=media_tmp_dir)
+            if not img_path and i < len(resolved_q_imgs):
+                img_path = resolved_q_imgs[i]
+
+            label_text = elem.get("label") or elem.get("text") or f"Clue {letter}"
+            if img_path and img_path.exists():
+                _add_scaled_picture(sq, img_path, left + Inches(0.18), top + Inches(0.65), Inches(2.40), Inches(1.68))
+                tb_txt = sq.shapes.add_textbox(left + Inches(2.70), top + Inches(0.35), Inches(2.85), Inches(1.95))
+                tf_txt = tb_txt.text_frame
+                tf_txt.word_wrap = True
+                pt = tf_txt.paragraphs[0]
+                pt.text = label_text
+                pt.font.name = FONT_BODY
+                pt.font.size = Pt(15) if len(label_text) < 80 else Pt(13)
+                pt.font.bold = True
+                pt.font.color.rgb = C_TEXT_DARK
+            else:
+                tb_txt = sq.shapes.add_textbox(left + Inches(0.85), top + Inches(0.35), Inches(4.65), Inches(1.95))
+                tf_txt = tb_txt.text_frame
+                tf_txt.word_wrap = True
+                pt = tf_txt.paragraphs[0]
+                pt.text = label_text
+                pt.font.name = FONT_HEAD
+                pt.font.size = Pt(18) if len(label_text) < 80 else Pt(15)
+                pt.font.bold = True
+                pt.font.color.rgb = C_TEXT_DARK
+
+        # Transition slide ("Answer")
+        s_ai = prs.slides.add_slide(blank_layout)
+        if not is_minimalist and answer_intro_bg.exists():
+            s_ai.shapes.add_picture(str(answer_intro_bg), 0, 0, Inches(13.333), Inches(7.5))
+        else:
+            bg_ai = s_ai.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+            bg_ai.fill.solid()
+            bg_ai.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            bg_ai.line.fill.background()
+        tb_ai = s_ai.shapes.add_textbox(Inches(4.00), Inches(2.75), Inches(5.333), Inches(1.90))
+        pai = tb_ai.text_frame.paragraphs[0]
+        pai.alignment = PP_ALIGN.CENTER
+        pai.text = "Answer"
+        pai.font.name = FONT_HEAD
+        pai.font.size = Pt(50)
+        pai.font.bold = True
+        pai.font.color.rgb = C_TEXT_DARK
+
+        # Answer Reveal Slide
+        sa = prs.slides.add_slide(blank_layout)
+        if not is_minimalist and answer_bg.exists():
+            sa.shapes.add_picture(str(answer_bg), 0, 0, Inches(13.333), Inches(7.5))
+        else:
+            bg_a = sa.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+            bg_a.fill.solid()
+            bg_a.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            bg_a.line.fill.background()
+
+        conn_ans = payload.get("connection_reveal") or ans_val or "Common Connection"
+        banner = sa.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.80), Inches(1.15), Inches(11.733), Inches(1.85))
+        banner.fill.solid()
+        banner.fill.fore_color.rgb = RGBColor(236, 253, 245)
+        banner.line.color.rgb = C_ACCENT_GREEN
+        banner.line.width = Pt(2)
+        tf_b = banner.text_frame
+        tf_b.word_wrap = True
+        pb1 = tf_b.paragraphs[0]
+        pb1.text = "★ THE COMMON CONNECTION"
+        pb1.font.name = FONT_HEAD
+        pb1.font.size = Pt(13)
+        pb1.font.bold = True
+        pb1.font.color.rgb = C_ACCENT_GREEN
+        pb2 = tf_b.add_paragraph()
+        pb2.space_before = Pt(6)
+        pb2.text = conn_ans
+        pb2.font.name = FONT_HEAD
+        pb2.font.size = Pt(28) if len(conn_ans) < 50 else (Pt(24) if len(conn_ans) < 100 else Pt(20))
+        pb2.font.bold = True
+        pb2.font.color.rgb = C_TEXT_DARK
+
+        mini_w, mini_h = Inches(2.70), Inches(3.70)
+        xs = [Inches(0.80), Inches(3.81), Inches(6.82), Inches(9.83)]
+        for i in range(4):
+            x = xs[i]
+            elem = elements[i] if i < len(elements) else {}
+            letter = chr(65 + i)
+            m_card = sa.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, Inches(3.25), mini_w, mini_h)
+            m_card.fill.solid()
+            m_card.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            m_card.line.color.rgb = C_CARD_BORDER
+            m_card.line.width = Pt(1)
+
+            mbadge = sa.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x + Inches(0.12), Inches(3.37), Inches(0.48), Inches(0.32))
+            mbadge.fill.solid()
+            mbadge.fill.fore_color.rgb = C_TEXT_DARK
+            mbadge.line.fill.background()
+            pmb = mbadge.text_frame.paragraphs[0]
+            pmb.text = letter
+            pmb.font.name = FONT_HEAD
+            pmb.font.size = Pt(11)
+            pmb.font.bold = True
+            pmb.font.color.rgb = RGBColor(255, 255, 255)
+            pmb.alignment = PP_ALIGN.CENTER
+
+            img_ref = elem.get("image")
+            img_path = None
+            if img_ref:
+                img_path = _resolve_media_path(img_ref, download_dir=media_tmp_dir)
+            if not img_path and i < len(resolved_q_imgs):
+                img_path = resolved_q_imgs[i]
+
+            label_text = elem.get("label") or elem.get("text") or f"Clue {letter}"
+            if img_path and img_path.exists():
+                _add_scaled_picture(sa, img_path, x + Inches(0.12), Inches(3.75), mini_w - Inches(0.24), Inches(1.50))
+                tb_m = sa.shapes.add_textbox(x + Inches(0.12), Inches(5.35), mini_w - Inches(0.24), Inches(1.50))
+            else:
+                tb_m = sa.shapes.add_textbox(x + Inches(0.12), Inches(3.80), mini_w - Inches(0.24), Inches(3.00))
+            tf_m = tb_m.text_frame
+            tf_m.word_wrap = True
+            pm = tf_m.paragraphs[0]
+            pm.text = label_text
+            pm.font.name = FONT_BODY
+            pm.font.size = Pt(13) if len(label_text) < 70 else Pt(11)
+            pm.font.color.rgb = C_TEXT_BODY
+
+        sa.notes_slide.notes_text_frame.text = f"Connect 4 Reveal: {conn_ans} - {explanation}"
+
+    @staticmethod
+    def _render_stepped_clue_slides(
+        prs, blank_layout, q, idx, payload, resolved_q_imgs,
+        question_bg, answer_intro_bg, answer_bg, is_minimalist, is_starred,
+        FONT_HEAD, FONT_BODY, C_TEXT_DARK, C_TEXT_BODY, C_TEXT_MUTED,
+        C_ACCENT_GREEN, C_ACCENT_ORANGE, C_ACCENT_GOLD, C_CARD_BG, C_CARD_BORDER,
+        media_tmp_dir, ans_val, explanation
+    ):
+        from pptx.util import Inches, Pt
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN
+        from pptx.enum.shapes import MSO_SHAPE
+
+        sq = prs.slides.add_slide(blank_layout)
+        if not is_minimalist and question_bg.exists():
+            sq.shapes.add_picture(str(question_bg), 0, 0, Inches(13.333), Inches(7.5))
+            tb_num = sq.shapes.add_textbox(Inches(6.67), Inches(0.40), Inches(4.13), Inches(1.08))
+            pn = tb_num.text_frame.paragraphs[0]
+            pn.text = f"{idx}."
+            pn.alignment = PP_ALIGN.CENTER
+            pn.font.name = FONT_HEAD
+            pn.font.size = Pt(40)
+            pn.font.bold = True
+            pn.font.color.rgb = C_TEXT_DARK
+        else:
+            bg_q = sq.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+            bg_q.fill.solid()
+            bg_q.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            bg_q.line.fill.background()
+            tb_num = sq.shapes.add_textbox(Inches(10.2), Inches(0.4), Inches(2.4), Inches(0.9))
+            pn = tb_num.text_frame.paragraphs[0]
+            pn.text = f"{idx}."
+            pn.alignment = PP_ALIGN.RIGHT
+            pn.font.name = FONT_HEAD
+            pn.font.size = Pt(44)
+            pn.font.bold = True
+            pn.font.color.rgb = C_TEXT_DARK
+
+        tb_head = sq.shapes.add_textbox(Inches(0.80), Inches(1.05), Inches(11.733), Inches(0.68))
+        tf_h = tb_head.text_frame
+        tf_h.word_wrap = True
+        ph1 = tf_h.paragraphs[0]
+        ph1.text = payload.get("badge") or "PORTFOLIO BUILDER • STEPPED CLUES"
+        ph1.font.name = FONT_HEAD
+        ph1.font.size = Pt(13)
+        ph1.font.bold = True
+        ph1.font.color.rgb = C_ACCENT_ORANGE
+        ph2 = tf_h.add_paragraph()
+        ph2.text = payload.get("rules") or "Buzzer Round • 1 attempt per team • Points decrease with each progressive clue"
+        ph2.font.name = FONT_BODY
+        ph2.font.size = Pt(12)
+        ph2.font.color.rgb = C_TEXT_MUTED
+
+        clues = list(payload.get("clues", []) or [])
+        if not clues:
+            clues = [
+                {"step": 1, "points": "+20/-15", "text": _get_val(q, "question_text")},
+                {"step": 2, "points": "+15/-10", "text": "Moderate Context Hint"},
+                {"step": 3, "points": "+10/-5", "text": "Direct Giveaway Hint"},
+            ]
+        while len(clues) < 3:
+            clues.append({"step": len(clues)+1, "points": "+10/-5", "text": "Additional Hint"})
+
+        tier_configs = [
+            {"bg": RGBColor(254, 243, 199), "border": RGBColor(245, 158, 11), "pill_bg": RGBColor(217, 119, 6), "default_pts": "+20 / -15  CLUE 1"},
+            {"bg": RGBColor(238, 242, 255), "border": RGBColor(165, 180, 252), "pill_bg": RGBColor(79, 70, 229), "default_pts": "+15 / -10  CLUE 2"},
+            {"bg": RGBColor(236, 253, 245), "border": RGBColor(110, 231, 183), "pill_bg": RGBColor(5, 150, 105), "default_pts": "+10 / -5  CLUE 3"},
+        ]
+
+        top_y = [Inches(1.85), Inches(3.60), Inches(5.35)]
+        card_h = Inches(1.55)
+        for i in range(3):
+            y = top_y[i]
+            cfg = tier_configs[i]
+            clue = clues[i]
+            card = sq.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.80), y, Inches(11.733), card_h)
+            card.fill.solid()
+            card.fill.fore_color.rgb = cfg["bg"]
+            card.line.color.rgb = cfg["border"]
+            card.line.width = Pt(1.5)
+
+            pill = sq.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.98), y + Inches(0.18), Inches(2.20), Inches(0.48))
+            pill.fill.solid()
+            pill.fill.fore_color.rgb = cfg["pill_bg"]
+            pill.line.fill.background()
+            pp = pill.text_frame.paragraphs[0]
+            pts_text = clue.get("points") or cfg["default_pts"]
+            if "clue" not in pts_text.lower():
+                pts_text = f"{pts_text}  CLUE {i+1}"
+            pp.text = pts_text
+            pp.font.name = FONT_HEAD
+            pp.font.size = Pt(12)
+            pp.font.bold = True
+            pp.font.color.rgb = RGBColor(255, 255, 255)
+            pp.alignment = PP_ALIGN.CENTER
+
+            tb_txt = sq.shapes.add_textbox(Inches(3.35), y + Inches(0.12), Inches(8.95), Inches(1.30))
+            tf_t = tb_txt.text_frame
+            tf_t.word_wrap = True
+            pt = tf_t.paragraphs[0]
+            c_text = clue.get("text") or ""
+            pt.text = c_text
+            pt.font.name = FONT_BODY
+            pt.font.size = Pt(17) if len(c_text) < 140 else Pt(14)
+            pt.font.color.rgb = C_TEXT_DARK
+
+        # Transition slide ("Answer")
+        s_ai = prs.slides.add_slide(blank_layout)
+        if not is_minimalist and answer_intro_bg.exists():
+            s_ai.shapes.add_picture(str(answer_intro_bg), 0, 0, Inches(13.333), Inches(7.5))
+        else:
+            bg_ai = s_ai.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+            bg_ai.fill.solid()
+            bg_ai.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            bg_ai.line.fill.background()
+        tb_ai = s_ai.shapes.add_textbox(Inches(4.00), Inches(2.75), Inches(5.333), Inches(1.90))
+        pai = tb_ai.text_frame.paragraphs[0]
+        pai.alignment = PP_ALIGN.CENTER
+        pai.text = "Answer"
+        pai.font.name = FONT_HEAD
+        pai.font.size = Pt(50)
+        pai.font.bold = True
+        pai.font.color.rgb = C_TEXT_DARK
+
+        # Answer Reveal Slide
+        sa = prs.slides.add_slide(blank_layout)
+        if not is_minimalist and answer_bg.exists():
+            sa.shapes.add_picture(str(answer_bg), 0, 0, Inches(13.333), Inches(7.5))
+        else:
+            bg_a = sa.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+            bg_a.fill.solid()
+            bg_a.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            bg_a.line.fill.background()
+
+        ans_banner = sa.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.80), Inches(1.20), Inches(11.733), Inches(1.80))
+        ans_banner.fill.solid()
+        ans_banner.fill.fore_color.rgb = RGBColor(236, 253, 245)
+        ans_banner.line.color.rgb = C_ACCENT_GREEN
+        ans_banner.line.width = Pt(2)
+        tf_ab = ans_banner.text_frame
+        tf_ab.word_wrap = True
+        pa1 = tf_ab.paragraphs[0]
+        pa1.text = "★ OFFICIAL ANSWER"
+        pa1.font.name = FONT_HEAD
+        pa1.font.size = Pt(13)
+        pa1.font.bold = True
+        pa1.font.color.rgb = C_ACCENT_GREEN
+        pa2 = tf_ab.add_paragraph()
+        pa2.space_before = Pt(6)
+        pa2.text = ans_val
+        pa2.font.name = FONT_HEAD
+        pa2.font.size = Pt(32) if len(ans_val) < 50 else (Pt(26) if len(ans_val) < 100 else Pt(22))
+        pa2.font.bold = True
+        pa2.font.color.rgb = C_TEXT_DARK
+
+        exp_box = sa.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.80), Inches(3.20), Inches(11.733), Inches(3.70))
+        exp_box.fill.solid()
+        exp_box.fill.fore_color.rgb = RGBColor(255, 255, 255)
+        exp_box.line.color.rgb = C_CARD_BORDER
+        exp_box.line.width = Pt(1.5)
+        tf_eb = exp_box.text_frame
+        tf_eb.word_wrap = True
+        pe_head = tf_eb.paragraphs[0]
+        pe_head.text = "HOW THE CLUES CONNECTED:"
+        pe_head.font.name = FONT_HEAD
+        pe_head.font.size = Pt(13)
+        pe_head.font.bold = True
+        pe_head.font.color.rgb = C_TEXT_MUTED
+
+        for i, clue in enumerate(clues[:3]):
+            pe_c = tf_eb.add_paragraph()
+            pe_c.space_before = Pt(8)
+            pe_c.text = f"• Clue {i+1} ({clue.get('points', '')}): {clue.get('text', '')}"
+            pe_c.font.name = FONT_BODY
+            pe_c.font.size = Pt(13)
+            pe_c.font.color.rgb = C_TEXT_BODY
+
+        if explanation and len(explanation) > 10:
+            pe_exp = tf_eb.add_paragraph()
+            pe_exp.space_before = Pt(10)
+            pe_exp.text = f"Context: {explanation}"
+            pe_exp.font.name = FONT_BODY
+            pe_exp.font.size = Pt(13)
+            pe_exp.font.color.rgb = C_TEXT_MUTED
+
+        sa.notes_slide.notes_text_frame.text = f"Stepped Clue Solution: {ans_val} - {explanation}"
+
+    @staticmethod
+    def _render_arrange_slides(
+        prs, blank_layout, q, idx, payload, resolved_q_imgs,
+        question_bg, answer_intro_bg, answer_bg, is_minimalist, is_starred,
+        FONT_HEAD, FONT_BODY, C_TEXT_DARK, C_TEXT_BODY, C_TEXT_MUTED,
+        C_ACCENT_GREEN, C_ACCENT_ORANGE, C_ACCENT_GOLD, C_CARD_BG, C_CARD_BORDER,
+        media_tmp_dir, ans_val, explanation
+    ):
+        from pptx.util import Inches, Pt
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN
+        from pptx.enum.shapes import MSO_SHAPE
+
+        sq = prs.slides.add_slide(blank_layout)
+        if not is_minimalist and question_bg.exists():
+            sq.shapes.add_picture(str(question_bg), 0, 0, Inches(13.333), Inches(7.5))
+            tb_num = sq.shapes.add_textbox(Inches(6.67), Inches(0.40), Inches(4.13), Inches(1.08))
+            pn = tb_num.text_frame.paragraphs[0]
+            pn.text = f"{idx}."
+            pn.alignment = PP_ALIGN.CENTER
+            pn.font.name = FONT_HEAD
+            pn.font.size = Pt(40)
+            pn.font.bold = True
+            pn.font.color.rgb = C_TEXT_DARK
+        else:
+            bg_q = sq.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+            bg_q.fill.solid()
+            bg_q.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            bg_q.line.fill.background()
+            tb_num = sq.shapes.add_textbox(Inches(10.2), Inches(0.4), Inches(2.4), Inches(0.9))
+            pn = tb_num.text_frame.paragraphs[0]
+            pn.text = f"{idx}."
+            pn.alignment = PP_ALIGN.RIGHT
+            pn.font.name = FONT_HEAD
+            pn.font.size = Pt(44)
+            pn.font.bold = True
+            pn.font.color.rgb = C_TEXT_DARK
+
+        instruct = payload.get("instruction") or _get_val(q, "question_text") or "Arrange these items into the correct order:"
+        tb_head = sq.shapes.add_textbox(Inches(0.80), Inches(1.05), Inches(11.733), Inches(0.90))
+        tf_h = tb_head.text_frame
+        tf_h.word_wrap = True
+        ph1 = tf_h.paragraphs[0]
+        ph1.text = payload.get("badge") or "TICKER TANGLE • ARRANGE ORDER"
+        ph1.font.name = FONT_HEAD
+        ph1.font.size = Pt(13)
+        ph1.font.bold = True
+        ph1.font.color.rgb = C_ACCENT_ORANGE
+        ph2 = tf_h.add_paragraph()
+        ph2.space_before = Pt(4)
+        ph2.text = instruct
+        ph2.font.name = FONT_HEAD
+        ph2.font.size = Pt(19) if len(instruct) < 120 else Pt(16)
+        ph2.font.bold = True
+        ph2.font.color.rgb = C_TEXT_DARK
+
+        items = list(payload.get("items", []) or [])
+        if not items:
+            items = [{"key": chr(65+i), "text": f"Element {chr(65+i)}"} for i in range(4)]
+        while len(items) < 4:
+            items.append({"key": chr(65+len(items)), "text": f"Element {chr(65+len(items))}"})
+
+        card_w, card_h = Inches(2.70), Inches(3.60)
+        xs = [Inches(0.80), Inches(3.81), Inches(6.82), Inches(9.83)]
+        y_cards = Inches(2.15)
+
+        for i in range(4):
+            x = xs[i]
+            item = items[i]
+            key_label = item.get("key") or chr(65 + i)
+            card = sq.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y_cards, card_w, card_h)
+            card.fill.solid()
+            card.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            card.line.color.rgb = C_CARD_BORDER
+            card.line.width = Pt(1.5)
+
+            badge = sq.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x + Inches(0.15), y_cards + Inches(0.15), Inches(0.55), Inches(0.38))
+            badge.fill.solid()
+            badge.fill.fore_color.rgb = C_TEXT_DARK
+            badge.line.fill.background()
+            pb = badge.text_frame.paragraphs[0]
+            pb.text = key_label
+            pb.font.name = FONT_HEAD
+            pb.font.size = Pt(13)
+            pb.font.bold = True
+            pb.font.color.rgb = RGBColor(255, 255, 255)
+            pb.alignment = PP_ALIGN.CENTER
+
+            img_ref = item.get("image")
+            img_path = None
+            if img_ref:
+                img_path = _resolve_media_path(img_ref, download_dir=media_tmp_dir)
+            if not img_path and i < len(resolved_q_imgs):
+                img_path = resolved_q_imgs[i]
+
+            text_content = item.get("text") or f"Item {key_label}"
+            if img_path and img_path.exists():
+                _add_scaled_picture(sq, img_path, x + Inches(0.15), y_cards + Inches(0.65), card_w - Inches(0.30), Inches(1.50))
+                tb_t = sq.shapes.add_textbox(x + Inches(0.15), y_cards + Inches(2.25), card_w - Inches(0.30), Inches(1.25))
+            else:
+                tb_t = sq.shapes.add_textbox(x + Inches(0.15), y_cards + Inches(0.70), card_w - Inches(0.30), Inches(2.70))
+
+            tf_t = tb_t.text_frame
+            tf_t.word_wrap = True
+            pt = tf_t.paragraphs[0]
+            pt.text = text_content
+            pt.font.name = FONT_BODY
+            pt.font.size = Pt(15) if len(text_content) < 80 else Pt(13)
+            pt.font.color.rgb = C_TEXT_DARK
+
+        scoring = payload.get("scoring") or {"all_correct": "+20", "two_correct": "+10", "one_correct": "+5"}
+        rule_pill = sq.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.80), Inches(5.95), Inches(11.733), Inches(0.70))
+        rule_pill.fill.solid()
+        rule_pill.fill.fore_color.rgb = RGBColor(241, 245, 249)
+        rule_pill.line.color.rgb = RGBColor(203, 213, 225)
+        rule_pill.line.width = Pt(1)
+        tf_rp = rule_pill.text_frame
+        tf_rp.word_wrap = True
+        prp = tf_rp.paragraphs[0]
+        prp.alignment = PP_ALIGN.CENTER
+        prp.text = f"⏱ 60 SECONDS TIME LIMIT  •  SCORING: All 4 correct = {scoring.get('all_correct', '+20')} pts  |  2 correct = {scoring.get('two_correct', '+10')} pts  |  1 correct = {scoring.get('one_correct', '+5')} pts"
+        prp.font.name = FONT_HEAD
+        prp.font.size = Pt(12)
+        prp.font.bold = True
+        prp.font.color.rgb = C_TEXT_DARK
+
+        # Transition slide ("Answer")
+        s_ai = prs.slides.add_slide(blank_layout)
+        if not is_minimalist and answer_intro_bg.exists():
+            s_ai.shapes.add_picture(str(answer_intro_bg), 0, 0, Inches(13.333), Inches(7.5))
+        else:
+            bg_ai = s_ai.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+            bg_ai.fill.solid()
+            bg_ai.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            bg_ai.line.fill.background()
+        tb_ai = s_ai.shapes.add_textbox(Inches(4.00), Inches(2.75), Inches(5.333), Inches(1.90))
+        pai = tb_ai.text_frame.paragraphs[0]
+        pai.alignment = PP_ALIGN.CENTER
+        pai.text = "Answer"
+        pai.font.name = FONT_HEAD
+        pai.font.size = Pt(50)
+        pai.font.bold = True
+        pai.font.color.rgb = C_TEXT_DARK
+
+        # Answer Reveal Slide
+        sa = prs.slides.add_slide(blank_layout)
+        if not is_minimalist and answer_bg.exists():
+            sa.shapes.add_picture(str(answer_bg), 0, 0, Inches(13.333), Inches(7.5))
+        else:
+            bg_a = sa.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+            bg_a.fill.solid()
+            bg_a.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            bg_a.line.fill.background()
+
+        tb_ans_head = sa.shapes.add_textbox(Inches(0.80), Inches(1.10), Inches(11.733), Inches(0.90))
+        tf_ah = tb_ans_head.text_frame
+        tf_ah.word_wrap = True
+        pa_h1 = tf_ah.paragraphs[0]
+        pa_h1.text = "★ CORRECT CHRONOLOGICAL SEQUENCE"
+        pa_h1.font.name = FONT_HEAD
+        pa_h1.font.size = Pt(13)
+        pa_h1.font.bold = True
+        pa_h1.font.color.rgb = C_ACCENT_GREEN
+
+        seq_keys = payload.get("correct_sequence") or ["A", "B", "C", "D"]
+        item_by_key = {item.get("key", chr(65+i)): item for i, item in enumerate(items)}
+        ordered_items = [item_by_key.get(k, {"key": k, "text": f"Item {k}"}) for k in seq_keys]
+        seq_str = "  ➔  ".join([f"[{k}]" for k in seq_keys])
+        pa_h2 = tf_ah.add_paragraph()
+        pa_h2.space_before = Pt(4)
+        pa_h2.text = f"Sequence: {seq_str}"
+        pa_h2.font.name = FONT_HEAD
+        pa_h2.font.size = Pt(22)
+        pa_h2.font.bold = True
+        pa_h2.font.color.rgb = C_TEXT_DARK
+
+        for i in range(4):
+            x = xs[i]
+            item = ordered_items[i] if i < len(ordered_items) else {}
+            key_label = item.get("key", seq_keys[i] if i < len(seq_keys) else chr(65+i))
+
+            card = sa.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y_cards, card_w, card_h)
+            card.fill.solid()
+            card.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            card.line.color.rgb = C_ACCENT_GREEN
+            card.line.width = Pt(2)
+
+            pill = sa.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x + Inches(0.15), y_cards + Inches(0.15), Inches(1.10), Inches(0.38))
+            pill.fill.solid()
+            pill.fill.fore_color.rgb = C_ACCENT_GREEN
+            pill.line.fill.background()
+            ppb = pill.text_frame.paragraphs[0]
+            ppb.text = f"{i+1}. [{key_label}]"
+            ppb.font.name = FONT_HEAD
+            ppb.font.size = Pt(12)
+            ppb.font.bold = True
+            ppb.font.color.rgb = RGBColor(255, 255, 255)
+            ppb.alignment = PP_ALIGN.CENTER
+
+            if i < 3:
+                tb_arr = sa.shapes.add_textbox(x + card_w, y_cards + Inches(1.50), Inches(0.31), Inches(0.50))
+                parr = tb_arr.text_frame.paragraphs[0]
+                parr.alignment = PP_ALIGN.CENTER
+                parr.text = "➔"
+                parr.font.name = FONT_HEAD
+                parr.font.size = Pt(20)
+                parr.font.bold = True
+                parr.font.color.rgb = C_ACCENT_ORANGE
+
+            annot = item.get("annotation") or ""
+            if annot:
+                annot_pill = sa.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x + Inches(1.35), y_cards + Inches(0.15), card_w - Inches(1.50), Inches(0.38))
+                annot_pill.fill.solid()
+                annot_pill.fill.fore_color.rgb = RGBColor(241, 245, 249)
+                annot_pill.line.color.rgb = RGBColor(203, 213, 225)
+                annot_pill.line.width = Pt(1)
+                pa = annot_pill.text_frame.paragraphs[0]
+                pa.text = annot
+                pa.font.name = FONT_HEAD
+                pa.font.size = Pt(12)
+                pa.font.bold = True
+                pa.font.color.rgb = C_TEXT_DARK
+                pa.alignment = PP_ALIGN.CENTER
+
+            tb_t = sa.shapes.add_textbox(x + Inches(0.15), y_cards + Inches(0.70), card_w - Inches(0.30), Inches(2.70))
+            tf_t = tb_t.text_frame
+            tf_t.word_wrap = True
+            pt = tf_t.paragraphs[0]
+            t_val = item.get("text") or f"Item {key_label}"
+            pt.text = t_val
+            pt.font.name = FONT_BODY
+            pt.font.size = Pt(15) if len(t_val) < 80 else Pt(13)
+            pt.font.color.rgb = C_TEXT_DARK
+
+        ans_exp = _get_val(q, "answer") or explanation or ""
+        if ans_exp:
+            tb_exp = sa.shapes.add_textbox(Inches(0.80), Inches(5.95), Inches(11.733), Inches(0.85))
+            tf_e = tb_exp.text_frame
+            tf_e.word_wrap = True
+            pe = tf_e.paragraphs[0]
+            pe.text = f"Full Solution: {ans_exp}"
+            pe.font.name = FONT_BODY
+            pe.font.size = Pt(13)
+            pe.font.color.rgb = C_TEXT_MUTED
+
+        sa.notes_slide.notes_text_frame.text = f"Chronology Sequence: {seq_str} - {ans_exp}"
+
     @staticmethod
     def _build_pptx(
         quiz: Any,
@@ -746,6 +1402,83 @@ class QuizExporter:
                 else:
                     q_text = "Identify the person, brand, or concept based on the competition clues."
             options = _get_val(q, "options", []) or []
+
+            # ---------------------------------------------------------
+            # Specialized Question Type Detection & Layout Dispatch
+            # ---------------------------------------------------------
+            fmt = _get_val(q, "question_format") or _get_val(q, "question_type") or "QA"
+            format_payload = _get_val(q, "format_payload") or {}
+
+            if not format_payload or fmt in ("QA", "SLIDE_QA"):
+                try:
+                    from backend.app.services.ingestion.question_formats import detect_and_structure_format
+                    detected_fmt, payload = detect_and_structure_format(
+                        question_text=q_text,
+                        answer=_get_val(q, "answer") or "",
+                        options=options,
+                        image_refs=[str(p) for p in resolved_q_imgs],
+                        audio_refs=[str(audio_path)] if audio_path else [],
+                        video_refs=[str(video_path)] if video_path else [],
+                        raw_context="",
+                        deck_round_format=fmt
+                    )
+                    if detected_fmt in ("CONNECT_4", "STEPPED_CLUE", "ARRANGE_ORDER"):
+                        fmt = detected_fmt
+                        format_payload = payload or {}
+                except Exception:
+                    pass
+
+            ans_val = (_get_val(q, "answer") or "N/A").strip()
+            raw_exp = (_get_val(q, "explanation") or "").strip()
+            is_dup_explanation = (
+                not raw_exp or
+                raw_exp.strip().lower() == ans_val.strip().lower() or
+                raw_exp.strip().lower() in ("n/a", "none", "historical qshala competition question.") or
+                len(raw_exp.strip()) < 3
+            )
+            explanation = "" if is_dup_explanation else raw_exp
+
+            if fmt == "CONNECT_4" or (format_payload and format_payload.get("type") == "CONNECT_4"):
+                QuizExporter._render_connect4_slides(
+                    prs=prs, blank_layout=blank_layout, q=q, idx=idx, payload=format_payload,
+                    resolved_q_imgs=resolved_q_imgs, question_bg=question_bg,
+                    answer_intro_bg=answer_intro_bg, answer_bg=answer_bg,
+                    is_minimalist=is_minimalist, is_starred=is_starred,
+                    FONT_HEAD=FONT_HEAD, FONT_BODY=FONT_BODY,
+                    C_TEXT_DARK=C_TEXT_DARK, C_TEXT_BODY=C_TEXT_BODY, C_TEXT_MUTED=C_TEXT_MUTED,
+                    C_ACCENT_GREEN=C_ACCENT_GREEN, C_ACCENT_ORANGE=C_ACCENT_ORANGE, C_ACCENT_GOLD=C_ACCENT_GOLD,
+                    C_CARD_BG=C_CARD_BG, C_CARD_BORDER=C_CARD_BORDER,
+                    media_tmp_dir=media_tmp_dir, ans_val=ans_val, explanation=explanation
+                )
+                continue
+
+            elif fmt == "STEPPED_CLUE" or (format_payload and format_payload.get("type") == "STEPPED_CLUE"):
+                QuizExporter._render_stepped_clue_slides(
+                    prs=prs, blank_layout=blank_layout, q=q, idx=idx, payload=format_payload,
+                    resolved_q_imgs=resolved_q_imgs, question_bg=question_bg,
+                    answer_intro_bg=answer_intro_bg, answer_bg=answer_bg,
+                    is_minimalist=is_minimalist, is_starred=is_starred,
+                    FONT_HEAD=FONT_HEAD, FONT_BODY=FONT_BODY,
+                    C_TEXT_DARK=C_TEXT_DARK, C_TEXT_BODY=C_TEXT_BODY, C_TEXT_MUTED=C_TEXT_MUTED,
+                    C_ACCENT_GREEN=C_ACCENT_GREEN, C_ACCENT_ORANGE=C_ACCENT_ORANGE, C_ACCENT_GOLD=C_ACCENT_GOLD,
+                    C_CARD_BG=C_CARD_BG, C_CARD_BORDER=C_CARD_BORDER,
+                    media_tmp_dir=media_tmp_dir, ans_val=ans_val, explanation=explanation
+                )
+                continue
+
+            elif fmt == "ARRANGE_ORDER" or (format_payload and format_payload.get("type") == "ARRANGE_ORDER"):
+                QuizExporter._render_arrange_slides(
+                    prs=prs, blank_layout=blank_layout, q=q, idx=idx, payload=format_payload,
+                    resolved_q_imgs=resolved_q_imgs, question_bg=question_bg,
+                    answer_intro_bg=answer_intro_bg, answer_bg=answer_bg,
+                    is_minimalist=is_minimalist, is_starred=is_starred,
+                    FONT_HEAD=FONT_HEAD, FONT_BODY=FONT_BODY,
+                    C_TEXT_DARK=C_TEXT_DARK, C_TEXT_BODY=C_TEXT_BODY, C_TEXT_MUTED=C_TEXT_MUTED,
+                    C_ACCENT_GREEN=C_ACCENT_GREEN, C_ACCENT_ORANGE=C_ACCENT_ORANGE, C_ACCENT_GOLD=C_ACCENT_GOLD,
+                    C_CARD_BG=C_CARD_BG, C_CARD_BORDER=C_CARD_BORDER,
+                    media_tmp_dir=media_tmp_dir, ans_val=ans_val, explanation=explanation
+                )
+                continue
 
             # ---------------------------------------------------------
             # (A) QUESTION SLIDE (uses question_bg: PPT.png with peach border)

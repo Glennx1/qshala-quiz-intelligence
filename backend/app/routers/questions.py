@@ -30,6 +30,8 @@ def _enrich(db: Session, responses: List[QuestionResponse]) -> List[QuestionResp
             r.question_number = m.question_number
             r.question_label = question_label(m.question_number, m.round_number, m.question_in_round) or None
             r.star_marked = bool(m.star_marked)
+            if m.question_format:
+                r.question_format = m.question_format
         r.topic_paths = paths.get(r.id, [])
         r.repeated = reps.get(r.id, [])
         r.repeated_count = len(r.repeated)
@@ -103,6 +105,8 @@ def to_question_response(q: Question, doc: Optional[Document], slide: Optional[S
         provenance_decks=getattr(q, "provenance_decks", []) or [],
         round_number=getattr(q, "round_number", None),
         question_type=q.question_type or "SLIDE_QA",
+        question_format=getattr(q, "question_type", "QA") or "QA",
+        format_payload=getattr(q, "format_payload", None),
         image_refs=clean_imgs,
         question_images=clean_q_imgs,
         answer_images=clean_ans_imgs,

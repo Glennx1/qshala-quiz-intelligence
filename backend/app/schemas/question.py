@@ -24,6 +24,8 @@ class QuestionBase(BaseModel):
     provenance_decks: List[Dict[str, Any]] = []
     round_number: Optional[int] = None
     question_type: str = "SLIDE_QA"
+    question_format: Optional[str] = "QA"
+    format_payload: Optional[Dict[str, Any]] = None
     source_year: Optional[int] = None
     # Multi-modal media & canonical representations
     image_refs: List[str] = []
