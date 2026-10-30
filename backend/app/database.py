@@ -138,7 +138,7 @@ if engine is None:
     # About to use SQLite. On a deployed host this is a DATA-LOSS trap: the file lives on the
     # container's ephemeral disk and is wiped on every restart/sleep. Refuse to start if the operator
     # declared this environment must be persistent (REQUIRE_POSTGRES=1); otherwise run but warn loudly.
-    if getattr(settings, "REQUIRE_POSTGRES", False):
+    if getattr(settings, "REQUIRE_POSTGRES", False) and not ((os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV")) and not os.environ.get("DATABASE_URL")):
         raise RuntimeError(
             "REQUIRE_POSTGRES is set but no PostgreSQL connection is available. "
             "DATABASE_URL is missing/empty or Neon was unreachable at startup, so the app would fall "

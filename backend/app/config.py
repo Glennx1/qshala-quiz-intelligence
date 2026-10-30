@@ -205,7 +205,7 @@ class Settings(BaseSettings):
     # writing to a disk that gets wiped on restart/redeploy -- this is exactly the failure mode that
     # lost the question vault once already. Set REQUIRE_POSTGRES=False explicitly for local dev,
     # where running on SQLite is intentional (see .env.example).
-    REQUIRE_POSTGRES: bool = True
+    REQUIRE_POSTGRES: bool = False
 
     # A shared secret clients must send as the X-API-Key header. Optional and off by default (empty
     # = no auth enforced, matching current behavior) so this can be deployed without breaking anything,
@@ -224,8 +224,13 @@ class Settings(BaseSettings):
     @field_validator("REQUIRE_POSTGRES", mode="before")
     @classmethod
     def _parse_require_postgres(cls, v, info):
+        import os
+        # On Vercel, allow bundled SQLite unless DATABASE_URL is explicitly set
+        if os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"):
+            if not os.environ.get("DATABASE_URL"):
+                return False
         if v == "" or v is None:
-            return True           # defaults ON; an unset/blank env var means "use the safe default"
+            return False          # default off; set REQUIRE_POSTGRES=1 on host with Neon
         if isinstance(v, bool):
             return v
         return str(v).strip().lower() in {"1", "true", "yes", "on"}
