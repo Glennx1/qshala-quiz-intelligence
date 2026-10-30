@@ -614,9 +614,9 @@ function KnowledgeBaseContent() {
                     const cleanQImgs = rawQImgs.filter(x => !isPlaceholderIcon(x));
                     const cleanAnsImgs = (q.answer_images || []).filter(x => !isPlaceholderIcon(x));
                     const hasVideoClue = Boolean(
-                      (q.video_refs && q.video_refs.length > 0) ||
-                      (q.question_videos && q.question_videos.length > 0) ||
-                      (q.raw_media_refs && q.raw_media_refs.some(r => r.endsWith('.mp4') || r.endsWith('.webm') || r.endsWith('.mov') || r.includes('/media/media')))
+                      ((q.video_refs && q.video_refs.length > 0 && !q.video_refs.some(r => r.toLowerCase().includes('timer') || q.question_format === 'ARRANGE_ORDER')) ||
+                       (q.question_videos && q.question_videos.length > 0 && !q.question_videos.some(r => r.toLowerCase().includes('timer') || q.question_format === 'ARRANGE_ORDER')) ||
+                       (q.raw_media_refs && q.raw_media_refs.some(r => (r.endsWith('.mp4') || r.endsWith('.webm') || r.endsWith('.mov')) && !r.toLowerCase().includes('timer') && q.question_format !== 'ARRANGE_ORDER')))
                     );
 
                     return (

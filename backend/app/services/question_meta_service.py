@@ -324,6 +324,60 @@ def update_question_metadata(db: Session, question_id: str, changes: Dict[str, A
             log_edit(db, question_id, field, old, val, kind="EDIT", actor=actor)
             if field == "round_number":
                 q.round_number = val
+            if field == "question_format":
+                canonical_fmt = (
+                    "CONNECT_4" if val in ("CONNECT", "CONNECT_4")
+                    else ("STEPPED_CLUE" if val in ("THREE_CLUE", "STEPPED_CLUE")
+                    else val)
+                )
+                q.question_format = canonical_fmt
+                q.question_type = canonical_fmt
+                short_tag = (
+                    "Connect 4" if canonical_fmt == "CONNECT_4"
+                    else "Stepped Clue" if canonical_fmt == "STEPPED_CLUE"
+                    else "Arrange Order" if canonical_fmt == "ARRANGE_ORDER"
+                    else "Buzzer" if canonical_fmt == "BUZZER"
+                    else "Direct QA" if canonical_fmt in ("QA", "STANDARD_QA")
+                    else FORMAT_LABELS.get(canonical_fmt, canonical_fmt)
+                )
+                fmt_tag_names = set(FORMAT_LABELS.values()) | set(FORMAT_LABELS.keys()) | {
+                    "Connect 4", "Connect", "Stepped Clue", "Portfolio Builder",
+                    "Arrange Order", "Ticker Tangle", "Buzzer", "Closing Bell",
+                    "Standard QA", "Direct QA", "QA"
+                }
+                current_tags = [t for t in (q.tags or []) if t not in fmt_tag_names]
+                current_tags.append(short_tag)
+                q.tags = current_tags
+
+                if canonical_fmt == "CONNECT_4" and not q.format_data:
+                    q.format_data = {
+                        "type": "CONNECT_4",
+                        "badge": "Market Indicators • Connect 4",
+                        "clues": q.question_images or [],
+                        "connection_reveal": q.answer
+                    }
+                elif canonical_fmt == "STEPPED_CLUE" and not q.format_data:
+                    q.format_data = {
+                        "type": "STEPPED_CLUE",
+                        "badge": "Portfolio Builder • Stepped Clues",
+                        "clues": [{"step": 1, "points": "+20/-15", "text": q.question_text, "image": None}],
+                        "answer": q.answer
+                    }
+                elif canonical_fmt == "ARRANGE_ORDER" and not q.format_data:
+                    q.format_data = {
+                        "type": "ARRANGE_ORDER",
+                        "badge": "Ticker Tangle • Arrange Order",
+                        "instruction": q.question_text,
+                        "raw_answer": q.answer,
+                        "has_timer": True,
+                        "timer_seconds": 60
+                    }
+                elif canonical_fmt == "BUZZER" and not q.format_data:
+                    q.format_data = {
+                        "type": "BUZZER",
+                        "badge": "Closing Bell • Buzzer Round",
+                        "scoring": {"correct": "+20", "wrong": "-10"}
+                    }
             manual.add(field)
     meta.manual_fields = sorted(manual)
     db.flush()

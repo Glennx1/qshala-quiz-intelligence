@@ -81,11 +81,20 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
   const rawAudioList = (question.raw_media_refs || []).filter(r => r.endsWith('.mp3') || r.endsWith('.wav') || r.endsWith('.m4a') || r.endsWith('.aac') || r.includes('audio'));
   const allAudios = Array.from(new Set([...questionAudioList, ...answerAudioList, ...rawAudioList]));
 
-  // Find video media URL from video_refs, question_videos, raw_media_refs, or video_transcript
-  const videoRef = (question.video_refs && question.video_refs.length > 0 ? question.video_refs[0] : null)
+  // Is this media a timer (not a trivia video clue)?
+  const isTimerMedia = (url?: string | null) => {
+    if (!url) return false;
+    const l = url.toLowerCase();
+    return l.includes('timer') || l.includes('1min') || l.includes('countdown') || (question?.question_format === 'ARRANGE_ORDER' && (l.endsWith('.mp4') || l.endsWith('.webm')));
+  };
+
+  // Find video media URL from video_refs, question_videos, raw_media_refs, or video_transcript (excluding countdown timers)
+  const videoCandidate = (question.video_refs && question.video_refs.length > 0 ? question.video_refs[0] : null)
     || (question.question_videos && question.question_videos.length > 0 ? question.question_videos[0] : null)
-    || (question.raw_media_refs || []).find(r => r.endsWith('.mp4') || r.endsWith('.webm') || r.endsWith('.mov') || r.includes('/media/media'))
+    || (question.raw_media_refs || []).find(r => (r.endsWith('.mp4') || r.endsWith('.webm') || r.endsWith('.mov') || r.includes('/media/media')) && !isTimerMedia(r))
     || (question.video_transcript && (question.video_transcript.includes('http') || question.video_transcript.includes('youtu')) ? question.video_transcript.trim() : null);
+
+  const videoRef = (videoCandidate && !isTimerMedia(videoCandidate)) ? videoCandidate : null;
 
   const hasAudio = Boolean(allAudios.length > 0 || question.audio_transcript);
   const hasVideo = Boolean(videoRef || question.video_transcript);
@@ -190,7 +199,9 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
               </span>
               {question.explanation && (
                 <span className="text-slate-500 text-[12px] italic pl-2 border-l border-slate-200">
-                  {question.explanation}
+                  {question.question_format === 'ARRANGE_ORDER' && question.explanation.startsWith('Clue:')
+                    ? question.explanation.replace(/^Clue:\s*/i, 'Instruction: ')
+                    : question.explanation}
                 </span>
               )}
             </div>
