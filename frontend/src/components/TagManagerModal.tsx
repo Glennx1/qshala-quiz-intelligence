@@ -621,7 +621,7 @@ export default function TagManagerModal({ isOpen, onClose, question, onSaved, on
                         }
                         onChange={(e) => setMetaField('question_format', e.target.value)}
                       >
-                        {(taxonomy?.formats ?? CANONICAL_FORMAT_OPTIONS).map((f) => (
+                        {CANONICAL_FORMAT_OPTIONS.map((f) => (
                           <option key={f} value={f}>
                             {FORMAT_LABELS[f] || f}
                           </option>

@@ -658,6 +658,23 @@ export const api = {
     return handleResponse<{ message: string }>(res);
   },
 
+  deleteQuestionFromBank: async (questionId: string): Promise<{ status: string; message: string }> => {
+    const res = await fetch(`${getApiBase()}/questions/${questionId}`, {
+      method: 'DELETE',
+    });
+    return handleResponse<{ status: string; message: string }>(res);
+  },
+
+  clearQuestionBank: async (documentId?: string): Promise<{ status: string; deleted_count: number; message: string }> => {
+    const url = documentId
+      ? `${getApiBase()}/questions?document_id=${encodeURIComponent(documentId)}`
+      : `${getApiBase()}/questions?all=true`;
+    const res = await fetch(url, {
+      method: 'DELETE',
+    });
+    return handleResponse<{ status: string; deleted_count: number; message: string }>(res);
+  },
+
   exportQuizUrl: (quizId: string, format: 'json' | 'csv' | 'pptx', options?: ExportOptions): string => {
     let url = `${getApiBase()}/quizzes/${quizId}/export?format=${format}`;
     if (format === 'pptx') {

@@ -919,7 +919,7 @@ function KnowledgeBaseContent() {
                             </>
                           ) : (
                             <>
-                              <span className="rounded-md bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-800 w-fit">{q.topic}</span>
+                              <span className="rounded-md bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-800 w-fit">{q.topic && q.topic !== "Uncategorised" ? q.topic : "General Knowledge"}</span>
                               {q.subtopic && !q.subtopic.toLowerCase().includes('round') && !q.subtopic.toLowerCase().includes('closing bell') && !q.subtopic.toLowerCase().includes('market indicators') && (
                                 <span className="text-[11px] text-slate-500 font-medium">{q.subtopic.replace(/^[–—\-:\s]+/, '')}</span>
                               )}

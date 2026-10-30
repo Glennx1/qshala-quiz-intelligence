@@ -816,3 +816,75 @@ def delete_question_tag(
     db.refresh(q)
     return _enrich_one(db, to_question_response(q, doc, slide))
 
+
+
+@router.delete("", response_model=dict)
+def delete_all_questions_endpoint(
+    document_id: Optional[str] = None,
+    all: bool = False,
+    db: Session = Depends(get_db)
+):
+    """
+    Remove questions from the question bank.
+    If document_id is specified, removes all questions from that deck.
+    If all=True (or no document_id provided), purges all questions in the bank.
+    """
+    from backend.app.models.qshala_tag import QshalaTag, QshalaTagChange, QshalaQuestionMetadata
+    from backend.app.models.question_meta import QuestionTopicPath, QuestionEditHistory, QuestionRepeat
+
+    q_query = db.query(Question)
+    if document_id:
+        q_query = q_query.filter(Question.document_id == document_id)
+    
+    question_ids = [q.id for q in q_query.all()]
+    if not question_ids:
+        return {"status": "ok", "deleted_count": 0, "message": "No matching questions found"}
+
+    # Cascade deletions
+    db.query(QshalaQuestionMetadata).filter(QshalaQuestionMetadata.question_id.in_(question_ids)).delete(synchronize_session=False)
+    db.query(QuestionTopicPath).filter(QuestionTopicPath.question_id.in_(question_ids)).delete(synchronize_session=False)
+    db.query(QuestionEditHistory).filter(QuestionEditHistory.question_id.in_(question_ids)).delete(synchronize_session=False)
+    db.query(QshalaTag).filter(QshalaTag.question_id.in_(question_ids)).delete(synchronize_session=False)
+    db.query(QshalaTagChange).filter(QshalaTagChange.question_id.in_(question_ids)).delete(synchronize_session=False)
+    db.query(QuestionRepeat).filter(
+        (QuestionRepeat.canonical_question_id.in_(question_ids)) |
+        (QuestionRepeat.repeated_question_id.in_(question_ids))
+    ).delete(synchronize_session=False)
+    
+    deleted_n = db.query(Question).filter(Question.id.in_(question_ids)).delete(synchronize_session=False)
+    db.commit()
+
+    return {
+        "status": "ok",
+        "deleted_count": deleted_n,
+        "message": f"Successfully removed {deleted_n} questions from the question bank"
+    }
+
+
+@router.delete("/{question_id}", response_model=dict)
+def delete_question_endpoint(
+    question_id: str,
+    db: Session = Depends(get_db)
+):
+    """Delete a single question from the question bank."""
+    from backend.app.models.qshala_tag import QshalaTag, QshalaTagChange, QshalaQuestionMetadata
+    from backend.app.models.question_meta import QuestionTopicPath, QuestionEditHistory, QuestionRepeat
+
+    q = db.query(Question).filter(Question.id == question_id).first()
+    if not q:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    db.query(QshalaQuestionMetadata).filter(QshalaQuestionMetadata.question_id == question_id).delete(synchronize_session=False)
+    db.query(QuestionTopicPath).filter(QuestionTopicPath.question_id == question_id).delete(synchronize_session=False)
+    db.query(QuestionEditHistory).filter(QuestionEditHistory.question_id == question_id).delete(synchronize_session=False)
+    db.query(QshalaTag).filter(QshalaTag.question_id == question_id).delete(synchronize_session=False)
+    db.query(QshalaTagChange).filter(QshalaTagChange.question_id == question_id).delete(synchronize_session=False)
+    db.query(QuestionRepeat).filter(
+        (QuestionRepeat.canonical_question_id == question_id) |
+        (QuestionRepeat.repeated_question_id == question_id)
+    ).delete(synchronize_session=False)
+
+    db.delete(q)
+    db.commit()
+
+    return {"status": "ok", "message": f"Question {question_id} deleted successfully"}

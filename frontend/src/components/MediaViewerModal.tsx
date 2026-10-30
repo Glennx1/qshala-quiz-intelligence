@@ -82,20 +82,27 @@ export default function MediaViewerModal({ question, onClose }: MediaViewerModal
   const allAudios = Array.from(new Set([...questionAudioList, ...answerAudioList, ...rawAudioList]));
 
   // Is this media a timer (not a trivia video clue)?
+  const TIMER_NAMES = new Set(['media7.mp4', 'media11.mp4', 'media16.mp4']);
+
+  // Is this media a timer (not a trivia video clue)?
   const isTimerMedia = (url?: string | null) => {
     if (!url) return false;
     const l = url.toLowerCase();
-    return (
-      l.includes('timer') ||
-      l.includes('1min') ||
-      l.includes('countdown') ||
-      (question?.question_format !== 'VIDEO_CLUE' &&
-        (l.endsWith('.mp4') || l.endsWith('.webm')) &&
-        !question?.video_transcript &&
-        !question?.question_text?.toLowerCase().includes('video') &&
-        !question?.question_text?.toLowerCase().includes('clip') &&
-        !question?.question_text?.toLowerCase().includes('watch'))
-    );
+    const filename = l.split('/').pop()?.split('?')[0] || '';
+    if (l.includes('timer') || l.includes('1min') || l.includes('countdown') || TIMER_NAMES.has(filename)) {
+      return true;
+    }
+    const isVideoClueFormat = question?.question_format === 'VIDEO_CLUE' || question?.question_type === 'VIDEO_CLUE';
+    if (!isVideoClueFormat && (l.endsWith('.mp4') || l.endsWith('.webm') || l.includes('/media/media'))) {
+      const mentionsVideo = Boolean(
+        question?.video_transcript ||
+        question?.question_text?.toLowerCase().includes('video') ||
+        question?.question_text?.toLowerCase().includes('clip') ||
+        question?.question_text?.toLowerCase().includes('watch')
+      );
+      if (!mentionsVideo) return true;
+    }
+    return false;
   };
 
   // Find video media URL from video_refs, question_videos, raw_media_refs, or video_transcript (excluding countdown timers)
