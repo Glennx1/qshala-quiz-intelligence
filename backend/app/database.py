@@ -152,7 +152,7 @@ if engine is None:
     logger.warning(
         "=" * 78 + "\n"
         "  DATA IS NOT PERSISTENT: running on SQLite (%s).\n"
-        "  On Render/Railway this file is deleted on restart or sleep — uploads will vanish.\n"
+        "  On Google Cloud Run/Render this file is deleted on restart or sleep — uploads will vanish.\n"
         "  Set DATABASE_URL (Neon) and REQUIRE_POSTGRES=1 for a persistent database.\n"
         + "=" * 78, default_db_url)
 
