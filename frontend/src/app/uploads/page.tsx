@@ -269,7 +269,7 @@ export default function UploadPage() {
                 </p>
                 {pipelineProgress.memory?.cur != null && (() => {
                   const cur = pipelineProgress.memory!.cur as number;
-                  const limit = pipelineProgress.memory!.limit || 0;
+                  const limit = pipelineProgress.memory!.limit || 2048;
                   const ratio = limit ? cur / limit : 0;
                   const cls = ratio > 0.92 ? 'bg-red-100 text-red-700' : ratio > 0.8 ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-700';
                   return (

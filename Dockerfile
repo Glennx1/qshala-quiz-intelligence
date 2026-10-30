@@ -17,6 +17,9 @@ RUN pip install --no-cache-dir -r backend/requirements.txt
 COPY backend backend
 
 ENV PYTHONUNBUFFERED=1
+ENV SERVER_MEMORY_LIMIT_MB=2048
+ENV VISION_CONCURRENCY=4
+ENV MALLOC_ARENA_MAX=4
 EXPOSE 8080
 
 # Cloud Run injects $PORT (defaults to 8080); single worker -- see .env.example, the

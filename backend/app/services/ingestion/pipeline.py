@@ -1,636 +1,664 @@
-import os
-import time
-import asyncio
-import logging
-from typing import Dict, Any, Optional
-from sqlalchemy.orm import Session
-from backend.app.models.document import Document, Slide
-from backend.app.models.question import Question
-from backend.app.models.qshala_tag import QshalaTag
-from backend.app.database import short_session
-from backend.app.config import settings
-from backend.app.services.ingestion.pptx_parser import PPTXParser
-from backend.app.services.ingestion.pdf_parser import PDFParser
-from backend.app.services.ingestion.cancellation import (
-    IngestionCancelled,
-    doc_cancel_requested,
-    raise_if_cancelled,
-    clear_doc_cancel,
-    purge_document,
-)
-from backend.app.services.ingestion.slide_classifier import SlideClassifier
-from backend.app.services.ingestion.question_extractor import QuestionExtractor
-from backend.app.services.ingestion.deck_metadata import annotate_questions
-from backend.app.models.question_meta import QuestionEditHistory
-from backend.app.services.ingestion import progress
-from backend.app.services.ingestion.vision_resize import shrink_for_vision
-from backend.app.services.tagging.qshala_tagger import safe_error
-from backend.app.services.question_meta_service import (
-    upsert_deck_metadata, deck_row_to_info, ensure_question_metadata, apply_tag_to_meta,
-)
-from backend.app.services.tagging import topic_paths
-from backend.app.services.tagging.auto_tagger import AutoTagger  # Kept for backward compatibility
-from backend.app.services.tagging.qshala_tagger import QshalaTagger
-from backend.app.services.tagging.difficulty_engine import DifficultyEngine
-
-# Feature toggle: set to False to revert to legacy AutoTagger writing topic tags on upload
-USE_QSHALA_TAGGER: bool = True
-VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "2"))   # parallel image-description calls (lowered: full-res images held per in-flight call add up on 512 MB)
-TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "3"))   # parallel Gemini tagging calls per deck
-from backend.app.services.deduplication.deduplicator import Deduplicator
-from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
-
-logger = logging.getLogger(__name__)
-
-# Global tracker for real-time progress polling
-INGESTION_STATUS_REGISTRY: Dict[str, Dict[str, Any]] = {}
-
-
-def _ensure_clean(db: Session, where: str) -> None:
-    """Enforce the ingestion invariant: no DB transaction may stay open across a slow AI/network
-    stage. If one is open at a phase boundary, commit it (ending the idle window Neon would kill)
-    and log where — so a regression is visible instead of silently reintroducing the
-    IdleInTransactionSessionTimeout crash.
-    """
-    try:
-        if db.in_transaction():
-            logger.info("ingestion: committing open transaction before %s", where)
-            db.commit()
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            pass
-
-
-def _stage_log(document_id: str, stage: str, t0: float) -> float:
-    """Log wall-clock + process memory for a finished stage and return a new start time."""
-    try:
-        from backend.app.services.ingestion import progress as _p
-        mem = _p.memory_mb() or {}
-        rss = mem.get("rss") or mem.get("current") or mem.get("process")
-    except Exception:
-        rss = None
-    dt = time.perf_counter() - t0
-    logger.info("stage[%s] %-22s %6.1fs  mem=%s MB", document_id[:8], stage, dt, rss)
-    return time.perf_counter()
-
-class IngestionPipeline:
-    def __init__(self, db: Optional[Session] = None):
-        self._external_db = db
-        self.classifier = SlideClassifier()
-        self.extractor = QuestionExtractor()
-        self.auto_tagger = AutoTagger()
-        self.qshala_tagger = QshalaTagger()
-        self.difficulty_engine = DifficultyEngine()
-        self.deduplicator = Deduplicator()
-        self.embedding_provider = get_embedding_provider()
-        self.llm_provider = get_llm_provider()
-
-    async def run(self, document_id: str):
-        INGESTION_STATUS_REGISTRY[document_id] = {
-            "document_id": document_id,
-            "status": "PROCESSING",
-            "progress_percentage": 5,
-            "current_step": "1. Extracting content from presentation",
-            "slides_processed": 0,
-            "questions_extracted": 0,
-            "error": None,
-            "detail": "Upload received. Starting to process the deck.",
-            "events": [],
-        }
-        progress.event(INGESTION_STATUS_REGISTRY[document_id], "Upload received, starting to process the deck")
-
-        own_session = False
-        db = self._external_db
-        if db is None:
-            from backend.app.database import SessionLocal
-            db = SessionLocal()
-            own_session = True
-
-        try:
-            t0 = time.perf_counter()
-            doc = db.query(Document).filter(Document.id == document_id).first()
-            if not doc:
-                INGESTION_STATUS_REGISTRY[document_id]["status"] = "FAILED"
-                INGESTION_STATUS_REGISTRY[document_id]["error"] = "Document not found"
-                return
-
-            doc.processing_status = "PROCESSING"
-            db.commit()
-
-            file_ext = os.path.splitext(doc.filename)[1].lower()
-            
-            # Step 1 & 2: Extracting and Processing Slides
-            INGESTION_STATUS_REGISTRY[document_id].update({
-                "progress_percentage": 20,
-                "current_step": "2. Processing slides and extracting visual assets"
-            })
-
-            if file_ext in [".pptx", ".ppt"]:
-                parser = PPTXParser(doc.storage_path, doc.id)
-                parser.should_cancel = lambda: doc_cancel_requested(document_id)
-                parser.on_progress = lambda detail, pct=None: progress.update(
-                    INGESTION_STATUS_REGISTRY[document_id], detail=detail, pct=pct)
-                try:
-                    _mb = os.path.getsize(doc.storage_path) / 1048576.0
-                    progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Opening the deck ({_mb:.0f} MB). Large decks take a while to load.")
-                except Exception:
-                    pass
-                # Parse in a worker thread: it is blocking, and on a big deck it would otherwise
-                # freeze the event loop so a Cancel request couldn't even be received.
-                raw_slides = await asyncio.to_thread(parser.parse)
-            elif file_ext == ".pdf":
-                parser = PDFParser(doc.storage_path, doc.id)
-                raw_slides = await asyncio.to_thread(parser.parse)
-            else:
-                raise ValueError(f"Unsupported file format: {file_ext}")
-
-            raise_if_cancelled(document_id)
-            progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Read {len(raw_slides)} slides and saved their pictures")
-
-            # Classify each slide using 2-pass contextual deck classifier
-            classified_slides = []
-            slide_models = []
-            deck_types = self.classifier.classify_deck(raw_slides)
-
-            for s, slide_type in zip(raw_slides, deck_types):
-                s["slide_type"] = slide_type
-                classified_slides.append(s)
-
-                slide_obj = Slide(
-                    document_id=doc.id,
-                    slide_number=s["slide_number"],
-                    slide_type=slide_type,
-                    title=s["title"],
-                    extracted_text=s["extracted_text"],
-                    speaker_notes=s["speaker_notes"],
-                    image_paths=s["image_paths"],
-                    has_images=s["has_images"],
-                    metadata_json=s["metadata_json"]
-                )
-                db.add(slide_obj)
-                slide_models.append(slide_obj)
-
-            db.flush()  # Assign slide IDs
-            _kinds: Dict[str, int] = {}
-            for _t in deck_types:
-                _kinds[_t] = _kinds.get(_t, 0) + 1
-            _other = len(deck_types) - _kinds.get("QUESTION", 0) - _kinds.get("ANSWER", 0)
-            progress.event(INGESTION_STATUS_REGISTRY[document_id],
-                           f"Sorted slides: {_kinds.get('QUESTION', 0)} question, {_kinds.get('ANSWER', 0)} answer, "
-                           f"{_other} other (titles, rounds, scoreboards: not sent to the AI)")
-            doc.slide_count = len(slide_models)
-            
-            INGESTION_STATUS_REGISTRY[document_id].update({
-                "progress_percentage": 45,
-                "slides_processed": len(slide_models),
-                "current_step": "3. Detecting questions and quiz patterns"
-            })
-
-            # Map slide objects back to classified slides with IDs, then CLOSE phase A:
-            # slides are durable and no transaction stays open into the slow AI stages below.
-            for i, s_model in enumerate(slide_models):
-                classified_slides[i]["id"] = s_model.id
-            db.commit()
-            t0 = _stage_log(document_id, "A:parse+slides", t0)
-
-            # Step 3, 4, 5: Question Extraction & Classification
-            INGESTION_STATUS_REGISTRY[document_id].update({
-                "progress_percentage": 60,
-                "current_step": "4. Detecting answers, options, and difficulty levels"
-            })
-
-            raw_questions = self.extractor.extract_from_slides(
-                classified_slides,
-                doc_title=doc.title,
-                doc_year=doc.year
-            )
-
-            progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Found {len(raw_questions)} questions")
-
-            # Deck details from the file name, then the no-AI per-question fields
-            # (question number, format, star, answer type, language).
-            deck_row = upsert_deck_metadata(db, doc)
-            annotate_questions(raw_questions, classified_slides, deck_row_to_info(deck_row))
-            # Show a clean quiz name in Recent Uploads instead of the raw ".pptx" filename: the deck
-            # parser already pulled a quiz_name out of the filename. Only override an auto-derived
-            # title (the filename), never a title the user typed in.
-            if getattr(deck_row, "quiz_name", None) and (doc.title or "") in ("", doc.filename,
-                    os.path.splitext(doc.filename)[0].replace("_", " ").title()):
-                doc.title = deck_row.quiz_name
-            # Values needed later, captured BEFORE the commit expires the ORM rows.
-            deck_year = deck_row.deck_year or doc.year
-            doc_title = doc.title
-            # CLOSE phase A/B DB work: the vision + embedding stages below touch no DB, so no
-            # transaction is held while they run (minutes). This is the fix for the recurring
-            # IdleInTransactionSessionTimeout — not the engine flag, which Neon's pooler may ignore.
-            db.commit()
-            _ensure_clean(db, "vision/embedding stage")
-
-            # Step 5: Multi-Topic Auto-Tagging & Pedagogical Difficulty Scoring
-            INGESTION_STATUS_REGISTRY[document_id].update({
-                "progress_percentage": 75,
-                "questions_extracted": len(raw_questions),
-                "current_step": "5. Multimodal visual inspection & intelligent tagging"
-            })
-
-            # Describe question images in parallel (each is a separate vision call; they used to run one by one).
-            # A picture reused across several questions (a round's title image, a repeated
-            # logo or answer slide) is only described once: callers for the same path share
-            # one in-flight future rather than each firing their own Gemini call.
-            _vision_cache: Dict[str, asyncio.Future] = {}
-            _vision_cache_lock = asyncio.Lock()
-            _vision_reused = {"n": 0}
-
-            async def _describe_one_image(rel_img_path: str) -> Optional[str]:
-                async with _vision_cache_lock:
-                    fut = _vision_cache.get(rel_img_path)
-                    if fut is not None:
-                        _vision_reused["n"] += 1
-                        return await fut
-                    fut = asyncio.get_event_loop().create_future()
-                    _vision_cache[rel_img_path] = fut
-
-                desc: Optional[str] = None
-                try:
-                    disk_path = None
-                    img_bytes = None
-                    ext = None
-
-                    if rel_img_path.startswith("http://") or rel_img_path.startswith("https://"):
-                        # Media stored in Cloudflare R2 (or any other remote object store) --
-                        # the local disk copy may not exist on this instance, so fetch over HTTP.
-                        try:
-                            import httpx as _httpx
-                            async with _httpx.AsyncClient(timeout=30.0) as client:
-                                resp = await client.get(rel_img_path)
-                                resp.raise_for_status()
-                                img_bytes = resp.content
-                            ext = os.path.splitext(rel_img_path)[1].lower()
-                        except Exception as fetch_err:
-                            logger.warning(f"Failed to fetch remote image {rel_img_path}: {fetch_err}")
-                    elif rel_img_path.startswith("/static/slides/"):
-                        sub = rel_img_path[len("/static/slides/"):]
-                        cand = settings.SLIDES_DIR / sub
-                        if cand.exists():
-                            disk_path = cand
-                    elif rel_img_path.startswith("/static/"):
-                        cand = settings.STORAGE_DIR / rel_img_path.lstrip("/static/")
-                        if cand.exists():
-                            disk_path = cand
-
-                    if img_bytes is None and disk_path and disk_path.exists():
-                        try:
-                            with open(disk_path, "rb") as f:
-                                img_bytes = f.read()
-                            ext = disk_path.suffix.lower()
-                        except Exception as read_err:
-                            logger.warning(f"Failed to read local image {rel_img_path}: {read_err}")
-
-                    if img_bytes:
-                        try:
-                            mime = "image/png" if ext == ".png" else ("image/jpeg" if ext in [".jpg", ".jpeg"] else "image/webp")
-                            # Shrink in memory only -- not touching the stored file -- so a deck
-                            # with many large pictures doesn't hold full-res bytes for every
-                            # concurrent vision call at once.
-                            vision_bytes, mime = await asyncio.to_thread(shrink_for_vision, img_bytes, mime)
-                            raw_desc = await self.llm_provider.describe_image(vision_bytes, mime_type=mime)
-                            if raw_desc and raw_desc.strip():
-                                desc = raw_desc.strip()
-                        except Exception as vision_err:
-                            logger.warning(f"Failed to describe image {rel_img_path}: {vision_err}")
-                finally:
-                    if not fut.done():
-                        fut.set_result(desc)
-                return desc
-
-            async def _describe_images(q):
-                visual_clues_list = []
-                target_imgs = list(q.get("question_images") or q.get("image_refs") or [])
-                for rel_img_path in target_imgs:
-                    desc = await _describe_one_image(rel_img_path)
-                    if desc:
-                        visual_clues_list.append(desc)
-
-                visual_clues_str = "\n".join(visual_clues_list) if visual_clues_list else None
-                q["visual_clues"] = visual_clues_str
-                return visual_clues_str
-
-            vision_sem = asyncio.Semaphore(VISION_CONCURRENCY)
-            _img_total = sum(1 for _q in raw_questions if (_q.get("question_images") or _q.get("image_refs")))
-            _img_done = {"n": 0}
-
-            async def _describe_guarded(q):
-                async with vision_sem:
-                    raise_if_cancelled(document_id)
-                    out = await _describe_images(q)
-                    if q.get("question_images") or q.get("image_refs"):
-                        _img_done["n"] += 1
-                        progress.update(INGESTION_STATUS_REGISTRY[document_id],
-                                        detail=f"Describing question images with AI ({_img_done['n']}/{_img_total})")
-                    return out
-
-            INGESTION_STATUS_REGISTRY[document_id]["current_step"] = "5. Reading question images"
-            if _img_total:
-                progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Describing images for {_img_total} questions with AI")
-            await asyncio.gather(*[_describe_guarded(q) for q in raw_questions])
-            if _vision_reused["n"]:
-                progress.event(INGESTION_STATUS_REGISTRY[document_id],
-                               f"{_vision_reused['n']} repeated pictures reused their earlier description (skipped the AI call)")
-
-            enriched_questions = []
-            for q in raw_questions:
-                raise_if_cancelled(document_id)
-                visual_clues_str = q.get("visual_clues")
-
-                # 1. Multi-topic and entity tagging (including visual clues)
-                is_multimodal = bool(
-                    q.get("image_refs") or
-                    q.get("question_images") or
-                    q.get("audio_refs") or
-                    q.get("question_audio") or
-                    q.get("video_refs") or
-                    q.get("question_videos") or
-                    q.get("media_items") or
-                    q.get("audio_transcript") or
-                    q.get("video_transcript") or
-                    q.get("raw_media_refs")
-                )
-
-                if not USE_QSHALA_TAGGER:
-                    tags_data = await self.auto_tagger.tag_question_with_ai(
-                        question_text=q["question_text"],
-                        answer_text=q["answer"],
-                        explanation=q.get("explanation", ""),
-                        doc_title=doc_title,
-                        visual_clues=visual_clues_str or q.get("visual_clues", "") or "",
-                        audio_transcript=q.get("audio_transcript", ""),
-                        video_transcript=q.get("video_transcript", ""),
-                        subtopic=q.get("subtopic")
-                    )
-                else:
-                    # Legacy AutoTagger bypassed: QshalaTagger tags will be populated below
-                    tags_data = {
-                        "primary_topic": None,
-                        "topics": [],
-                        "subtopic": q.get("subtopic"),
-                        "tags": [],
-                        "question_hook": "DIRECT_TRIVIA",
-                        "curiosity_score": 7,
-                        "temporal_nature": "EVERGREEN"
-                    }
-                # 2. Difficulty & Grade evaluation (multimodal questions set to 'Unrated')
-                diff_data = self.difficulty_engine.evaluate(
-                    question_text=q["question_text"],
-                    answer_text=q["answer"],
-                    explanation=q.get("explanation", ""),
-                    notes=q.get("speaker_notes", ""),
-                    is_multimodal=is_multimodal
-                )
-
-                q.update({
-                    "primary_topic": tags_data["primary_topic"],
-                    "topics": tags_data["topics"],
-                    "subtopic": q.get("subtopic") or tags_data.get("subtopic"),
-                    "tags": tags_data["tags"],
-                    "question_hook": tags_data["question_hook"],
-                    "curiosity_score": tags_data["curiosity_score"],
-                    "temporal_nature": tags_data["temporal_nature"],
-                    "difficulty": diff_data["difficulty"],
-                    "difficulty_score": diff_data["difficulty_score"],
-                    "cognitive_level": diff_data["cognitive_level"],
-                    "grade_min": diff_data["grade_min"],
-                    "grade_max": diff_data["grade_max"],
-                    "audience_suitability": diff_data["audience_suitability"],
-                    "topic": tags_data["primary_topic"]
-                })
-                enriched_questions.append(q)
-
-            raise_if_cancelled(document_id)
-
-            # Step 6: Generate Semantic Embeddings
-            INGESTION_STATUS_REGISTRY[document_id].update({
-                "progress_percentage": 85,
-                "current_step": "6. Generating semantic vector embeddings"
-            })
-
-            for idx, q in enumerate(enriched_questions):
-                q["_emb_idx"] = idx
-
-            texts_to_embed = [
-                f"{q.get('primary_topic') or ''} {' '.join(q.get('topics') or [])} {q['question_text']} {q['answer']} {q.get('visual_clues') or ''} {q.get('explanation') or ''}".strip()
-                for q in enriched_questions
-            ]
-
-            embeddings = []
-            if texts_to_embed:
-                try:
-                    embeddings = await self.embedding_provider.get_embeddings(texts_to_embed)
-                except Exception as e:
-                    logger.warning(f"Embedding generation error ({e}), falling back to unit vectors")
-                    embeddings = [[0.0] * 768 for _ in texts_to_embed]
-
-            raise_if_cancelled(document_id)
-
-            # Step 7: Deduplication Check (Tier 1 O(1) Hash + Tier 2 Semantic ANN)
-            INGESTION_STATUS_REGISTRY[document_id].update({
-                "progress_percentage": 92,
-                "current_step": "7. Deduplicating questions against knowledge base"
-            })
-
-            t0 = _stage_log(document_id, "B:vision+embed+enrich", t0)
-
-            # Phase C begins. The connection has been idle through the AI stages, so the first
-            # query here must run on a fresh, pre-pinged connection. _ensure_clean guarantees no
-            # stale transaction is open; the retry covers the case where the pooled connection was
-            # dropped server-side during the idle window.
-            _ensure_clean(db, "dedup")
-            from sqlalchemy.exc import OperationalError, DBAPIError
-            try:
-                unique_candidates, duplicates = self.deduplicator.deduplicate_batch(
-                    db=db, candidates=enriched_questions,
-                    candidate_embeddings=embeddings, doc_id=doc.id)
-            except (OperationalError, DBAPIError) as db_err:
-                logger.warning("dedup hit a stale connection, retrying once: %s", safe_error(db_err))
-                try:
-                    db.rollback()
-                except Exception:
-                    pass
-                unique_candidates, duplicates = self.deduplicator.deduplicate_batch(
-                    db=db, candidates=enriched_questions,
-                    candidate_embeddings=embeddings, doc_id=doc.id)
-
-            raise_if_cancelled(document_id)
-
-            # Step 8: Indexing Unique Records
-            INGESTION_STATUS_REGISTRY[document_id].update({
-                "progress_percentage": 96,
-                "current_step": f"8. Storing {len(unique_candidates)} unique questions ({len(duplicates)} replicas linked)"
-            })
-
-            question_models = []
-            for q_data in unique_candidates:
-                # Find matching embedding
-                orig_idx = q_data.get("_emb_idx")
-                emb = embeddings[orig_idx] if orig_idx is not None and 0 <= orig_idx < len(embeddings) else None
-
-                q_obj = Question(
-                    content_hash=q_data["content_hash"],
-                    document_id=doc.id,
-                    slide_id=q_data.get("slide_id"),
-                    answer_slide_id=q_data.get("answer_slide_id"),
-                    question_text=q_data["question_text"],
-                    answer=q_data["answer"],
-                    options=q_data.get("options"),
-                    explanation=q_data.get("explanation"),
-                    topic=q_data["primary_topic"] or topic_paths.UNCATEGORISED,
-                    subtopic=q_data.get("subtopic"),
-                    topics=q_data.get("topics", []),
-                    tags=q_data.get("tags", []),
-                    difficulty=q_data.get("difficulty", "Medium"),
-                    difficulty_score=q_data.get("difficulty_score", 0.50),
-                    cognitive_level=q_data.get("cognitive_level", "Recall / Remember"),
-                    grade_min=q_data.get("grade_min", 3),
-                    grade_max=q_data.get("grade_max", 12),
-                    audience_suitability=q_data.get("audience_suitability", []),
-                    question_hook=q_data.get("question_hook", "DIRECT_TRIVIA"),
-                    curiosity_score=q_data.get("curiosity_score", 7),
-                    temporal_nature=q_data.get("temporal_nature", "EVERGREEN"),
-                    provenance_decks=[{"document_id": doc.id, "slide_id": q_data.get("slide_id")}],
-                    occurrence_count=1,
-                    question_type=q_data.get("question_type", "SLIDE_QA"),
-                    format_payload=q_data.get("format_payload"),
-                    source_year=q_data.get("source_year", doc.year),
-                    round_number=(q_data.get("_meta") or {}).get("round_number"),
-                    image_refs=q_data.get("image_refs", []),
-                    question_images=q_data.get("question_images", []),
-                    answer_images=q_data.get("answer_images", []),
-                    audio_refs=q_data.get("audio_refs", []),
-                    question_audio=q_data.get("question_audio", []),
-                    answer_audio=q_data.get("answer_audio", []),
-                    video_refs=q_data.get("video_refs", []),
-                    question_videos=q_data.get("question_videos", []),
-                    answer_videos=q_data.get("answer_videos", []),
-                    visual_clues=q_data.get("visual_clues"),
-                    audio_transcript=q_data.get("audio_transcript"),
-                    video_transcript=q_data.get("video_transcript"),
-                    raw_media_refs=q_data.get("raw_media_refs", []),
-                    source_slide_range=q_data.get("source_slide_range"),
-                    duplicate_status=q_data.get("duplicate_status", "UNIQUE"),
-                    duplicate_similarity=q_data.get("duplicate_similarity"),
-                    duplicate_of_id=q_data.get("duplicate_of_id"),
-                    embedding=emb
-                )
-                db.add(q_obj)
-                question_models.append(q_obj)
-
-            # Assign question ids now: the metadata rows and the tagger both key on questions.id.
-            db.flush()
-
-            for q_m, q_data in zip(question_models, unique_candidates):
-                ensure_question_metadata(db, q_m, q_data.get("_meta"), deck_row, doc)
-
-            # Phase C1 done: questions + metadata are durable BEFORE tagging runs. A tagging hiccup
-            # can no longer roll back the whole ingested deck, and the connection is released.
-            db.commit()
-            t0 = _stage_log(document_id, "C:dedup+persist", t0)
-
-            # Tagging (phase C2). Chunked batch calls (one Gemini call per ~12 questions) instead of
-            # one call per question: fast, and small enough that no single response overflows the
-            # output-token ceiling. Each result is routed through the same draft/confirmed gate, so
-            # low-confidence questions still land in the review queue. A failed chunk parks its
-            # questions in review rather than taking the deck down.
-            tag_stats = {"confirmed": 0, "draft": 0, "failed_chunks": 0}
-            if USE_QSHALA_TAGGER and question_models:
-                raise_if_cancelled(document_id)
-                INGESTION_STATUS_REGISTRY[document_id]["current_step"] = "8. Tagging questions"
-                progress.update(INGESTION_STATUS_REGISTRY[document_id],
-                                detail=f"AI tagging {len(question_models)} questions in batches")
-                try:
-                    from backend.app.services.tagging.qshala_batch import tag_questions_batched
-                    tag_stats = await tag_questions_batched(
-                        db, question_models,
-                        provider=self.qshala_tagger.provider,
-                        model=self.qshala_tagger.model,
-                        actor="deck_upload",
-                    )
-                    # Mirror each question's resulting tag onto its metadata row (geography, year, ...).
-                    for q_m in question_models:
-                        latest = (db.query(QshalaTag)
-                                  .filter(QshalaTag.question_id == q_m.id)
-                                  .order_by(QshalaTag.created_at.desc()).first())
-                        if latest is not None:
-                            try:
-                                apply_tag_to_meta(db, q_m.id, latest)
-                            except Exception as meta_err:
-                                logger.warning("apply_tag_to_meta failed for %s: %s", q_m.id, safe_error(meta_err))
-                    db.commit()
-                except IngestionCancelled:
-                    raise
-                except Exception as tag_err:
-                    # Tagging is best-effort: questions are already stored. Park the deck's tags for
-                    # review rather than failing the whole ingestion.
-                    db.rollback()
-                    logger.warning("batch tagging failed, questions left untagged for review: %s",
-                                   safe_error(tag_err))
-                t0 = _stage_log(document_id, "C2:tagging", t0)
-
-            with short_session() as fin:
-                fin_doc = fin.query(Document).filter(Document.id == document_id).first()
-                if fin_doc:
-                    fin_doc.question_count = len(question_models)
-                    fin_doc.processing_status = "COMPLETED"
-
-            _review_n = tag_stats.get("draft", 0)
-            _summary = (f"Saved {len(question_models)} questions from {len(slide_models)} slides"
-                        + (f", {len(duplicates)} duplicate(s) skipped" if duplicates else "")
-                        + (f", {_review_n} flagged for review" if _review_n else ""))
-            progress.event(INGESTION_STATUS_REGISTRY[document_id], _summary, detail="Finishing up")
-            _tag_note = ""
-            if USE_QSHALA_TAGGER and question_models and tag_stats.get("draft"):
-                _tag_note = (f" ({tag_stats['draft']} of {len(question_models)} questions flagged for "
-                             f"review; {tag_stats.get('failed_chunks', 0)} chunk(s) failed)")
-            INGESTION_STATUS_REGISTRY[document_id].update({
-                "progress_percentage": 100,
-                "status": "COMPLETED",
-                "current_step": "Ingestion completed successfully" + _tag_note,
-                "slides_processed": len(slide_models),
-                "questions_extracted": len(question_models),
-                "duplicates_filtered": len(duplicates)
-            })
-
-        except IngestionCancelled:
-            logger.info(f"[CANCEL] ingestion of {document_id} cancelled by user, cleaning up")
-            try:
-                db.rollback()
-            except Exception:
-                pass
-            purge_document(db, document_id)
-            clear_doc_cancel(document_id)
-            INGESTION_STATUS_REGISTRY[document_id].update({
-                "status": "CANCELLED",
-                "error": None,
-                "current_step": "Upload cancelled",
-            })
-        except Exception as e:
-            logger.exception(f"Error processing document {document_id}: {e}")
-            try:
-                db.rollback()
-                doc.processing_status = "FAILED"
-                doc.processing_error = str(e)
-                db.commit()
-            except Exception:
-                pass
-
-            INGESTION_STATUS_REGISTRY[document_id].update({
-                "status": "FAILED",
-                "error": str(e),
-                "current_step": f"Error: {str(e)}"
-            })
-        finally:
-            if own_session:
-                try:
-                    db.close()
-                except Exception:
-                    pass
+import os
+import time
+import asyncio
+import logging
+from typing import Dict, Any, Optional
+from sqlalchemy.orm import Session
+from backend.app.models.document import Document, Slide
+from backend.app.models.question import Question
+from backend.app.models.qshala_tag import QshalaTag
+from backend.app.database import short_session
+from backend.app.config import settings
+from backend.app.services.ingestion.pptx_parser import PPTXParser
+from backend.app.services.ingestion.pdf_parser import PDFParser
+from backend.app.services.ingestion.cancellation import (
+    IngestionCancelled,
+    doc_cancel_requested,
+    raise_if_cancelled,
+    clear_doc_cancel,
+    purge_document,
+)
+from backend.app.services.ingestion.slide_classifier import SlideClassifier
+from backend.app.services.ingestion.question_extractor import QuestionExtractor
+from backend.app.services.ingestion.deck_metadata import annotate_questions
+from backend.app.models.question_meta import QuestionEditHistory
+from backend.app.services.ingestion import progress
+from backend.app.services.ingestion.vision_resize import shrink_for_vision
+from backend.app.services.tagging.qshala_tagger import safe_error
+from backend.app.services.question_meta_service import (
+    upsert_deck_metadata, deck_row_to_info, ensure_question_metadata, apply_tag_to_meta,
+)
+from backend.app.services.tagging import topic_paths
+from backend.app.services.tagging.qshala_rules import classify_taxonomy
+from backend.app.services.tagging.auto_tagger import AutoTagger  # Kept for backward compatibility
+from backend.app.services.tagging.qshala_tagger import QshalaTagger
+from backend.app.services.tagging.difficulty_engine import DifficultyEngine
+
+# Feature toggle: set to False to revert to legacy AutoTagger writing topic tags on upload
+USE_QSHALA_TAGGER: bool = True
+VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "4"))   # parallel image-description calls (scaled for 2048 MB Google Cloud Run budget)
+TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "3"))   # parallel Gemini tagging calls per deck
+from backend.app.services.deduplication.deduplicator import Deduplicator
+from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
+
+logger = logging.getLogger(__name__)
+
+# Global tracker for real-time progress polling
+INGESTION_STATUS_REGISTRY: Dict[str, Dict[str, Any]] = {}
+
+
+def _ensure_clean(db: Session, where: str) -> None:
+    """Enforce the ingestion invariant: no DB transaction may stay open across a slow AI/network
+    stage. If one is open at a phase boundary, commit it (ending the idle window Neon would kill)
+    and log where — so a regression is visible instead of silently reintroducing the
+    IdleInTransactionSessionTimeout crash.
+    """
+    try:
+        if db.in_transaction():
+            logger.info("ingestion: committing open transaction before %s", where)
+            db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+def _stage_log(document_id: str, stage: str, t0: float) -> float:
+    """Log wall-clock + process memory for a finished stage and return a new start time."""
+    try:
+        from backend.app.services.ingestion import progress as _p
+        mem = _p.memory_mb() or {}
+        rss = mem.get("rss") or mem.get("current") or mem.get("process")
+    except Exception:
+        rss = None
+    dt = time.perf_counter() - t0
+    logger.info("stage[%s] %-22s %6.1fs  mem=%s MB", document_id[:8], stage, dt, rss)
+    return time.perf_counter()
+
+class IngestionPipeline:
+    def __init__(self, db: Optional[Session] = None):
+        self._external_db = db
+        self.classifier = SlideClassifier()
+        self.extractor = QuestionExtractor()
+        self.auto_tagger = AutoTagger()
+        self.qshala_tagger = QshalaTagger()
+        self.difficulty_engine = DifficultyEngine()
+        self.deduplicator = Deduplicator()
+        self.embedding_provider = get_embedding_provider()
+        self.llm_provider = get_llm_provider()
+
+    async def run(self, document_id: str):
+        INGESTION_STATUS_REGISTRY[document_id] = {
+            "document_id": document_id,
+            "status": "PROCESSING",
+            "progress_percentage": 5,
+            "current_step": "1. Extracting content from presentation",
+            "slides_processed": 0,
+            "questions_extracted": 0,
+            "error": None,
+            "detail": "Upload received. Starting to process the deck.",
+            "events": [],
+        }
+        progress.event(INGESTION_STATUS_REGISTRY[document_id], "Upload received, starting to process the deck")
+
+        own_session = False
+        db = self._external_db
+        if db is None:
+            from backend.app.database import SessionLocal
+            db = SessionLocal()
+            own_session = True
+
+        try:
+            t0 = time.perf_counter()
+            doc = db.query(Document).filter(Document.id == document_id).first()
+            if not doc:
+                INGESTION_STATUS_REGISTRY[document_id]["status"] = "FAILED"
+                INGESTION_STATUS_REGISTRY[document_id]["error"] = "Document not found"
+                return
+
+            doc.processing_status = "PROCESSING"
+            db.commit()
+
+            file_ext = os.path.splitext(doc.filename)[1].lower()
+            
+            # Step 1 & 2: Extracting and Processing Slides
+            INGESTION_STATUS_REGISTRY[document_id].update({
+                "progress_percentage": 20,
+                "current_step": "2. Processing slides and extracting visual assets"
+            })
+
+            if file_ext in [".pptx", ".ppt"]:
+                parser = PPTXParser(doc.storage_path, doc.id)
+                parser.should_cancel = lambda: doc_cancel_requested(document_id)
+                parser.on_progress = lambda detail, pct=None: progress.update(
+                    INGESTION_STATUS_REGISTRY[document_id], detail=detail, pct=pct)
+                try:
+                    _mb = os.path.getsize(doc.storage_path) / 1048576.0
+                    progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Opening the deck ({_mb:.0f} MB). Large decks take a while to load.")
+                except Exception:
+                    pass
+                # Parse in a worker thread: it is blocking, and on a big deck it would otherwise
+                # freeze the event loop so a Cancel request couldn't even be received.
+                raw_slides = await asyncio.to_thread(parser.parse)
+            elif file_ext == ".pdf":
+                parser = PDFParser(doc.storage_path, doc.id)
+                raw_slides = await asyncio.to_thread(parser.parse)
+            else:
+                raise ValueError(f"Unsupported file format: {file_ext}")
+
+            raise_if_cancelled(document_id)
+            progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Read {len(raw_slides)} slides and saved their pictures")
+
+            # Classify each slide using 2-pass contextual deck classifier
+            classified_slides = []
+            slide_models = []
+            deck_types = self.classifier.classify_deck(raw_slides)
+
+            for s, slide_type in zip(raw_slides, deck_types):
+                s["slide_type"] = slide_type
+                classified_slides.append(s)
+
+                slide_obj = Slide(
+                    document_id=doc.id,
+                    slide_number=s["slide_number"],
+                    slide_type=slide_type,
+                    title=s["title"],
+                    extracted_text=s["extracted_text"],
+                    speaker_notes=s["speaker_notes"],
+                    image_paths=s["image_paths"],
+                    has_images=s["has_images"],
+                    metadata_json=s["metadata_json"]
+                )
+                db.add(slide_obj)
+                slide_models.append(slide_obj)
+
+            db.flush()  # Assign slide IDs
+            _kinds: Dict[str, int] = {}
+            for _t in deck_types:
+                _kinds[_t] = _kinds.get(_t, 0) + 1
+            _other = len(deck_types) - _kinds.get("QUESTION", 0) - _kinds.get("ANSWER", 0)
+            progress.event(INGESTION_STATUS_REGISTRY[document_id],
+                           f"Sorted slides: {_kinds.get('QUESTION', 0)} question, {_kinds.get('ANSWER', 0)} answer, "
+                           f"{_other} other (titles, rounds, scoreboards: not sent to the AI)")
+            doc.slide_count = len(slide_models)
+            
+            INGESTION_STATUS_REGISTRY[document_id].update({
+                "progress_percentage": 45,
+                "slides_processed": len(slide_models),
+                "current_step": "3. Detecting questions and quiz patterns"
+            })
+
+            # Map slide objects back to classified slides with IDs, then CLOSE phase A:
+            # slides are durable and no transaction stays open into the slow AI stages below.
+            for i, s_model in enumerate(slide_models):
+                classified_slides[i]["id"] = s_model.id
+            db.commit()
+            t0 = _stage_log(document_id, "A:parse+slides", t0)
+
+            # Step 3, 4, 5: Question Extraction & Classification
+            INGESTION_STATUS_REGISTRY[document_id].update({
+                "progress_percentage": 60,
+                "current_step": "4. Detecting answers, options, and difficulty levels"
+            })
+
+            raw_questions = self.extractor.extract_from_slides(
+                classified_slides,
+                doc_title=doc.title,
+                doc_year=doc.year
+            )
+
+            progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Found {len(raw_questions)} questions")
+
+            # Deck details from the file name, then the no-AI per-question fields
+            # (question number, format, star, answer type, language).
+            deck_row = upsert_deck_metadata(db, doc)
+            annotate_questions(raw_questions, classified_slides, deck_row_to_info(deck_row))
+            # Show a clean quiz name in Recent Uploads instead of the raw ".pptx" filename: the deck
+            # parser already pulled a quiz_name out of the filename. Only override an auto-derived
+            # title (the filename), never a title the user typed in.
+            if getattr(deck_row, "quiz_name", None) and (doc.title or "") in ("", doc.filename,
+                    os.path.splitext(doc.filename)[0].replace("_", " ").title()):
+                doc.title = deck_row.quiz_name
+            # Values needed later, captured BEFORE the commit expires the ORM rows.
+            deck_year = deck_row.deck_year or doc.year
+            doc_title = doc.title
+            # CLOSE phase A/B DB work: the vision + embedding stages below touch no DB, so no
+            # transaction is held while they run (minutes). This is the fix for the recurring
+            # IdleInTransactionSessionTimeout — not the engine flag, which Neon's pooler may ignore.
+            db.commit()
+            _ensure_clean(db, "vision/embedding stage")
+
+            # Step 5: Multi-Topic Auto-Tagging & Pedagogical Difficulty Scoring
+            INGESTION_STATUS_REGISTRY[document_id].update({
+                "progress_percentage": 75,
+                "questions_extracted": len(raw_questions),
+                "current_step": "5. Multimodal visual inspection & intelligent tagging"
+            })
+
+            # Describe question images in parallel (each is a separate vision call; they used to run one by one).
+            # A picture reused across several questions (a round's title image, a repeated
+            # logo or answer slide) is only described once: callers for the same path share
+            # one in-flight future rather than each firing their own Gemini call.
+            _vision_cache: Dict[str, asyncio.Future] = {}
+            _vision_cache_lock = asyncio.Lock()
+            _vision_reused = {"n": 0}
+
+            async def _describe_one_image(rel_img_path: str) -> Optional[str]:
+                async with _vision_cache_lock:
+                    fut = _vision_cache.get(rel_img_path)
+                    if fut is not None:
+                        _vision_reused["n"] += 1
+                        return await fut
+                    fut = asyncio.get_event_loop().create_future()
+                    _vision_cache[rel_img_path] = fut
+
+                desc: Optional[str] = None
+                try:
+                    disk_path = None
+                    img_bytes = None
+                    ext = None
+
+                    if rel_img_path.startswith("http://") or rel_img_path.startswith("https://"):
+                        # Media stored in Cloudflare R2 (or any other remote object store) --
+                        # the local disk copy may not exist on this instance, so fetch over HTTP.
+                        try:
+                            import httpx as _httpx
+                            async with _httpx.AsyncClient(timeout=30.0) as client:
+                                resp = await client.get(rel_img_path)
+                                resp.raise_for_status()
+                                img_bytes = resp.content
+                            ext = os.path.splitext(rel_img_path)[1].lower()
+                        except Exception as fetch_err:
+                            logger.warning(f"Failed to fetch remote image {rel_img_path}: {fetch_err}")
+                    elif rel_img_path.startswith("/static/slides/"):
+                        sub = rel_img_path[len("/static/slides/"):]
+                        cand = settings.SLIDES_DIR / sub
+                        if cand.exists():
+                            disk_path = cand
+                    elif rel_img_path.startswith("/static/"):
+                        cand = settings.STORAGE_DIR / rel_img_path.lstrip("/static/")
+                        if cand.exists():
+                            disk_path = cand
+
+                    if img_bytes is None and disk_path and disk_path.exists():
+                        try:
+                            with open(disk_path, "rb") as f:
+                                img_bytes = f.read()
+                            ext = disk_path.suffix.lower()
+                        except Exception as read_err:
+                            logger.warning(f"Failed to read local image {rel_img_path}: {read_err}")
+
+                    if img_bytes:
+                        try:
+                            mime = "image/png" if ext == ".png" else ("image/jpeg" if ext in [".jpg", ".jpeg"] else "image/webp")
+                            # Shrink in memory only -- not touching the stored file -- so a deck
+                            # with many large pictures doesn't hold full-res bytes for every
+                            # concurrent vision call at once.
+                            vision_bytes, mime = await asyncio.to_thread(shrink_for_vision, img_bytes, mime)
+                            raw_desc = await self.llm_provider.describe_image(vision_bytes, mime_type=mime)
+                            if raw_desc and raw_desc.strip():
+                                desc = raw_desc.strip()
+                        except Exception as vision_err:
+                            logger.warning(f"Failed to describe image {rel_img_path}: {vision_err}")
+                finally:
+                    if not fut.done():
+                        fut.set_result(desc)
+                return desc
+
+            async def _describe_images(q):
+                visual_clues_list = []
+                target_imgs = list(q.get("question_images") or q.get("image_refs") or [])
+                for rel_img_path in target_imgs:
+                    desc = await _describe_one_image(rel_img_path)
+                    if desc:
+                        visual_clues_list.append(desc)
+
+                visual_clues_str = "\n".join(visual_clues_list) if visual_clues_list else None
+                q["visual_clues"] = visual_clues_str
+                return visual_clues_str
+
+            vision_sem = asyncio.Semaphore(VISION_CONCURRENCY)
+            _img_total = sum(1 for _q in raw_questions if (_q.get("question_images") or _q.get("image_refs")))
+            _img_done = {"n": 0}
+
+            async def _describe_guarded(q):
+                async with vision_sem:
+                    raise_if_cancelled(document_id)
+                    out = await _describe_images(q)
+                    if q.get("question_images") or q.get("image_refs"):
+                        _img_done["n"] += 1
+                        progress.update(INGESTION_STATUS_REGISTRY[document_id],
+                                        detail=f"Describing question images with AI ({_img_done['n']}/{_img_total})")
+                    return out
+
+            INGESTION_STATUS_REGISTRY[document_id]["current_step"] = "5. Reading question images"
+            if _img_total:
+                progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Describing images for {_img_total} questions with AI")
+            await asyncio.gather(*[_describe_guarded(q) for q in raw_questions])
+            if _vision_reused["n"]:
+                progress.event(INGESTION_STATUS_REGISTRY[document_id],
+                               f"{_vision_reused['n']} repeated pictures reused their earlier description (skipped the AI call)")
+
+            enriched_questions = []
+            for q in raw_questions:
+                raise_if_cancelled(document_id)
+                visual_clues_str = q.get("visual_clues")
+
+                # 1. Multi-topic and entity tagging (including visual clues)
+                is_multimodal = bool(
+                    q.get("image_refs") or
+                    q.get("question_images") or
+                    q.get("audio_refs") or
+                    q.get("question_audio") or
+                    q.get("video_refs") or
+                    q.get("question_videos") or
+                    q.get("media_items") or
+                    q.get("audio_transcript") or
+                    q.get("video_transcript") or
+                    q.get("raw_media_refs")
+                )
+
+                if not USE_QSHALA_TAGGER:
+                    tags_data = await self.auto_tagger.tag_question_with_ai(
+                        question_text=q["question_text"],
+                        answer_text=q["answer"],
+                        explanation=q.get("explanation", ""),
+                        doc_title=doc_title,
+                        visual_clues=visual_clues_str or q.get("visual_clues", "") or "",
+                        audio_transcript=q.get("audio_transcript", ""),
+                        video_transcript=q.get("video_transcript", ""),
+                        subtopic=q.get("subtopic")
+                    )
+                else:
+                    # Legacy AutoTagger bypassed: QshalaTagger tags will be populated below
+                    tags_data = {
+                        "primary_topic": None,
+                        "topics": [],
+                        "subtopic": q.get("subtopic"),
+                        "tags": [],
+                        "question_hook": "DIRECT_TRIVIA",
+                        "curiosity_score": 7,
+                        "temporal_nature": "EVERGREEN"
+                    }
+                # 2. Difficulty & Grade evaluation (multimodal questions set to 'Unrated')
+                diff_data = self.difficulty_engine.evaluate(
+                    question_text=q["question_text"],
+                    answer_text=q["answer"],
+                    explanation=q.get("explanation", ""),
+                    notes=q.get("speaker_notes", ""),
+                    is_multimodal=is_multimodal
+                )
+
+                q.update({
+                    "primary_topic": tags_data["primary_topic"],
+                    "topics": tags_data["topics"],
+                    "subtopic": q.get("subtopic") or tags_data.get("subtopic"),
+                    "tags": tags_data["tags"],
+                    "question_hook": tags_data["question_hook"],
+                    "curiosity_score": tags_data["curiosity_score"],
+                    "temporal_nature": tags_data["temporal_nature"],
+                    "difficulty": diff_data["difficulty"],
+                    "difficulty_score": diff_data["difficulty_score"],
+                    "cognitive_level": diff_data["cognitive_level"],
+                    "grade_min": diff_data["grade_min"],
+                    "grade_max": diff_data["grade_max"],
+                    "audience_suitability": diff_data["audience_suitability"],
+                    "topic": tags_data["primary_topic"]
+                })
+                enriched_questions.append(q)
+
+            raise_if_cancelled(document_id)
+
+            # Step 6: Generate Semantic Embeddings
+            INGESTION_STATUS_REGISTRY[document_id].update({
+                "progress_percentage": 85,
+                "current_step": "6. Generating semantic vector embeddings"
+            })
+
+            for idx, q in enumerate(enriched_questions):
+                q["_emb_idx"] = idx
+
+            texts_to_embed = [
+                f"{q.get('primary_topic') or ''} {' '.join(q.get('topics') or [])} {q['question_text']} {q['answer']} {q.get('visual_clues') or ''} {q.get('explanation') or ''}".strip()
+                for q in enriched_questions
+            ]
+
+            embeddings = []
+            if texts_to_embed:
+                try:
+                    embeddings = await self.embedding_provider.get_embeddings(texts_to_embed)
+                except Exception as e:
+                    logger.warning(f"Embedding generation error ({e}), falling back to unit vectors")
+                    embeddings = [[0.0] * 768 for _ in texts_to_embed]
+
+            raise_if_cancelled(document_id)
+
+            # Step 7: Deduplication Check (Tier 1 O(1) Hash + Tier 2 Semantic ANN)
+            INGESTION_STATUS_REGISTRY[document_id].update({
+                "progress_percentage": 92,
+                "current_step": "7. Deduplicating questions against knowledge base"
+            })
+
+            t0 = _stage_log(document_id, "B:vision+embed+enrich", t0)
+
+            # Phase C begins. The connection has been idle through the AI stages, so the first
+            # query here must run on a fresh, pre-pinged connection. _ensure_clean guarantees no
+            # stale transaction is open; the retry covers the case where the pooled connection was
+            # dropped server-side during the idle window.
+            _ensure_clean(db, "dedup")
+            from sqlalchemy.exc import OperationalError, DBAPIError
+            try:
+                unique_candidates, duplicates = self.deduplicator.deduplicate_batch(
+                    db=db, candidates=enriched_questions,
+                    candidate_embeddings=embeddings, doc_id=doc.id)
+            except (OperationalError, DBAPIError) as db_err:
+                logger.warning("dedup hit a stale connection, retrying once: %s", safe_error(db_err))
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                unique_candidates, duplicates = self.deduplicator.deduplicate_batch(
+                    db=db, candidates=enriched_questions,
+                    candidate_embeddings=embeddings, doc_id=doc.id)
+
+            raise_if_cancelled(document_id)
+
+            # Step 8: Indexing Unique Records
+            INGESTION_STATUS_REGISTRY[document_id].update({
+                "progress_percentage": 96,
+                "current_step": f"8. Storing {len(unique_candidates)} unique questions ({len(duplicates)} replicas linked)"
+            })
+
+            question_models = []
+            for q_data in unique_candidates:
+                # Find matching embedding
+                orig_idx = q_data.get("_emb_idx")
+                emb = embeddings[orig_idx] if orig_idx is not None and 0 <= orig_idx < len(embeddings) else None
+
+                q_fmt = (q_data.get("_meta") or {}).get("question_format") or q_data.get("question_type") or "QA"
+                rule_l1, rule_l2, rule_keywords = classify_taxonomy(
+                    q_data.get("question_text") or "",
+                    q_data.get("answer") or "",
+                    q_data.get("subtopic") or "",
+                    q_fmt,
+                )
+                final_topic = q_data.get("primary_topic") or rule_l1
+                raw_sub = (q_data.get("subtopic") or "").strip()
+                if not raw_sub or any(w in raw_sub.lower() for w in ["round", "closing bell", "market indicators", "ticker tangle", "portfolio builder", "opening bell"]):
+                    final_subtopic = rule_l2
+                else:
+                    final_subtopic = raw_sub
+                final_tags = list(dict.fromkeys((q_data.get("tags") or []) + rule_keywords))
+
+                q_obj = Question(
+                    content_hash=q_data["content_hash"],
+                    document_id=doc.id,
+                    slide_id=q_data.get("slide_id"),
+                    answer_slide_id=q_data.get("answer_slide_id"),
+                    question_text=q_data["question_text"],
+                    answer=q_data["answer"],
+                    options=q_data.get("options"),
+                    explanation=q_data.get("explanation"),
+                    topic=final_topic,
+                    subtopic=final_subtopic,
+                    topics=q_data.get("topics") or [final_topic],
+                    tags=final_tags,
+                    question_format=q_fmt,
+                    difficulty=q_data.get("difficulty", "Medium"),
+                    difficulty_score=q_data.get("difficulty_score", 0.50),
+                    cognitive_level=q_data.get("cognitive_level", "Recall / Remember"),
+                    grade_min=q_data.get("grade_min", 3),
+                    grade_max=q_data.get("grade_max", 12),
+                    audience_suitability=q_data.get("audience_suitability", []),
+                    question_hook=q_data.get("question_hook", "DIRECT_TRIVIA"),
+                    curiosity_score=q_data.get("curiosity_score", 7),
+                    temporal_nature=q_data.get("temporal_nature", "EVERGREEN"),
+                    provenance_decks=[{"document_id": doc.id, "slide_id": q_data.get("slide_id")}],
+                    occurrence_count=1,
+                    question_type=q_data.get("question_type", "SLIDE_QA"),
+                    format_payload=q_data.get("format_payload"),
+                    source_year=q_data.get("source_year", doc.year),
+                    round_number=(q_data.get("_meta") or {}).get("round_number"),
+                    image_refs=q_data.get("image_refs", []),
+                    question_images=q_data.get("question_images", []),
+                    answer_images=q_data.get("answer_images", []),
+                    audio_refs=q_data.get("audio_refs", []),
+                    question_audio=q_data.get("question_audio", []),
+                    answer_audio=q_data.get("answer_audio", []),
+                    video_refs=q_data.get("video_refs", []),
+                    question_videos=q_data.get("question_videos", []),
+                    answer_videos=q_data.get("answer_videos", []),
+                    visual_clues=q_data.get("visual_clues"),
+                    audio_transcript=q_data.get("audio_transcript"),
+                    video_transcript=q_data.get("video_transcript"),
+                    raw_media_refs=q_data.get("raw_media_refs", []),
+                    source_slide_range=q_data.get("source_slide_range"),
+                    duplicate_status=q_data.get("duplicate_status", "UNIQUE"),
+                    duplicate_similarity=q_data.get("duplicate_similarity"),
+                    duplicate_of_id=q_data.get("duplicate_of_id"),
+                    embedding=emb
+                )
+                db.add(q_obj)
+                question_models.append(q_obj)
+
+            # Assign question ids now: the metadata rows and the tagger both key on questions.id.
+            db.flush()
+
+            for q_m, q_data in zip(question_models, unique_candidates):
+                ensure_question_metadata(db, q_m, q_data.get("_meta"), deck_row, doc)
+                try:
+                    topic_paths.replace_paths(
+                        db,
+                        q_m.id,
+                        [{"l1": q_m.topic, "l2": q_m.subtopic, "keywords": q_m.tags or []}],
+                        source="RULES",
+                        record_history=False,
+                        question=q_m,
+                    )
+                except Exception as tp_err:
+                    logger.warning("replace_paths rule seeding error: %s", tp_err)
+
+            # Phase C1 done: questions + metadata are durable BEFORE tagging runs. A tagging hiccup
+            # can no longer roll back the whole ingested deck, and the connection is released.
+            db.commit()
+            t0 = _stage_log(document_id, "C:dedup+persist", t0)
+
+            # Tagging (phase C2). Chunked batch calls (one Gemini call per ~12 questions) instead of
+            # one call per question: fast, and small enough that no single response overflows the
+            # output-token ceiling. Each result is routed through the same draft/confirmed gate, so
+            # low-confidence questions still land in the review queue. A failed chunk parks its
+            # questions in review rather than taking the deck down.
+            tag_stats = {"confirmed": 0, "draft": 0, "failed_chunks": 0}
+            if USE_QSHALA_TAGGER and question_models:
+                raise_if_cancelled(document_id)
+                INGESTION_STATUS_REGISTRY[document_id]["current_step"] = "8. Tagging questions"
+                progress.update(INGESTION_STATUS_REGISTRY[document_id],
+                                detail=f"AI tagging {len(question_models)} questions in batches")
+                try:
+                    from backend.app.services.tagging.qshala_batch import tag_questions_batched
+                    tag_stats = await tag_questions_batched(
+                        db, question_models,
+                        provider=self.qshala_tagger.provider,
+                        model=self.qshala_tagger.model,
+                        actor="deck_upload",
+                    )
+                    # Mirror each question's resulting tag onto its metadata row (geography, year, ...).
+                    for q_m in question_models:
+                        latest = (db.query(QshalaTag)
+                                  .filter(QshalaTag.question_id == q_m.id)
+                                  .order_by(QshalaTag.created_at.desc()).first())
+                        if latest is not None:
+                            try:
+                                apply_tag_to_meta(db, q_m.id, latest)
+                            except Exception as meta_err:
+                                logger.warning("apply_tag_to_meta failed for %s: %s", q_m.id, safe_error(meta_err))
+                    db.commit()
+                except IngestionCancelled:
+                    raise
+                except Exception as tag_err:
+                    # Tagging is best-effort: questions are already stored. Park the deck's tags for
+                    # review rather than failing the whole ingestion.
+                    db.rollback()
+                    logger.warning("batch tagging failed, questions left untagged for review: %s",
+                                   safe_error(tag_err))
+                t0 = _stage_log(document_id, "C2:tagging", t0)
+
+            with short_session() as fin:
+                fin_doc = fin.query(Document).filter(Document.id == document_id).first()
+                if fin_doc:
+                    fin_doc.question_count = len(question_models)
+                    fin_doc.processing_status = "COMPLETED"
+
+            _review_n = tag_stats.get("draft", 0)
+            _summary = (f"Saved {len(question_models)} questions from {len(slide_models)} slides"
+                        + (f", {len(duplicates)} duplicate(s) skipped" if duplicates else "")
+                        + (f", {_review_n} flagged for review" if _review_n else ""))
+            progress.event(INGESTION_STATUS_REGISTRY[document_id], _summary, detail="Finishing up")
+            _tag_note = ""
+            if USE_QSHALA_TAGGER and question_models and tag_stats.get("draft"):
+                _tag_note = (f" ({tag_stats['draft']} of {len(question_models)} questions flagged for "
+                             f"review; {tag_stats.get('failed_chunks', 0)} chunk(s) failed)")
+            INGESTION_STATUS_REGISTRY[document_id].update({
+                "progress_percentage": 100,
+                "status": "COMPLETED",
+                "current_step": "Ingestion completed successfully" + _tag_note,
+                "slides_processed": len(slide_models),
+                "questions_extracted": len(question_models),
+                "duplicates_filtered": len(duplicates)
+            })
+
+        except IngestionCancelled:
+            logger.info(f"[CANCEL] ingestion of {document_id} cancelled by user, cleaning up")
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            purge_document(db, document_id)
+            clear_doc_cancel(document_id)
+            INGESTION_STATUS_REGISTRY[document_id].update({
+                "status": "CANCELLED",
+                "error": None,
+                "current_step": "Upload cancelled",
+            })
+        except Exception as e:
+            logger.exception(f"Error processing document {document_id}: {e}")
+            try:
+                db.rollback()
+                doc.processing_status = "FAILED"
+                doc.processing_error = str(e)
+                db.commit()
+            except Exception:
+                pass
+
+            INGESTION_STATUS_REGISTRY[document_id].update({
+                "status": "FAILED",
+                "error": str(e),
+                "current_step": f"Error: {str(e)}"
+            })
+        finally:
+            if own_session:
+                try:
+                    db.close()
+                except Exception:
+                    pass

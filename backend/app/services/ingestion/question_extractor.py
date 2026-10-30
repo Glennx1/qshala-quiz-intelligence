@@ -70,10 +70,17 @@ class QuestionExtractor:
                     except Exception:
                         pass
                     sub = round_match.group(2)
+                    if not sub or len(sub.strip()) <= 2:
+                        pre = re.search(r"([A-Za-z\s–-]+?)\s*\n?\s*Round\s*\d+", f"{title} {text}", re.I)
+                        if pre:
+                            cand = pre.group(1).strip().lstrip("–-:	 ").strip()
+                            if cand and cand.lower() not in ["structure of the quiz", "quiz", "structure"]:
+                                sub = cand
+
                     if sub and len(sub.strip()) > 2:
-                        # Clean up subtopic: strip dashes and trailing metadata
                         clean_sub = sub.strip().lstrip("–-:	 ").strip()
                         clean_sub = re.split(r"\n|\d+\s*questions", clean_sub, flags=re.I)[0].strip()
+                        clean_sub = re.sub(r"^(?:Round\s*\d+\s*[-–—:]*\s*)+", "", clean_sub, flags=re.I).strip("–—-: \t")
                         current_subtopic = clean_sub if clean_sub else f"Round {current_round_num}"
                 i += 1
                 continue

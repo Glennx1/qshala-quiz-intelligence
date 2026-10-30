@@ -790,12 +790,15 @@
   ],
   "formats": [
     "QA",
-    "THREE_CLUE",
-    "POTPOURRI",
-    "CONNECT",
+    "CONNECT_4",
+    "STEPPED_CLUE",
     "ARRANGE_ORDER",
+    "BUZZER",
+    "VISUAL_CLUE",
+    "AUDIO_CLUE",
+    "VIDEO_CLUE",
+    "POTPOURRI",
     "IMAGE_REVEAL",
-    "LIST_IT",
-    "BUZZER"
+    "LIST_IT"
   ]
 }

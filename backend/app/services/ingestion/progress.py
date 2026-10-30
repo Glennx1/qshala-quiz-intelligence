@@ -35,7 +35,9 @@ def memory_mb() -> Dict[str, Optional[float]]:
         except Exception:
             continue
     r = lambda v: round(v / 1024.0, 0) if v is not None else None
-    return {"memory_mb": r(cur), "peak_memory_mb": r(peak), "memory_limit_mb": round(limit) if limit else None}
+    configured_limit = float(os.getenv("SERVER_MEMORY_LIMIT_MB", "2048"))
+    effective_limit = round(limit) if limit else configured_limit
+    return {"memory_mb": r(cur), "peak_memory_mb": r(peak), "memory_limit_mb": effective_limit}
 
 
 def update(reg: Dict[str, Any], detail: Optional[str] = None, pct: Optional[float] = None,
