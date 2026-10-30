@@ -16,6 +16,8 @@ class SlideClassifier:
         r"^[0-9]+[\.\)]\s+",
         r"\(A\).*\(B\)",
         r"clue\s*\d*",
+        r"(?:lowest to highest|highest to lowest|earliest to latest|from 1st to last|chronological order|arrange|ticker tangle)",
+        r"\bconnect\b",
     ]
 
     ANSWER_INDICATORS = [
@@ -236,6 +238,15 @@ class SlideClassifier:
             s_text = (slides[i].get("extracted_text") or "").strip()
             s_text_lower = s_text.lower()
 
+            # Pattern: If next slide is ANSWER_TRANSITION, current slide is part of the question prompt!
+            is_next_trans = (i + 1 < n and (
+                classified_types[i + 1] == "ANSWER_TRANSITION" or
+                bool(self.ANSWER_TRANSITION_REGEX.search((slides[i + 1].get("extracted_text") or "").strip()))
+            ))
+            if is_next_trans and current_type != "SECTION_MARKER":
+                classified_types[i] = "QUESTION"
+                continue
+
             # Pattern: If previous slide was an ANSWER_TRANSITION (e.g. "ANSWER"),
             # the current slide is the actual answer reveal slide!
             if prev_type == "ANSWER_TRANSITION":
@@ -243,10 +254,10 @@ class SlideClassifier:
                     classified_types[i] = "ANSWER"
 
             # Pattern: If previous slide was a QUESTION, and current slide is CONTENT or ambiguous,
-            # promote to ANSWER if not a section marker / scoreboard
+            # promote to ANSWER if not a section marker / scoreboard (and NOT followed by an answer transition)
             elif prev_type == "QUESTION":
                 if current_type in ["CONTENT", "TITLE"]:
-                    if scored_slides[i]["SECTION_MARKER"] < 0.5 and scored_slides[i]["SCOREBOARD"] < 0.5 and current_type != "ANSWER_TRANSITION":
+                    if scored_slides[i]["SECTION_MARKER"] < 0.5 and scored_slides[i]["SCOREBOARD"] < 0.5 and current_type != "ANSWER_TRANSITION" and not is_next_trans:
                         classified_types[i] = "ANSWER"
 
             # Pattern: If slide was marked ANSWER but precedes a QUESTION and has question marks, recheck

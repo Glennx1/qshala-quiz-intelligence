@@ -54,8 +54,15 @@ class QuestionExtractor:
                 i += 1
                 continue
 
+            # Check if audience question marker
+            if "audience question" in text.lower() or "audience question" in title.lower():
+                current_round_num = 99
+                current_subtopic = "Audience Questions"
+                i += 1
+                continue
+
             # Check if this slide is a Section / Round Marker
-            if slide_type == "SECTION_MARKER" or re.search(r"\bround\s*\d+", title, re.IGNORECASE):
+            if slide_type == "SECTION_MARKER" or re.search(r"\bround\s*\d+", f"{title} {text}", re.IGNORECASE):
                 round_match = self.ROUND_REGEX.search(f"{title} {text}")
                 if round_match:
                     try:
@@ -64,9 +71,280 @@ class QuestionExtractor:
                         pass
                     sub = round_match.group(2)
                     if sub and len(sub.strip()) > 2:
-                        current_subtopic = sub.strip()
+                        # Clean up subtopic: strip dashes and trailing metadata
+                        clean_sub = sub.strip().lstrip("–-:	 ").strip()
+                        clean_sub = re.split(r"\n|\d+\s*questions", clean_sub, flags=re.I)[0].strip()
+                        current_subtopic = clean_sub if clean_sub else f"Round {current_round_num}"
                 i += 1
                 continue
+
+            if text.strip().lower() in ["buffer", "buffer question", "buffer questions"]:
+                i += 1
+                continue
+
+            # -------------------------------------------------------------
+            # TOURNAMENT FORMAT PATTERNS (ZVQ Finals & Multi-Round Decks)
+            # -------------------------------------------------------------
+
+            # 1. Stepped Clue (Portfolio Builder / 3 Clues decreasing points):
+            # Bumper (i) -> Clue 1 (i+1) -> Clue 2 (i+2) -> Clue 3 (i+3) -> Answer Trans (i+4) -> Reveal (i+5)
+            is_stepped_round = (current_round_num == 3 or "portfolio builder" in (current_subtopic or "").lower())
+            if is_stepped_round and i + 5 < n and (
+                slides[i+4].get("slide_type") == "ANSWER_TRANSITION" or
+                re.match(r"^\s*(answer|answers|ans)\s*$", (slides[i+4].get("extracted_text") or "").strip(), re.I)
+            ):
+                c1_slide = slides[i+1]
+                c2_slide = slides[i+2]
+                c3_slide = slides[i+3]
+                trans_slide = slides[i+4]
+                ans_slide = slides[i+5]
+
+                c1_txt = (c1_slide.get("extracted_text") or "").strip()
+                c2_txt = (c2_slide.get("extracted_text") or "").strip()
+                c3_txt = (c3_slide.get("extracted_text") or "").strip()
+                ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("extracted_text", ""))
+
+                if ans_text and not (ans_text.startswith("http://") or ans_text.startswith("https://")):
+                    q_imgs = list(c1_slide.get("image_paths") or []) + list(c2_slide.get("image_paths") or []) + list(c3_slide.get("image_paths") or [])
+                    ans_imgs = list(ans_slide.get("image_paths") or [])
+                    all_imgs = list(dict.fromkeys(q_imgs + ans_imgs))
+
+                    q_media = list(c1_slide.get("all_media_items") or []) + list(c2_slide.get("all_media_items") or []) + list(c3_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
+                    raw_media_refs = list(dict.fromkeys([m["rel_url"] for m in q_media if m.get("rel_url")]))
+
+                    q_full = f"Clue 1 (+20/-15): {c1_txt}\n\nClue 2 (+15/-10): {c2_txt}\n\nClue 3 (+10/-5): {c3_txt}"
+
+                    format_payload = {
+                        "type": "STEPPED_CLUE",
+                        "clues": [
+                            {"step": 1, "points": "+20/-15", "text": c1_txt, "image": q_imgs[0] if len(q_imgs) > 0 else None},
+                            {"step": 2, "points": "+15/-10", "text": c2_txt, "image": q_imgs[1] if len(q_imgs) > 1 else None},
+                            {"step": 3, "points": "+10/-5", "text": c3_txt, "image": q_imgs[2] if len(q_imgs) > 2 else None},
+                        ],
+                        "answer": ans_text
+                    }
+
+                    extracted_questions.append({
+                        "slide_id": c1_slide.get("id"),
+                        "answer_slide_id": ans_slide.get("id"),
+                        "question_text": q_full,
+                        "answer": ans_text,
+                        "options": [],
+                        "explanation": explanation or ans_slide.get("extracted_text", ""),
+                        "subtopic": current_subtopic or "Portfolio Builder",
+                        "round_number": current_round_num or 3,
+                        "question_type": "STEPPED_CLUE",
+                        "format_payload": format_payload,
+                        "source_year": doc_year or 2026,
+                        "slide_number": c1_slide.get("slide_number"),
+                        "answer_slide_number": ans_slide.get("slide_number"),
+                        "source_slide_range": f"Slide {current.get('slide_number')}-{ans_slide.get('slide_number')}",
+                        "image_refs": all_imgs,
+                        "question_images": q_imgs,
+                        "answer_images": ans_imgs,
+                        "audio_refs": [],
+                        "question_audio": [],
+                        "answer_audio": [],
+                        "video_refs": [],
+                        "question_videos": [],
+                        "answer_videos": [],
+                        "media_items": q_media,
+                        "raw_media_refs": raw_media_refs,
+                        "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
+                    })
+                    i += 6
+                    continue
+
+            # 2. Ticker Tangle / Arrange Order:
+            # Bumper (i) -> Instruction/Prompt (i+1) -> Answer Trans (i+2) -> Reveal (i+3)
+            is_arrange_round = (current_round_num == 2 or "ticker tangle" in (current_subtopic or "").lower())
+            p_text_probe = (slides[i+1].get("extracted_text") or "") if i+1 < n else ""
+            is_arrange_text = bool(re.search(r"lowest\s+to\s+highest|highest\s+to\s+lowest|earliest\s+to\s+latest|from\s+1st\s+to\s+last|chronological\s+order|ticker\s+tangle|arrange", p_text_probe, re.I))
+
+            if (is_arrange_round or is_arrange_text) and i + 3 < n and (
+                slides[i+2].get("slide_type") == "ANSWER_TRANSITION" or
+                re.match(r"^\s*(answer|answers|ans)\s*$", (slides[i+2].get("extracted_text") or "").strip(), re.I)
+            ):
+                prompt_slide = slides[i+1]
+                trans_slide = slides[i+2]
+                ans_slide = slides[i+3]
+
+                p_full = (prompt_slide.get("extracted_text") or "").strip()
+                ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("extracted_text", ""))
+
+                if ans_text and not (ans_text.startswith("http://") or ans_text.startswith("https://")):
+                    q_imgs = list(prompt_slide.get("image_paths") or [])
+                    ans_imgs = list(ans_slide.get("image_paths") or [])
+                    all_imgs = list(dict.fromkeys(q_imgs + ans_imgs))
+
+                    q_media = list(prompt_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
+                    # Never include countdown timer video in trivia video refs
+                    raw_media_refs = list(dict.fromkeys([m["rel_url"] for m in q_media if m.get("rel_url") and "timer" not in m["rel_url"].lower()]))
+
+                    format_payload = {
+                        "type": "ARRANGE_ORDER",
+                        "instruction": p_full,
+                        "raw_answer": ans_text,
+                        "has_timer": True,
+                        "timer_seconds": 60,
+                        "scoring": {"all_correct": "+20", "two_correct": "+10", "one_correct": "+5"}
+                    }
+
+                    extracted_questions.append({
+                        "slide_id": prompt_slide.get("id"),
+                        "answer_slide_id": ans_slide.get("id"),
+                        "question_text": p_full,
+                        "answer": ans_text,
+                        "options": [],
+                        "explanation": explanation or ans_slide.get("extracted_text", ""),
+                        "subtopic": current_subtopic or "Ticker Tangle",
+                        "round_number": current_round_num or 2,
+                        "question_type": "ARRANGE_ORDER",
+                        "format_payload": format_payload,
+                        "source_year": doc_year or 2026,
+                        "slide_number": prompt_slide.get("slide_number"),
+                        "answer_slide_number": ans_slide.get("slide_number"),
+                        "source_slide_range": f"Slide {current.get('slide_number')}-{ans_slide.get('slide_number')}",
+                        "image_refs": all_imgs,
+                        "question_images": q_imgs,
+                        "answer_images": ans_imgs,
+                        "audio_refs": [],
+                        "question_audio": [],
+                        "answer_audio": [],
+                        "video_refs": [],
+                        "question_videos": [],
+                        "answer_videos": [],
+                        "media_items": q_media,
+                        "raw_media_refs": raw_media_refs,
+                        "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
+                    })
+                    i += 4
+                    continue
+
+            # 3. Market Indicators / Connect 4:
+            # Bumper (i) -> Clues (i+1) -> Answer Trans (i+2) -> Reveal (i+3)
+            is_connect_round = (current_round_num == 4 or "market indicators" in (current_subtopic or "").lower())
+            if is_connect_round and i + 3 < n and (
+                slides[i+2].get("slide_type") == "ANSWER_TRANSITION" or
+                re.match(r"^\s*(answer|answers|ans)\s*$", (slides[i+2].get("extracted_text") or "").strip(), re.I)
+            ):
+                prompt_slide = slides[i+1]
+                trans_slide = slides[i+2]
+                ans_slide = slides[i+3]
+
+                p_full = (prompt_slide.get("extracted_text") or "").strip()
+                ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("extracted_text", ""))
+
+                if ans_text and not (ans_text.startswith("http://") or ans_text.startswith("https://")):
+                    q_imgs = list(prompt_slide.get("image_paths") or [])
+                    ans_imgs = list(ans_slide.get("image_paths") or [])
+                    all_imgs = list(dict.fromkeys(q_imgs + ans_imgs))
+
+                    q_media = list(prompt_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
+                    raw_media_refs = list(dict.fromkeys([m["rel_url"] for m in q_media if m.get("rel_url")]))
+
+                    q_text = p_full if len(p_full) > 25 else "What connects all these clues and images?"
+
+                    format_payload = {
+                        "type": "CONNECT_4",
+                        "clues": q_imgs,
+                        "connection_reveal": ans_text
+                    }
+
+                    extracted_questions.append({
+                        "slide_id": prompt_slide.get("id"),
+                        "answer_slide_id": ans_slide.get("id"),
+                        "question_text": q_text,
+                        "answer": ans_text,
+                        "options": [],
+                        "explanation": explanation or ans_slide.get("extracted_text", ""),
+                        "subtopic": current_subtopic or "Market Indicators",
+                        "round_number": current_round_num or 4,
+                        "question_type": "CONNECT_4",
+                        "format_payload": format_payload,
+                        "source_year": doc_year or 2026,
+                        "slide_number": prompt_slide.get("slide_number"),
+                        "answer_slide_number": ans_slide.get("slide_number"),
+                        "source_slide_range": f"Slide {current.get('slide_number')}-{ans_slide.get('slide_number')}",
+                        "image_refs": all_imgs,
+                        "question_images": q_imgs,
+                        "answer_images": ans_imgs,
+                        "audio_refs": [],
+                        "question_audio": [],
+                        "answer_audio": [],
+                        "video_refs": [],
+                        "question_videos": [],
+                        "answer_videos": [],
+                        "media_items": q_media,
+                        "raw_media_refs": raw_media_refs,
+                        "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
+                    })
+                    i += 4
+                    continue
+
+            # 4. Bumper -> Question Prompt -> Answer Trans -> Reveal (General / Round 1 & Round 5)
+            # When current slide is a short Bumper (e.g. "Question 1"), prompt is on i+1
+            is_bumper = bool(re.match(r"^\s*Question\s*\d*\s*$", text.strip(), re.I)) or (len(text.strip()) <= 15 and "question" in text.lower())
+            if is_bumper and i + 3 < n and (
+                slides[i+2].get("slide_type") == "ANSWER_TRANSITION" or
+                re.match(r"^\s*(answer|answers|ans)\s*$", (slides[i+2].get("extracted_text") or "").strip(), re.I)
+            ):
+                prompt_slide = slides[i+1]
+                trans_slide = slides[i+2]
+                ans_slide = slides[i+3]
+
+                q_text, options, det_theme, det_num = self._parse_question_and_options(prompt_slide.get("extracted_text", ""))
+                ans_text, explanation = self._parse_answer_and_explanation(ans_slide.get("extracted_text", ""))
+
+                if ans_text and not (ans_text.startswith("http://") or ans_text.startswith("https://")):
+                    q_imgs = list(prompt_slide.get("image_paths") or [])
+                    ans_imgs = list(ans_slide.get("image_paths") or [])
+                    all_imgs = list(dict.fromkeys(q_imgs + ans_imgs))
+
+                    q_audio = list(prompt_slide.get("audio_paths") or [a["rel_url"] for a in prompt_slide.get("audio_items", []) if a.get("rel_url")])
+                    ans_audio = list(ans_slide.get("audio_paths") or [a["rel_url"] for a in ans_slide.get("audio_items", []) if a.get("rel_url")])
+                    all_audio = list(dict.fromkeys(q_audio + ans_audio))
+
+                    q_video = [v["rel_url"] for v in prompt_slide.get("video_items", []) if v.get("rel_url") and "timer" not in v["rel_url"].lower()]
+                    ans_video = [v["rel_url"] for v in ans_slide.get("video_items", []) if v.get("rel_url")]
+                    all_video = list(dict.fromkeys(q_video + ans_video))
+
+                    q_media = list(prompt_slide.get("all_media_items") or []) + list(ans_slide.get("all_media_items") or [])
+                    raw_media_refs = list(dict.fromkeys([m["rel_url"] for m in q_media if m.get("rel_url")]))
+
+                    q_type = "BUZZER" if current_round_num == 5 else ("MULTIPLE_CHOICE" if options else "SLIDE_QA")
+                    fmt_payload = {"type": "BUZZER"} if current_round_num == 5 else {"type": "QA"}
+
+                    extracted_questions.append({
+                        "slide_id": prompt_slide.get("id"),
+                        "answer_slide_id": ans_slide.get("id"),
+                        "question_text": q_text or prompt_slide.get("extracted_text", ""),
+                        "answer": ans_text,
+                        "options": options,
+                        "explanation": explanation or ans_slide.get("extracted_text", ""),
+                        "subtopic": current_subtopic or det_theme,
+                        "round_number": current_round_num or det_num,
+                        "question_type": q_type,
+                        "format_payload": fmt_payload,
+                        "source_year": doc_year or 2026,
+                        "slide_number": prompt_slide.get("slide_number"),
+                        "answer_slide_number": ans_slide.get("slide_number"),
+                        "source_slide_range": f"Slide {current.get('slide_number')}-{ans_slide.get('slide_number')}",
+                        "image_refs": all_imgs,
+                        "question_images": q_imgs,
+                        "answer_images": ans_imgs,
+                        "audio_refs": all_audio,
+                        "question_audio": q_audio,
+                        "answer_audio": ans_audio,
+                        "video_refs": all_video,
+                        "question_videos": q_video,
+                        "answer_videos": ans_video,
+                        "media_items": q_media,
+                        "raw_media_refs": raw_media_refs,
+                        "speaker_notes": f"{notes}\n{ans_slide.get('speaker_notes', '')}".strip()
+                    })
+                    i += 4
+                    continue
 
             # Pattern A2: Question -> ANSWER_TRANSITION (e.g. "ANSWER") -> Answer Reveal Slide
             if slide_type == "QUESTION" and i + 2 < n and slides[i+1].get("slide_type") == "ANSWER_TRANSITION":
@@ -383,39 +661,17 @@ class QuestionExtractor:
         # and then repeated in the "Answer Reveal Run".
         consolidated = []
         seen_q: Dict[str, Dict[str, Any]] = {}
-        generic_headers = {"connect", "identify", "question", "visual", "audio", "video", "clue", "round", "what", "example"}
 
         for q in extracted_questions:
-            txt = (q.get("question_text") or "").strip()
-            curr_ans = (q.get("answer") or "").strip()
-
-            # Skip dummy slides that have neither text nor answer
-            if not txt and not curr_ans:
-                continue
-
-            # Normalize text for deduplication
-            words = re.sub(r"[^\w\s]", "", txt.lower()).split()
-
-            # If question text is empty or very generic (e.g. "Connect", "Identify"), key by answer or slide number
-            if len(words) < 3 or set(words).issubset(generic_headers):
-                if curr_ans:
-                    clean_ans = re.sub(r"[^\w\s]", "", curr_ans.lower())
-                    key = f"ans_{clean_ans}"
-                else:
-                    key = f"slide_{q.get('slide_number')}"
-            else:
-                key = " ".join(words[:10])
+            # Normalize first 10 words for fuzzy matching
+            words = re.sub(r"[^\w\s]", "", q["question_text"].lower()).split()
+            key = " ".join(words[:10]) if words else q["question_text"]
 
             if key in seen_q:
                 existing = seen_q[key]
+                curr_ans = (q.get("answer") or "").strip()
                 exist_ans = (existing.get("answer") or "").strip()
-                # If both have answers and they differ, they are distinct questions — do not merge!
-                if curr_ans and exist_ans and curr_ans.lower() != exist_ans.lower():
-                    unique_key = f"{key}_{q.get('slide_number')}"
-                    seen_q[unique_key] = q
-                    consolidated.append(q)
-                    continue
-
+                # Prioritize instance with verified answer from an answer slide
                 curr_is_better = (
                     (bool(curr_ans) and not bool(exist_ans)) or
                     (bool(q.get("answer_slide_number")) and not bool(existing.get("answer_slide_number"))) or
@@ -432,15 +688,15 @@ class QuestionExtractor:
                 if existing.get("round_number") is None and q.get("round_number") is not None:
                     existing["round_number"] = q["round_number"]
 
-                # Merge image lists while maintaining role segregation (cap at 4 images per question)
+                # Merge image lists while maintaining role segregation
                 if q.get("question_images"):
-                    existing["question_images"] = list(dict.fromkeys((existing.get("question_images") or []) + q["question_images"]))[:4]
+                    existing["question_images"] = list(dict.fromkeys((existing.get("question_images") or []) + q["question_images"]))
                 if q.get("answer_images"):
-                    existing["answer_images"] = list(dict.fromkeys((existing.get("answer_images") or []) + q["answer_images"]))[:4]
+                    existing["answer_images"] = list(dict.fromkeys((existing.get("answer_images") or []) + q["answer_images"]))
                 if q.get("image_refs"):
-                    existing["image_refs"] = list(dict.fromkeys((existing.get("image_refs") or []) + q["image_refs"]))[:4]
+                    existing["image_refs"] = list(dict.fromkeys((existing.get("image_refs") or []) + q["image_refs"]))
 
-                # Merge audio lists
+                # Merge audio lists while maintaining role segregation
                 if q.get("question_audio"):
                     existing["question_audio"] = list(dict.fromkeys((existing.get("question_audio") or []) + q["question_audio"]))
                 if q.get("answer_audio"):
@@ -448,7 +704,7 @@ class QuestionExtractor:
                 if q.get("audio_refs"):
                     existing["audio_refs"] = list(dict.fromkeys((existing.get("audio_refs") or []) + q["audio_refs"]))
 
-                # Merge video lists
+                # Merge video lists while maintaining role segregation
                 if q.get("question_videos"):
                     existing["question_videos"] = list(dict.fromkeys((existing.get("question_videos") or []) + q["question_videos"]))
                 if q.get("answer_videos"):
@@ -459,10 +715,6 @@ class QuestionExtractor:
                 if q.get("raw_media_refs"):
                     existing["raw_media_refs"] = list(dict.fromkeys((existing.get("raw_media_refs") or []) + q["raw_media_refs"]))
             else:
-                if q.get("question_images"):
-                    q["question_images"] = q["question_images"][:4]
-                if q.get("image_refs"):
-                    q["image_refs"] = q["image_refs"][:4]
                 seen_q[key] = q
                 consolidated.append(q)
 

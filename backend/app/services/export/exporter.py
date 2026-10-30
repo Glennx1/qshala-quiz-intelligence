@@ -195,14 +195,13 @@ def _get_hist_q_media(q: Any) -> Dict[str, Any]:
 
     target_ids = [str(i) for i in [hist_id, q_id] if i]
     if target_ids:
-        db = None
         try:
             from backend.app.database import SessionLocal
             from backend.app.models.question import Question
             db = SessionLocal()
             hq = db.query(Question).filter(Question.id.in_(target_ids)).first()
             if hq:
-                return {
+                res = {
                     "raw_media_refs": list(getattr(hq, "raw_media_refs", []) or []) + direct_raw,
                     "question_audio": list(getattr(hq, "question_audio", []) or []) + direct_qa,
                     "audio_refs": list(getattr(hq, "audio_refs", []) or []),
@@ -212,14 +211,11 @@ def _get_hist_q_media(q: Any) -> Dict[str, Any]:
                     "answer_images": list(getattr(hq, "answer_images", []) or []) + direct_a_imgs,
                     "image_refs": list(getattr(hq, "image_refs", []) or []) + direct_img_refs,
                 }
+                db.close()
+                return res
+            db.close()
         except Exception as e:
             logger.warning(f"Error fetching historical question media: {e}")
-        finally:
-            # Always close, even if the query raised mid-way -- an unclosed session here leaked a
-            # Neon connection on every failed export, eventually exhausting the free-tier connection
-            # limit and taking the whole app down with it.
-            if db is not None:
-                db.close()
 
     return {
         "raw_media_refs": direct_raw,
@@ -877,6 +873,21 @@ class QuizExporter:
             pn.font.size = Pt(44)
             pn.font.bold = True
             pn.font.color.rgb = C_TEXT_DARK
+
+        # Top-right 60s timer badge indicator
+        tb_timer = sq.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(10.70), Inches(0.40), Inches(2.00), Inches(0.55))
+        tb_timer.fill.solid()
+        tb_timer.fill.fore_color.rgb = RGBColor(254, 243, 199)
+        tb_timer.line.color.rgb = RGBColor(245, 158, 11)
+        tb_timer.line.width = Pt(1.5)
+        tf_tm = tb_timer.text_frame
+        ptm = tf_tm.paragraphs[0]
+        ptm.text = "⏱️  60s TIMER"
+        ptm.font.name = FONT_HEAD
+        ptm.font.size = Pt(12)
+        ptm.font.bold = True
+        ptm.font.color.rgb = RGBColor(180, 83, 9)
+        ptm.alignment = PP_ALIGN.CENTER
 
         instruct = payload.get("instruction") or _get_val(q, "question_text") or "Arrange these items into the correct order:"
         tb_head = sq.shapes.add_textbox(Inches(0.80), Inches(1.05), Inches(11.733), Inches(0.90))
@@ -1540,7 +1551,23 @@ class QuizExporter:
 
                 # Media Placement on Right Column
                 is_video_mention = bool(re.search(r"\bvideo\b|\bclip\b|\bwatch\b", q_text, re.I))
-                if video_path:
+                is_timer_vid = "timer" in str(video_path or "").lower() or "1min" in str(video_path or "").lower()
+                if is_timer_vid:
+                    # Top-right 60s timer badge indicator instead of giant video player
+                    tb_timer = sq.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(10.70), Inches(0.40), Inches(2.00), Inches(0.55))
+                    tb_timer.fill.solid()
+                    tb_timer.fill.fore_color.rgb = RGBColor(254, 243, 199)
+                    tb_timer.line.color.rgb = RGBColor(245, 158, 11)
+                    tb_timer.line.width = Pt(1.5)
+                    tf_tm = tb_timer.text_frame
+                    ptm = tf_tm.paragraphs[0]
+                    ptm.text = "⏱️  60s TIMER"
+                    ptm.font.name = FONT_HEAD
+                    ptm.font.size = Pt(12)
+                    ptm.font.bold = True
+                    ptm.font.color.rgb = RGBColor(180, 83, 9)
+                    ptm.alignment = PP_ALIGN.CENTER
+                elif video_path:
                     sq.shapes.add_movie(
                         str(video_path),
                         Inches(8.80), Inches(1.50), Inches(3.90), Inches(4.80),

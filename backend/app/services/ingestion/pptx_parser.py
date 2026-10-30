@@ -559,9 +559,27 @@ class PPTXParser:
             if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
                 speaker_notes = clean_pptx_text(slide.notes_slide.notes_text_frame.text)
 
-            # 1. Iterate shapes for text, tables, and PICTURE shapes
+            # 1. Iterate shapes for text, tables, and PICTURE shapes (recursively traversing GROUP shapes)
             has_star_shape = False
-            for shape in slide.shapes:
+            has_timer = False
+
+            def _walk_shapes_recursive(shapes_collection):
+                for s in shapes_collection:
+                    if getattr(s, "shape_type", None) == MSO_SHAPE_TYPE.GROUP or hasattr(s, "shapes"):
+                        try:
+                            yield from _walk_shapes_recursive(s.shapes)
+                        except Exception:
+                            pass
+                    else:
+                        yield s
+
+            for s in slide.shapes:
+                s_name = (getattr(s, "name", "") or "").lower()
+                if "timer" in s_name or "1min" in s_name or "countdown" in s_name:
+                    has_timer = True
+                    break
+
+            for shape in _walk_shapes_recursive(slide.shapes):
                 try:
                     st = getattr(shape, "auto_shape_type", None) if shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE else None
                     if (st is not None and "STAR" in str(st).upper()) or "star" in (shape.name or "").lower():
@@ -656,6 +674,10 @@ class PPTXParser:
                             if part_name not in seen_media_names:
                                 seen_media_names.add(part_name)
                                 media_type = self._classify_media_type(ext)
+                                is_timer_vid = has_timer or any(k in part_name.lower() for k in ["timer", "1min", "countdown"])
+                                if is_timer_vid and media_type == "video":
+                                    has_timer = True
+                                    continue
                                 if media_type == "image" and not self._is_valid_quiz_image(zip_name, ext):
                                     continue
 
@@ -732,6 +754,8 @@ class PPTXParser:
                 "speaker_notes": speaker_notes,
                 "image_paths": image_paths,
                 "has_images": len(image_paths) > 0,
+                "has_timer": has_timer,
+                "timer_seconds": 60 if has_timer else None,
                 "audio_paths": audio_paths,
                 "has_audio": len(audio_paths) > 0,
                 "video_paths": video_paths,

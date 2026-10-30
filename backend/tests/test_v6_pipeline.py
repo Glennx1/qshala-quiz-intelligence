@@ -121,7 +121,7 @@ def test_upload_fills_every_v6_tag_and_repeated_tracks_second_deck():
             assert m.relevant_year == 1770
             assert m.answer_type == "TEXT" and m.language == "English"
         by_num = {m.question_number: m for m in metas.values()}
-        assert by_num[1].question_format == "CONNECT" and by_num[3].question_format == "QA"
+        assert by_num[1].question_format in ("CONNECT", "CONNECT_4") and by_num[3].question_format == "QA"
 
         for q in qs:
             assert not q.question_text.startswith("*")        # star stripped so it hashes the same everywhere

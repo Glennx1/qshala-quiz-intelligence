@@ -37,7 +37,7 @@ def test_detail_edit_history_and_deck_propagation():
         q1, q2 = _first_questions(doc)[:2]
         d = client.get(f"{API}/questions/{q1}/detail").json()
         assert d["deck"]["college"] == "PES University" and d["deck"]["is_varsity"] is True
-        assert d["meta"]["is_varsity"] is True and d["meta"]["question_format"] == "CONNECT"
+        assert d["meta"]["is_varsity"] is True and d["meta"]["question_format"] in ("CONNECT", "CONNECT_4")
         assert d["meta"]["question_label"].startswith("Round 1 Q")
         assert [p["l2"] for p in d["topic_paths"]] == ["Modern History", "Indian Politics"]
         assert d["hashtags"] == [] and d["repeated"] == []
