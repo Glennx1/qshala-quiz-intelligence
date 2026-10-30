@@ -230,7 +230,8 @@ def ensure_schema_columns():
                     ("source_slide_range", "VARCHAR(50)"),
                     ("duplicate_status", "VARCHAR(50) DEFAULT 'UNIQUE'"),
                     ("duplicate_similarity", "FLOAT"),
-                    ("duplicate_of_id", "VARCHAR(36)")
+                    ("duplicate_of_id", "VARCHAR(36)"),
+                    ("format_payload", "JSON")
                 ]
                 for col_name, col_type in new_q_cols:
                     try:

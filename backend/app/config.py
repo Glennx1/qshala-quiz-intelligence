@@ -43,7 +43,14 @@ if is_vercel:
     ]
     bundled_db = next((p for p in candidate_dbs if p.exists() and p.stat().st_size > 0), None)
 
-    if bundled_db and (not tmp_db.exists() or tmp_db.stat().st_size == 0):
+    needs_copy = False
+    if bundled_db:
+        if not tmp_db.exists() or tmp_db.stat().st_size == 0:
+            needs_copy = True
+        elif tmp_db.stat().st_size < bundled_db.stat().st_size or tmp_db.stat().st_mtime < bundled_db.stat().st_mtime:
+            needs_copy = True
+
+    if bundled_db and needs_copy:
         try:
             shutil.copy2(bundled_db, tmp_db)
             print(f"[Vercel Init] Seeded DB copied from {bundled_db} ({bundled_db.stat().st_size} bytes) to {tmp_db}", file=sys.stderr)
