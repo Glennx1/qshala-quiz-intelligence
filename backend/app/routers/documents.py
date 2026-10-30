@@ -2,6 +2,7 @@ import logging
 import os
 import shutil
 import uuid
+from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, UploadFile, File, Form, BackgroundTasks, HTTPException
 from sqlalchemy.orm import Session
@@ -142,7 +143,7 @@ async def upload_document(
             id=doc_id,
             filename=file.filename,
             title=clean_title,
-            year=year or 2024,
+            year=year or datetime.now().year,
             file_type=ext.replace(".", ""),
             storage_path=storage_path,
             file_size_bytes=file_size,
@@ -260,7 +261,7 @@ async def upload_document_chunk(
             id=doc_id,
             filename=filename,
             title=clean_title,
-            year=year or 2024,
+            year=year or datetime.now().year,
             file_type=ext.replace(".", ""),
             storage_path=storage_path,
             file_size_bytes=file_size,
