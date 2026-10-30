@@ -44,6 +44,7 @@ BRIEF_SCHEMA: Dict[str, Any] = {
         "india_focused": {"type": "BOOLEAN", "nullable": True},
         "evergreen": {"type": "BOOLEAN", "nullable": True},
         "no_images": {"type": "BOOLEAN", "nullable": True},
+        "format_filter": {"type": "STRING", "enum": ["CONNECT_4", "STEPPED_CLUE", "ARRANGE_ORDER", "STANDARD_QA"], "nullable": True},
         "framing": {"type": "STRING"},
     },
     "required": ["count", "query", "topics_l1", "framing"],
@@ -56,7 +57,8 @@ _SYSTEM = (
     "Only output the brief.\n"
     "Rules:\n"
     "- count: how many questions they want (default 10 if unstated).\n"
-    "- query: a short, clean semantic topic phrase for keyword search — strip filler "
+    "- format_filter: 'CONNECT_4' if the user asks for connect 4 / common link questions, 'STEPPED_CLUE' if stepped clues / portfolio builder, 'ARRANGE_ORDER' if arrange / chronological order; otherwise null.
+- query: a short, clean semantic topic phrase for keyword search — strip filler "
     "like 'give me', 'questions', 'round', counts, and difficulty/audience words.\n"
     f"- topics_l1: zero or more themes drawn ONLY from this list: {', '.join(V6_THEMES)}.\n"
     "- subtopics_l2: candidate finer subtopics in plain words (free text is fine).\n"

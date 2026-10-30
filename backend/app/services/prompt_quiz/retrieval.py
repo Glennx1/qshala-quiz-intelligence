@@ -238,9 +238,26 @@ class Index:
 
 
 # ---- very light prompt -> (clean query, filters) parser, for a chat-style box ----
+_FORMAT_PATTERNS = {
+    "CONNECT_4": re.compile(
+        r"\b(connect\s*[-–]?\s*(4|four)|common\s+link|connect\s+round)\b", re.I
+    ),
+    "STEPPED_CLUE": re.compile(
+        r"\b(stepped\s+clue|decreasing\s+value|portfolio\s+builder|3[- ]clue|three[- ]clue)\b", re.I
+    ),
+    "ARRANGE_ORDER": re.compile(
+        r"\b(arrange|chronolog|ticker\s+tangle|correct\s+order)\b", re.I
+    ),
+}
+
 def parse_prompt(prompt: str):
     p = prompt.lower()
     filters: Dict[str, Any] = {}
+    for fmt, pattern in _FORMAT_PATTERNS.items():
+        if pattern.search(p):
+            filters["format_filter"] = fmt
+            p = pattern.sub(" ", p)
+            break
     if re.search(r"\bevergreen|timeless|any year\b", p):
         filters["evergreen_only"] = True
     if re.search(r"\bschool|kids|children|family|safe\b", p):

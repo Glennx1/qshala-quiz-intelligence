@@ -81,6 +81,7 @@ export interface HistoricalQuestion {
   question_number?: number | null;
   question_label?: string | null;
   question_format?: string | null;
+  format_data?: any;
   format_payload?: any;
   star_marked?: boolean;
   topic_paths?: TopicPath[];

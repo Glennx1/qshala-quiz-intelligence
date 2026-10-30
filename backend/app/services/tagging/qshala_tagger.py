@@ -206,8 +206,7 @@ def _tag_schema() -> Dict[str, Any]:
 
 
 def _user_prompt(question_text: str, answer: str, rules: qshala_rules.RuleSignals,
-                 visual_clues: str = "", deck_year: Optional[int] = None,
-                 clarification: str = "") -> str:
+                 visual_clues: str = "", deck_year: Optional[int] = None) -> str:
     if TAXONOMY_VERSION == "v6":
         parts = [f"QUESTION: {question_text}", f"ANSWER: {answer}"]
         if visual_clues:
@@ -219,8 +218,6 @@ def _user_prompt(question_text: str, answer: str, rules: qshala_rules.RuleSignal
             parts.append(f"Rule hint: likely theme(s) {', '.join(rules.brand_hints_l1)}. Confirm or override from the question.")
         if rules.image_dependent:
             parts.append("Rule hint: this question may depend on an image that is not shown. Tag from the text and set fit=weak if unsure.")
-        if clarification:
-            parts.append(f"QUIZ MASTER CLARIFICATION (authoritative — use this): {clarification[:500]}")
         return "\n".join(parts)
     hints: List[str] = []
     if rules.brand_hints_l1:
@@ -295,11 +292,10 @@ def _canonical_hash(question_text: str, answer: str) -> str:
 async def _call_llm(provider: GeminiLLMProvider, model: str, question_text: str,
                     answer: str, rules: qshala_rules.RuleSignals,
                     thinking_level: str = "low", visual_clues: str = "",
-                    deck_year: Optional[int] = None,
-                    clarification: str = "") -> Tuple[Dict[str, Any], Dict[str, int], int]:
+                    deck_year: Optional[int] = None) -> Tuple[Dict[str, Any], Dict[str, int], int]:
     """One Gemini call. Returns (parsed_json, usage_dict, latency_ms)."""
     system = _system_prompt()
-    user = _user_prompt(question_text, answer, rules, visual_clues=visual_clues, deck_year=deck_year, clarification=clarification)
+    user = _user_prompt(question_text, answer, rules, visual_clues=visual_clues, deck_year=deck_year)
     schema = _tag_schema()
     t0 = time.perf_counter()
     data, usage = await provider.generate_json_schema(
@@ -319,46 +315,35 @@ async def _call_llm(provider: GeminiLLMProvider, model: str, question_text: str,
 def _route(rules: qshala_rules.RuleSignals, llm: Dict[str, Any]) -> Tuple[str, float, str]:
     """Decide status (confirmed / draft) and a confidence estimate.
 
-    - Canonical taxonomy subtopic with fit='good' -> confirmed (0.88 - 0.92)
-    - Uncategorized (no subtopic, generic GK with no L2, or 'Uncategorized') -> draft (0.35)
-    - Confused fit ('weak' or 'none') -> draft (0.50)
-    - Geography disagreement -> draft (0.60)
-    - Rule brand-hint mismatch -> draft (0.65)
+    - LLM fit='good' AND no rule conflict → confirmed, 0.90.
+    - LLM fit='weak' or fit='none'       → draft, 0.50.
+    - Rule geography disagrees with LLM  → draft, 0.60. (route to review.)
+    - LLM-only, no rule hits at all      → draft, 0.70.  (reviewer should look.)
     """
     fit = llm.get("fit", "weak")
-    l2 = (llm.get("subtopic_l2") or "").strip()
+    reasons: List[str] = []
 
-    # 1. Truly uncategorized (missing subtopic, generic GK with no L2, or 'Uncategorized')
-    if not l2 or l2.lower() in ("uncategorized", "none", "unknown", "general knowledge"):
-        return ("draft", 0.35, "uncategorized: missing or generic subtopic")
-
-    # 2. Model was confused or found no good fit in taxonomy
     if fit in ("weak", "none"):
         return ("draft", 0.50, f"model marked fit={fit}")
 
-    tax = _load_taxonomy()
-    llm_l1 = tax.get("l2_to_l1", {}).get(l2)
-    if not llm_l1:
-        # Subtopic not in canonical taxonomy
-        return ("draft", 0.45, f"subtopic '{l2}' not in canonical taxonomy")
-
-    # 3. Geography disagreement
+    # Geography disagreement is the strongest cheap signal we have.
     if (rules.india_international and llm.get("india_international") not in (None, "NA")
             and rules.india_international != llm["india_international"]):
-        return ("draft", 0.60, f"geography mismatch (rule {rules.india_international} vs LLM {llm['india_international']})")
+        reasons.append(f"geography mismatch (rule {rules.india_international} vs LLM {llm['india_international']})")
+        return ("draft", 0.60, "; ".join(reasons))
 
-    # 4. Brand-hint agreement / mismatch
+    # Brand-hint agreement is a soft confirmation but not a hard rule — the LLM can override.
     rule_l1s = set(rules.brand_hints_l1 or [])
+    llm_l1 = _load_taxonomy()["l2_to_l1"].get(llm.get("subtopic_l2", ""))
     rule_signals_fired = bool(rules.city_name or rules.brand_hints_l1 or rules.shelf_life or rules.sensitivity)
 
-    if rule_signals_fired and rule_l1s and llm_l1 not in rule_l1s:
-        return ("draft", 0.65, f"brand hints suggested {sorted(rule_l1s)}; LLM chose {llm_l1}")
+    if rule_signals_fired and (not rule_l1s or llm_l1 in rule_l1s):
+        return ("confirmed", 0.90, "LLM fit=good, no rule conflict")
+    if not rule_signals_fired:
+        return ("draft", 0.70, "no rule signals fired; recommend quick review")
 
-    if rule_signals_fired:
-        return ("confirmed", 0.92, "LLM fit=good, corroborated by rule signals")
-
-    # 5. Well-tagged question with canonical taxonomy subtopic: automatically confirmed!
-    return ("confirmed", 0.88, "LLM fit=good with canonical taxonomy subtopic")
+    # Rules fired but L1 doesn't match any brand-hint L1 — not fatal, but worth a look.
+    return ("draft", 0.75, f"brand hints suggested {sorted(rule_l1s)}; LLM chose {llm_l1}")
 
 
 # ---------------------------------------------------------------------- v6 helpers
@@ -400,11 +385,6 @@ class QshalaTagger:
         self.rpm = float(os.getenv("QSHALA_TAGGER_RPM", "12"))   # free tier allows 15/min; raise on a paid key (0 = off)
         self.model = model or getattr(settings, "QSHALA_TAGGER_MODEL", None) or "gemini-3.5-flash-lite"
         self.thinking_level = thinking_level or "low"
-        tax_data = _load_taxonomy()
-        self.taxonomy = {
-            grp["name"]: [item["name"] for item in grp.get("level2", [])]
-            for grp in tax_data.get("raw", {}).get("level1", [])
-        }
 
     # ---- Tag one question. Does NOT commit the row by default; caller decides.
 
@@ -420,7 +400,6 @@ class QshalaTagger:
         visual_clues: str = "",
         deck_year: Optional[int] = None,
         question: Optional[Any] = None,
-        clarification: str = "",
     ) -> QshalaTag:
         """Full pipeline for one question. Returns the inserted QshalaTag row (uncommitted if commit=False).
 
@@ -444,26 +423,26 @@ class QshalaTagger:
             logger.info("qshala_tagger: skipping re-tag; HUMAN-confirmed row exists for %s", question_id)
             return existing
 
-        # Step 3: LLM call (retries with exponential back-off for rate limits and network blips).
+        # Step 3: LLM call (two retries with a short back-off for rate limits and network blips).
         llm_out: Dict[str, Any] = {}
         max_attempts = 6
         for attempt in range(max_attempts):
             try:
+                await _wait_for_slot(self.rpm)
                 llm_out, usage, latency_ms = await _call_llm(
                     self.provider, self.model, question_text, answer, rules,
-                    thinking_level=self.thinking_level, visual_clues=visual_clues, deck_year=deck_year,
-                    clarification=clarification)
+                    thinking_level=self.thinking_level, visual_clues=visual_clues, deck_year=deck_year)
                 break
             except Exception as e:
                 if attempt == max_attempts - 1 or isinstance(e, ValueError) or (not is_rate_limit(e) and attempt >= 2):
                     logger.error("LLM call failed for %s: %s", question_id, safe_error(e))
                     raise (ValueError if isinstance(e, ValueError) else RuntimeError)(safe_error(e)) from None
-                # Rate limited (429): wait at least 5s, honoring retry-after
+                # Rate limited (429): wait much longer, and honour Retry-After when Google sends it.
                 if is_rate_limit(e):
-                    wait = retry_after_seconds(e) or min(60.0, max(5.0, 6.0 * (2 ** attempt)))
+                    wait = retry_after_seconds(e) or min(60, 6 * (2 ** attempt))
                 else:
-                    wait = 0.5 * (attempt + 1)
-                logger.warning("LLM call for %s hit %s, retrying in %.1fs", question_id,
+                    wait = 1.5 * (attempt + 1)
+                logger.warning("LLM call for %s hit %s, retrying in %.0fs", question_id,
                                "a rate limit" if is_rate_limit(e) else "an error", wait)
                 await asyncio.sleep(wait)
 
@@ -529,10 +508,6 @@ class QshalaTagger:
                    llm_out: Dict[str, Any], usage: Dict[str, int], latency_ms: int, actor: str,
                    commit: bool, existing: Optional[QshalaTag], question: Optional[Any]) -> QshalaTag:
         paths = _v6_paths(llm_out)
-        if question is not None:
-            paths = qshala_rules.apply_disambiguation(
-                paths, getattr(question, "question_text", "") or "",
-                getattr(question, "answer", "") or "", taxonomy_version=TAXONOMY_VERSION)
         first = paths[0] if paths else {}
         routed = {"fit": llm_out.get("fit", "weak"), "india_international": llm_out.get("india_international"),
                   "subtopic_l2": first.get("l2")}
@@ -565,339 +540,28 @@ class QshalaTagger:
                                    change_type="PROMOTE", actor=actor, reason=reason))
         if paths and not topic_paths.has_human_paths(db, question_id):
             topic_paths.replace_paths(db, question_id, paths, source="LLM", actor=actor, question=question)
+
+        q_target = question
+        if q_target is None:
+            from backend.app.models.question import Question
+            q_target = db.query(Question).get(question_id)
+        if q_target is not None:
+            from backend.app.services.tagging.format_classifier import classify_and_extract
+            q_format, f_data = classify_and_extract(
+                getattr(q_target, "question_text", "") or "",
+                getattr(q_target, "answer", "") or "",
+                question_images=getattr(q_target, "question_images", None),
+                answer_images=getattr(q_target, "answer_images", None),
+                round_name=getattr(q_target, "round_name", None) or (f"Round {q_target.round_number}" if getattr(q_target, "round_number", None) else None),
+            )
+            q_target.question_format = q_format
+            if f_data is not None:
+                q_target.format_data = f_data
+
         if commit:
             db.commit()
             db.refresh(row)
         return row
-
-    # ---- Fast Batch Tagging & Fallback Single Tagging
-
-    async def tag_one(
-        self,
-        question: Dict[str, Any],
-        db: Optional[Session] = None,
-        actor: str = "deck_upload",
-        deck_year: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        """Tag a single question with 429 backoff retry and no artificial sleep."""
-        q_id = str(question.get("id") or question.get("question_id") or "temp_id")
-        q_text = str(question.get("question_text") or question.get("text") or "").strip()
-        ans = str(question.get("answer") or "").strip()
-        exp = str(question.get("explanation") or "").strip()
-        vis = str(question.get("visual_clues") or "").strip()
-        q_obj = question.get("question")
-
-        if db is not None:
-            try:
-                q_tag = await self.tag(
-                    db=db,
-                    question_id=q_id,
-                    question_text=q_text,
-                    answer=ans,
-                    actor=actor,
-                    commit=False,
-                    visual_clues=vis,
-                    deck_year=deck_year,
-                    question=q_obj,
-                )
-                from backend.app.services.question_meta_service import apply_tag_to_meta
-                apply_tag_to_meta(db, q_id, q_tag)
-                diff = 3
-                if q_obj and getattr(q_obj, "difficulty_score", None):
-                    diff = max(1, min(5, int(round(q_obj.difficulty_score * 5))))
-                return {
-                    "topic": q_tag.topic_l1 or "Uncategorised",
-                    "subtopic": q_tag.subtopic_l2 or "Uncategorised",
-                    "difficulty": diff,
-                    "tags": q_tag.keywords_l3 or [],
-                }
-            except Exception as e:
-                logger.warning("tag_one via self.tag failed (%s), falling back to direct prompt", safe_error(e))
-                if isinstance(e, ValueError) or "GEMINI_API_KEY" in str(e):
-                    raise
-
-        prompt = f"""You are a quiz question classifier. Classify the question below.
-
-TAXONOMY:
-{json.dumps(self.taxonomy, indent=2)}
-
-Return a JSON object with:
-- "topic": string (must be from the taxonomy above)
-- "subtopic": string (must be a valid subtopic under the chosen topic)
-- "difficulty": integer 1-5 (1=easy trivia, 3=club level, 5=championship)
-- "tags": list of strings, max 5 tags describing the question's themes
-
-QUESTION:
-Question: {q_text}
-Answer: {ans}
-Explanation: {exp}
-Visual clues: {vis[:300]}
-
-Return ONLY the JSON object, no markdown fences, no commentary."""
-
-        max_attempts = 4
-        for attempt in range(max_attempts):
-            try:
-                if hasattr(self.provider, "generate_json"):
-                    data = await self.provider.generate_json(prompt)
-                elif hasattr(self.provider, "generate_text"):
-                    raw_text = await self.provider.generate_text(prompt)
-                    clean_text = raw_text.strip()
-                    if clean_text.startswith("```json"):
-                        clean_text = clean_text[7:]
-                    elif clean_text.startswith("```"):
-                        clean_text = clean_text[3:]
-                    if clean_text.endswith("```"):
-                        clean_text = clean_text[:-3]
-                    data = json.loads(clean_text.strip())
-                else:
-                    data = {}
-
-                topic = data.get("topic") or "General Knowledge"
-                subtopic = data.get("subtopic") or "General"
-                try:
-                    diff = max(1, min(5, int(data.get("difficulty", 3))))
-                except (ValueError, TypeError):
-                    diff = 3
-                raw_tags = data.get("tags") or []
-                tags = [str(t).strip() for t in raw_tags if str(t).strip()][:5] if isinstance(raw_tags, list) else []
-                return {
-                    "topic": topic,
-                    "subtopic": subtopic,
-                    "difficulty": diff,
-                    "tags": tags,
-                }
-            except Exception as e:
-                if attempt == max_attempts - 1:
-                    logger.error("tag_one failed for question %s: %s", q_id, safe_error(e))
-                    return {
-                        "topic": "Uncategorised",
-                        "subtopic": "Uncategorised",
-                        "difficulty": 3,
-                        "tags": [],
-                    }
-                wait = retry_after_seconds(e) or (0.5 * (2 ** attempt))
-                logger.warning("tag_one hit error (%s), retrying in %.1fs", safe_error(e), wait)
-                await asyncio.sleep(wait)
-        return {
-            "topic": "Uncategorised",
-            "subtopic": "Uncategorised",
-            "difficulty": 3,
-            "tags": [],
-        }
-
-    async def tag_batch(
-        self,
-        questions: List[Dict[str, Any]],
-        db: Optional[Session] = None,
-        actor: str = "deck_upload",
-        deck_year: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        """Classify a batch of questions in a single LLM call (~5s).
-
-        Validates output against taxonomy and falls back to tag_one for any questions
-        that fail validation or if the batch call fails.
-        """
-        if not questions:
-            return []
-
-        # If provider doesn't support generate_json (e.g. test mocks like FakeGemini),
-        # fall back to tag_one for each question.
-        if not hasattr(self.provider, "generate_json"):
-            results = []
-            for q in questions:
-                res = await self.tag_one(q, db=db, actor=actor, deck_year=deck_year)
-                results.append(res)
-            return results
-
-        # Build prompt
-        q_blocks = []
-        for i, q in enumerate(questions, 1):
-            q_text = str(q.get("question_text") or q.get("text") or "").strip()
-            ans = str(q.get("answer") or "").strip()
-            exp = str(q.get("explanation") or "").strip()
-            vis = str(q.get("visual_clues") or "").strip()
-            parts = [f"Question {i}: {q_text}"]
-            if ans:
-                parts.append(f"Answer: {ans}")
-            if exp:
-                parts.append(f"Explanation: {exp}")
-            if vis:
-                parts.append(f"Visual clues: {vis[:300]}")
-            q_blocks.append("\n".join(parts))
-
-        questions_str = "\n\n".join(q_blocks)
-        prompt = f"""You are a quiz question classifier. Classify each question below.
-
-TAXONOMY:
-{json.dumps(self.taxonomy, indent=2)}
-
-For each question, return a JSON array (same order as input) where each element has:
-- "topic": string (must be from the taxonomy above)
-- "subtopic": string (must be a valid subtopic under the chosen topic)
-- "difficulty": integer 1-5 (1=easy trivia, 3=club level, 5=championship)
-- "tags": list of strings, max 5 tags describing the question's themes
-
-QUESTIONS:
-{questions_str}
-
-Return ONLY the JSON array, no markdown fences, no commentary."""
-
-        t0 = time.perf_counter()
-        raw_resp = None
-        max_attempts = 4
-        for attempt in range(max_attempts):
-            try:
-                raw_resp = await self.provider.generate_json(prompt)
-                break
-            except Exception as e:
-                if attempt == max_attempts - 1:
-                    logger.error("tag_batch LLM call failed: %s", safe_error(e))
-                    break
-                wait = retry_after_seconds(e) or (0.5 * (2 ** attempt))
-                logger.warning("tag_batch hit %s, retrying in %.1fs",
-                               "a rate limit" if is_rate_limit(e) else "an error", wait)
-                await asyncio.sleep(wait)
-
-        latency_ms = int((time.perf_counter() - t0) * 1000)
-
-        # Handle unwrapped or wrapped JSON responses
-        if isinstance(raw_resp, dict):
-            for k in ["questions", "items", "results", "data", "array"]:
-                if isinstance(raw_resp.get(k), list):
-                    raw_resp = raw_resp[k]
-                    break
-
-        parsed_list = raw_resp if isinstance(raw_resp, list) else []
-        merged_results: List[Optional[Dict[str, Any]]] = [None] * len(questions)
-        retry_indices: List[int] = []
-
-        known_topics = {t.lower(): t for t in self.taxonomy.keys()}
-
-        for idx, q_dict in enumerate(questions):
-            if idx >= len(parsed_list) or not isinstance(parsed_list[idx], dict):
-                retry_indices.append(idx)
-                continue
-
-            item = parsed_list[idx]
-            topic_raw = str(item.get("topic", "")).strip()
-            topic_canonical = known_topics.get(topic_raw.lower())
-
-            if not topic_canonical:
-                retry_indices.append(idx)
-                continue
-
-            subtopics_list = self.taxonomy.get(topic_canonical, [])
-            subtopic_raw = str(item.get("subtopic", "")).strip()
-            known_subtopics = {s.lower(): s for s in subtopics_list}
-            subtopic_canonical = known_subtopics.get(subtopic_raw.lower())
-            if not subtopic_canonical:
-                import difflib
-                matches = difflib.get_close_matches(subtopic_raw.lower(), list(known_subtopics.keys()), n=1, cutoff=0.7)
-                if matches:
-                    subtopic_canonical = known_subtopics[matches[0]]
-                elif subtopics_list:
-                    subtopic_canonical = subtopics_list[0]
-                else:
-                    subtopic_canonical = subtopic_raw or "General"
-
-            try:
-                diff_val = int(item.get("difficulty", 3))
-                diff_val = max(1, min(5, diff_val))
-            except (ValueError, TypeError):
-                diff_val = 3
-
-            raw_tags = item.get("tags")
-            if isinstance(raw_tags, list):
-                tags_clean = [str(t).strip() for t in raw_tags if str(t).strip()][:5]
-            elif isinstance(raw_tags, str) and raw_tags.strip():
-                tags_clean = [t.strip() for t in raw_tags.split(",") if t.strip()][:5]
-            else:
-                tags_clean = []
-
-            merged_results[idx] = {
-                "topic": topic_canonical,
-                "subtopic": subtopic_canonical,
-                "difficulty": diff_val,
-                "tags": tags_clean,
-            }
-
-        # Retry failed questions individually
-        if retry_indices:
-            logger.info("Batch tagger: %d of %d questions failed validation, retrying individually",
-                        len(retry_indices), len(questions))
-            for r_idx in retry_indices:
-                try:
-                    fallback_res = await self.tag_one(
-                        questions[r_idx],
-                        db=db,
-                        actor=actor,
-                        deck_year=deck_year,
-                    )
-                    merged_results[r_idx] = fallback_res
-                except Exception as fb_err:
-                    logger.warning("tag_one fallback failed for question %d: %s", r_idx + 1, safe_error(fb_err))
-                    merged_results[r_idx] = {
-                        "topic": "Uncategorised",
-                        "subtopic": "Uncategorised",
-                        "difficulty": 3,
-                        "tags": [],
-                    }
-
-        final_results = [res if res is not None else {"topic": "Uncategorised", "subtopic": "Uncategorised", "difficulty": 3, "tags": []}
-                         for res in merged_results]
-
-        # If DB session is provided, persist QshalaTag and topic paths for batch items
-        if db is not None:
-            from backend.app.services.question_meta_service import apply_tag_to_meta
-            diff_map = {1: "Very Easy", 2: "Easy", 3: "Medium", 4: "Hard", 5: "Very Hard"}
-            for q_dict, res in zip(questions, final_results):
-                q_id = q_dict.get("id") or q_dict.get("question_id")
-                q_obj = q_dict.get("question")
-                if not q_id:
-                    continue
-
-                existing = (
-                    db.query(QshalaTag)
-                    .filter(QshalaTag.question_id == q_id, QshalaTag.status == "confirmed")
-                    .first()
-                )
-                if not existing:
-                    row = QshalaTag(
-                        question_id=q_id,
-                        taxonomy_version=TAXONOMY_VERSION,
-                        model_version=self.model,
-                        source="LLM",
-                        topic_l1=res["topic"],
-                        subtopic_l2=res["subtopic"],
-                        keywords_l3=res["tags"],
-                        confidence=0.90,
-                        status="confirmed",
-                        fit="good",
-                        tokens_in=0,
-                        tokens_out=0,
-                        latency_ms=latency_ms,
-                        verification_notes="batch-tagged",
-                    )
-                    db.add(row)
-                    db.flush()
-
-                    if res["topic"] and res["subtopic"] and not topic_paths.has_human_paths(db, q_id):
-                        paths = [{"l1": res["topic"], "l2": res["subtopic"], "keywords": res["tags"]}]
-                        topic_paths.replace_paths(db, q_id, paths, source="LLM", actor=actor, question=q_obj)
-                    apply_tag_to_meta(db, q_id, row)
-
-                if q_obj is not None:
-                    diff_num = res.get("difficulty", 3)
-                    q_obj.topic = res["topic"]
-                    if not q_obj.topics:
-                        q_obj.topics = [res["topic"]]
-                    q_obj.subtopic = res["subtopic"]
-                    q_obj.tags = res["tags"]
-                    q_obj.difficulty = diff_map.get(int(diff_num), "Medium")
-                    q_obj.difficulty_score = min(1.0, max(0.1, int(diff_num) * 0.2))
-
-        return final_results
 
     # ---- Human review API.
 

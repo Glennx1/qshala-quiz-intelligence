@@ -105,8 +105,9 @@ def to_question_response(q: Question, doc: Optional[Document], slide: Optional[S
         provenance_decks=getattr(q, "provenance_decks", []) or [],
         round_number=getattr(q, "round_number", None),
         question_type=q.question_type or "SLIDE_QA",
-        question_format=getattr(q, "question_type", "QA") or "QA",
-        format_payload=getattr(q, "format_payload", None),
+        question_format=getattr(q, "question_format", None) or getattr(q, "question_type", "STANDARD_QA") or "STANDARD_QA",
+        format_data=getattr(q, "format_data", None) or getattr(q, "format_payload", None),
+        format_payload=getattr(q, "format_payload", None) or getattr(q, "format_data", None),
         image_refs=clean_imgs,
         question_images=clean_q_imgs,
         answer_images=clean_ans_imgs,
@@ -436,10 +437,13 @@ async def search_questions(
         elif fmt_str in ("STEPPED_CLUE", "THREE_CLUE"):
             target_fmts = ["STEPPED_CLUE", "THREE_CLUE"]
         from backend.app.models.qshala_tag import QshalaQuestionMetadata
+        if fmt_str in ("STANDARD_QA", "QA"):
+            target_fmts.extend(["STANDARD_QA", "QA", "SLIDE_QA"])
         q_builder = q_builder.outerjoin(
             QshalaQuestionMetadata, Question.id == QshalaQuestionMetadata.question_id
         ).filter(
             or_(
+                Question.question_format.in_(target_fmts),
                 Question.question_type.in_(target_fmts),
                 QshalaQuestionMetadata.question_format.in_(target_fmts)
             )

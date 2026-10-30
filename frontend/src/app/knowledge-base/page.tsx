@@ -42,6 +42,127 @@ function isPlaceholderIcon(url?: string | null): boolean {
   return name ? PLACEHOLDER_ICONS.has(name) : false;
 }
 
+function QuestionFormatDisplay({
+  q,
+  getImageSrc,
+  setPreviewImage,
+  handleImgError
+}: {
+  q: HistoricalQuestion;
+  getImageSrc: (url: string) => string;
+  setPreviewImage: (url: string) => void;
+  handleImgError: (url: string) => void;
+}) {
+  const fmt = q.question_format;
+  const payload = q.format_data || q.format_payload;
+
+  if (fmt === 'CONNECT_4' || fmt === 'CONNECT') {
+    const rawImgs = (q.question_images && q.question_images.length > 0 ? q.question_images : q.image_refs || [])
+      .filter(x => !isPlaceholderIcon(x));
+    return (
+      <div className="space-y-2 mt-1">
+        {q.question_text && q.question_text.trim() && (
+          <div className="font-semibold text-[13.5px] text-slate-900 leading-snug">
+            {q.question_text}
+          </div>
+        )}
+        {rawImgs.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+            {rawImgs.slice(0, 4).map((imgUrl, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setPreviewImage(imgUrl)}
+                className="relative rounded-lg overflow-hidden border border-blue-200 bg-slate-50 aspect-video hover:border-blue-400 hover:shadow-xs transition-all cursor-pointer group"
+                title={`Clue ${i + 1}: click to view`}
+              >
+                <img
+                  src={getImageSrc(imgUrl)}
+                  onError={() => handleImgError(imgUrl)}
+                  alt={`Clue ${i + 1}`}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                />
+                <span className="absolute top-1 left-1 rounded bg-blue-700/80 px-1.5 py-0.5 text-[8.5px] font-bold text-white uppercase">
+                  Clue {i + 1}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="text-[12.5px] text-slate-700 font-normal">
+          <span className="font-bold text-blue-700">Common Link:</span>{' '}
+          <span className="font-semibold text-slate-900">{q.answer}</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (fmt === 'STEPPED_CLUE' || fmt === 'THREE_CLUE') {
+    const clues = payload?.clues;
+    return (
+      <div className="space-y-1.5 mt-1">
+        {clues && Array.isArray(clues) && clues.length > 0 ? (
+          <div className="space-y-1.5 pt-1">
+            {clues.map((clue: any, i: number) => (
+              <div key={i} className="flex items-start gap-2 rounded-md bg-amber-50/70 border border-amber-200/80 px-2.5 py-1.5 text-[12.5px]">
+                <span className="shrink-0 rounded bg-amber-200/90 text-amber-900 font-mono text-[10.5px] font-bold px-1.5 py-0.5">
+                  {clue.points || `Clue ${clue.step || i + 1}`}
+                </span>
+                <span className="text-slate-800 leading-snug">{clue.text || q.question_text}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="font-semibold text-[13.5px] text-slate-900 leading-snug">
+            {q.question_text}
+          </div>
+        )}
+        <div className="text-[12.5px] text-slate-700 font-normal pt-0.5">
+          <span className="font-bold text-amber-800">Answer:</span>{' '}
+          <span className="font-semibold text-slate-900">{q.answer}</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (fmt === 'ARRANGE_ORDER') {
+    const items = payload?.items;
+    return (
+      <div className="space-y-2 mt-1">
+        <div className="font-semibold text-[13.5px] text-slate-900 leading-snug">
+          {q.question_text}
+        </div>
+        {items && Array.isArray(items) && items.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {items.map((item: any, i: number) => (
+              <span key={i} className="inline-flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50/60 px-2.5 py-1 text-[12px] text-slate-800 font-medium">
+                <span className="font-bold text-purple-700">[{item.key || String.fromCharCode(65 + i)}]</span>
+                <span>{item.text || item.label}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="text-[12.5px] text-slate-700 font-normal pt-0.5">
+          <span className="font-bold text-purple-700">Correct Sequence:</span>{' '}
+          <span className="font-semibold text-slate-900">{q.answer}</span>
+        </div>
+      </div>
+    );
+  }
+
+  // STANDARD_QA default
+  return (
+    <>
+      <div className="font-semibold text-[13.5px] text-slate-900 leading-snug">
+        {q.question_text}
+      </div>
+      <div className="mt-1 text-[12px] text-slate-600 font-normal">
+        Answer: <span className="font-semibold text-slate-800">{q.answer}</span>
+      </div>
+    </>
+  );
+}
+
 function KnowledgeBaseContent() {
   const searchParams = useSearchParams();
   const initialTopic = searchParams.get('topic') || '';
@@ -526,20 +647,20 @@ function KnowledgeBaseContent() {
                             )}
                             {q.question_format && (
                               <span
-                                className={`mt-0.5 shrink-0 rounded border px-1.5 py-0.5 text-[10.5px] font-bold ${
+                                className={`mt-0.5 shrink-0 rounded-full border px-2 py-0.5 text-[10.5px] font-bold ${
                                   q.question_format === 'CONNECT_4' || q.question_format === 'CONNECT'
-                                    ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                                    ? 'bg-blue-100 border-blue-200 text-blue-700'
                                     : q.question_format === 'STEPPED_CLUE' || q.question_format === 'THREE_CLUE'
-                                    ? 'bg-amber-50 border-amber-200 text-amber-800'
+                                    ? 'bg-amber-100 border-amber-200 text-amber-700'
                                     : q.question_format === 'ARRANGE_ORDER'
-                                    ? 'bg-teal-50 border-teal-200 text-teal-800'
+                                    ? 'bg-purple-100 border-purple-200 text-purple-700'
                                     : q.question_format === 'BUZZER'
                                     ? 'bg-rose-50 border-rose-200 text-rose-700'
                                     : q.question_format === 'VIDEO_CLUE'
                                     ? 'bg-purple-50 border-purple-200 text-purple-700'
                                     : q.question_format === 'AUDIO_CLUE'
                                     ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                                    : 'bg-sky-50 border-sky-200 text-sky-700'
+                                    : 'bg-slate-100 border-slate-200 text-slate-700'
                                 }`}
                                 title={`Format: ${q.question_format}`}
                               >
@@ -548,7 +669,7 @@ function KnowledgeBaseContent() {
                                   : q.question_format === 'STEPPED_CLUE' || q.question_format === 'THREE_CLUE'
                                   ? 'Stepped Clue'
                                   : q.question_format === 'ARRANGE_ORDER'
-                                  ? 'Ticker Tangle'
+                                  ? 'Arrange'
                                   : q.question_format === 'BUZZER'
                                   ? 'Buzzer'
                                   : q.question_format === 'VIDEO_CLUE'
@@ -560,17 +681,19 @@ function KnowledgeBaseContent() {
                                   : 'Direct QA'}
                               </span>
                             )}
-                            <div className="font-semibold text-[13.5px] text-slate-900 leading-snug">
-                              {q.question_text}
+                            <div className="flex-1 min-w-0">
+                              <QuestionFormatDisplay
+                                q={q}
+                                getImageSrc={getImageSrc}
+                                setPreviewImage={setPreviewImage}
+                                handleImgError={handleImgError}
+                              />
                             </div>
                             {q.star_marked && (
                               <span className="mt-0.5 inline-flex shrink-0 items-center gap-0.5 rounded bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10.5px] font-bold text-amber-700">
                                 <Star className="h-3 w-3 fill-amber-400 text-amber-500" />Star
                               </span>
                             )}
-                          </div>
-                          <div className="mt-1 text-[12px] text-slate-600 font-normal">
-                            Answer: <span className="font-semibold text-slate-800">{q.answer}</span>
                           </div>
 
                           {/* Video Clue Prominent Button */}

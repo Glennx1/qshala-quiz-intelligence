@@ -1422,7 +1422,7 @@ class QuizExporter:
             # Specialized Question Type Detection & Layout Dispatch
             # ---------------------------------------------------------
             fmt = _get_val(q, "question_format") or _get_val(q, "question_type") or "QA"
-            format_payload = _get_val(q, "format_payload") or {}
+            format_payload = _get_val(q, "format_data") or _get_val(q, "format_payload") or {}
 
             if not format_payload or fmt in ("QA", "SLIDE_QA"):
                 try:

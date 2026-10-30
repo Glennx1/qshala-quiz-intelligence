@@ -42,6 +42,20 @@ class Question(Base):
     occurrence_count = Column(Integer, default=1)
     
     question_type = Column(String(50), default="SLIDE_QA")
+    question_format = Column(
+        String(20),
+        nullable=False,
+        default="STANDARD_QA",
+        server_default="STANDARD_QA",
+        index=True,
+        comment="STANDARD_QA | CONNECT_4 | STEPPED_CLUE | ARRANGE_ORDER"
+    )
+    format_data = Column(
+        JSON,
+        nullable=True,
+        default=None,
+        comment="Structured data for non-standard formats"
+    )
     format_payload = Column(JSON, nullable=True)       # Structured payload for CONNECT_4, STEPPED_CLUE, ARRANGE_ORDER
     source_year = Column(Integer, nullable=True)
     round_number = Column(Integer, nullable=True)

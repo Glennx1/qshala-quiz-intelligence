@@ -41,6 +41,7 @@ class Brief:
     hard_bias: Optional[str] = None  # "easy" | "hard" | None
     framing: Optional[str] = None    # LLM host framing, if the Interpreter produced one
     source: str = "regex"            # "gemini" | "regex" — which interpreter produced this brief
+    format_filter: Optional[str] = None # CONNECT_4 | STEPPED_CLUE | ARRANGE_ORDER
 
     def public(self) -> Dict[str, Any]:
         return asdict(self)
@@ -84,8 +85,9 @@ def _brief_from_gemini(prompt: str, gem: Dict[str, Any], count: Optional[int],
     bias = "hard" if raw_bias in ("hard", "spicy") else "easy" if raw_bias == "easy" else None
 
     framing = (gem.get("framing") or "").strip() or None
+    fmt = gem.get("format_filter") or (previous_brief or {}).get("format_filter")
     return Brief(prompt=prompt, query=query, count=n, filters=filters,
-                 hard_bias=bias, framing=framing, source="gemini")
+                 hard_bias=bias, framing=framing, source="gemini", format_filter=fmt)
 
 
 def _brief_from_regex(prompt: str, count: Optional[int],
@@ -99,8 +101,9 @@ def _brief_from_regex(prompt: str, count: Optional[int],
     final_n = count or (n if has_number else (inherited or 10))
     final_n = max(1, min(int(final_n), 50))
     bias = _bias_from_text(p)
+    fmt = filters.get("format_filter") or (previous_brief or {}).get("format_filter")
     return Brief(prompt=prompt, query=query, count=final_n, filters=filters,
-                 hard_bias=bias, source="regex")
+                 hard_bias=bias, source="regex", format_filter=fmt)
 
 
 def interpret(prompt: str, count: Optional[int] = None, options: Optional[Dict[str, Any]] = None,
@@ -171,11 +174,14 @@ def _load_bank(db: Session) -> List[Dict[str, Any]]:
             "difficulty_score": q.difficulty_score if q.difficulty_score is not None else 0.5,
             "document_id": q.document_id,
             "tagged": bool(t),
+            "question_format": getattr(q, 'question_format', None) or getattr(q, 'question_type', 'STANDARD_QA'),
         })
     return bank
 
 
 def librarian(bank: List[Dict[str, Any]], brief: Brief, pool: int = 80) -> List[Dict[str, Any]]:
+    if brief.format_filter:
+        bank = [q for q in bank if q.get("question_format") == brief.format_filter]
     idx = Index(bank)
     hits = idx.search(brief.query, brief.filters, top_k=pool)
     if len(hits) < brief.count:  # query too narrow: relax hard filters other than safety
