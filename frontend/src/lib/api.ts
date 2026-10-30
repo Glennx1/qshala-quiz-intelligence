@@ -21,6 +21,18 @@ import {
   DeckMeta,
 } from './types';
 
+// Shadows the global `fetch` for the rest of this module only. Every existing `fetch(...)` call
+// below -- there are 100+ of them -- picks this up automatically with no per-call-site changes.
+// When NEXT_PUBLIC_API_KEY is unset (the default) this is a no-op passthrough, matching today's
+// behavior; set it once the backend's API_KEY_SECRET is turned on (see backend .env.example).
+const fetch = (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
+  const apiKey = process.env.NEXT_PUBLIC_API_KEY;
+  if (!apiKey) return globalThis.fetch(input, init);
+  const headers = new Headers(init.headers || {});
+  headers.set('X-API-Key', apiKey);
+  return globalThis.fetch(input, { ...init, headers });
+};
+
 export function getApiBase(): string {
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL;

@@ -18,12 +18,23 @@ client = TestClient(app)
 
 
 def test_health_reports_database_backend_and_persistence():
-    r = client.get("/api/v1/health").json()
-    assert r["status"] == "healthy"
+    resp = client.get("/api/v1/health")
+    r = resp.json()
+    # status/status-code agree, and reflect a live check -- not a hardcoded "healthy"
+    assert r["status"] in ("healthy", "unhealthy")
+    assert resp.status_code == (200 if r["status"] == "healthy" else 503)
     assert r["database"] in ("postgres", "sqlite")
     assert isinstance(r["persistent"], bool)
     # on sqlite the endpoint must warn; on postgres it must not
     assert (r["warning"] is None) == (r["database"] == "postgres")
+    # live checks are actually reported, not assumed
+    assert set(r["checks"].keys()) == {"database_reachable", "gemini_key_configured", "r2_configured"}
+    assert isinstance(r["checks"]["database_reachable"], bool)
+    assert isinstance(r["checks"]["gemini_key_configured"], bool)
+    # sqlite (not persistent) or an unreachable DB must surface as a problem, not get silently
+    # swallowed into a "healthy" response
+    if not r["persistent"] or not r["checks"]["database_reachable"]:
+        assert r["problems"]
 
 
 def test_require_postgres_refuses_to_boot_on_sqlite():
