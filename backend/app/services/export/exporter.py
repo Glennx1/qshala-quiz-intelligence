@@ -195,13 +195,14 @@ def _get_hist_q_media(q: Any) -> Dict[str, Any]:
 
     target_ids = [str(i) for i in [hist_id, q_id] if i]
     if target_ids:
+        db = None
         try:
             from backend.app.database import SessionLocal
             from backend.app.models.question import Question
             db = SessionLocal()
             hq = db.query(Question).filter(Question.id.in_(target_ids)).first()
             if hq:
-                res = {
+                return {
                     "raw_media_refs": list(getattr(hq, "raw_media_refs", []) or []) + direct_raw,
                     "question_audio": list(getattr(hq, "question_audio", []) or []) + direct_qa,
                     "audio_refs": list(getattr(hq, "audio_refs", []) or []),
@@ -211,11 +212,14 @@ def _get_hist_q_media(q: Any) -> Dict[str, Any]:
                     "answer_images": list(getattr(hq, "answer_images", []) or []) + direct_a_imgs,
                     "image_refs": list(getattr(hq, "image_refs", []) or []) + direct_img_refs,
                 }
-                db.close()
-                return res
-            db.close()
         except Exception as e:
             logger.warning(f"Error fetching historical question media: {e}")
+        finally:
+            # Always close, even if the query raised mid-way -- an unclosed session here leaked a
+            # Neon connection on every failed export, eventually exhausting the free-tier connection
+            # limit and taking the whole app down with it.
+            if db is not None:
+                db.close()
 
     return {
         "raw_media_refs": direct_raw,

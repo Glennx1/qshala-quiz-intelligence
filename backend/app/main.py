@@ -109,6 +109,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Optional shared-secret gate. Off by default (API_KEY_SECRET unset) so this deploys with zero
+# behavior change; set API_KEY_SECRET on the host once the frontend is sending X-API-Key to start
+# requiring it. This is not user auth / multi-tenancy -- it only stops an anonymous visitor with the
+# URL from uploading decks, deleting quizzes, or burning the Gemini/R2 quota.
+_PUBLIC_PREFIXES = (
+    "/static", f"{settings.API_V1_STR}/static", "/slides",
+    "/docs", f"{settings.API_V1_STR}/docs",
+    "/openapi.json", f"{settings.API_V1_STR}/openapi.json",
+    "/redoc",
+)
+_PUBLIC_EXACT = {"/", "/api", settings.API_V1_STR,
+                 "/health", "/api/health", f"{settings.API_V1_STR}/health"}
+
+@app.middleware("http")
+async def require_api_key(request, call_next):
+    from fastapi.responses import JSONResponse
+    if not settings.API_KEY_SECRET or request.method == "OPTIONS":
+        return await call_next(request)
+    path = request.url.path
+    if path in _PUBLIC_EXACT or path.startswith(_PUBLIC_PREFIXES):
+        return await call_next(request)
+    if request.headers.get("x-api-key") != settings.API_KEY_SECRET:
+        return JSONResponse(status_code=401, content={"detail": "Missing or invalid X-API-Key header"})
+    return await call_next(request)
+
 class MultiDirStaticFiles(StaticFiles):
     """Static file handler that falls back to bundled repository storage when running in serverless (/tmp)."""
     def __init__(self, *args, fallback_dirs=None, **kwargs):
@@ -173,21 +198,59 @@ def root():
 @app.get("/api/health")
 @app.get(f"{settings.API_V1_STR}/health")
 def health():
-    """Reports which database is live so persistence can be verified at a glance.
-    `persistent: false` means data will be lost on restart — fix DATABASE_URL."""
-    from backend.app.database import DB_BACKEND, DB_PERSISTENT, raw_db_url
+    """Live health check: actually pings the database, and checks that the Gemini key and (if
+    configured) R2 credentials are present -- not just whether the process is up. Returns 503 with
+    the specific failing check(s) so monitoring (and whoever is staring at a cold-start timeout) can
+    tell what's actually wrong, instead of a blind 200 OK that doesn't mean anything."""
+    from fastapi.responses import JSONResponse
+    from sqlalchemy import text as _sql_text
+    from backend.app.database import DB_BACKEND, DB_PERSISTENT, raw_db_url, engine
+
     host = "local file"
     if DB_PERSISTENT:
         try:
             host = raw_db_url.split("@", 1)[1].split("/", 1)[0]   # host only, never credentials
         except Exception:
             host = "postgres"
-    return {
-        "status": "healthy",
+
+    problems = []
+    try:
+        with engine.connect() as conn:
+            conn.execute(_sql_text("SELECT 1"))
+        db_reachable = True
+    except Exception as e:
+        db_reachable = False
+        problems.append(f"database unreachable: {e}")
+
+    gemini_configured = bool(settings.GEMINI_API_KEY)
+    if not gemini_configured:
+        problems.append("GEMINI_API_KEY is not set")
+
+    r2_fields = [settings.R2_ACCOUNT_ID, settings.R2_ACCESS_KEY_ID, settings.R2_SECRET_ACCESS_KEY,
+                 settings.R2_BUCKET_NAME, settings.R2_PUBLIC_BASE_URL]
+    r2_touched = any(r2_fields)
+    r2_complete = all(r2_fields)
+    if r2_touched and not r2_complete:
+        problems.append("R2 credentials are partially set (some vars missing)")
+
+    if not DB_PERSISTENT:
+        problems.append("Data is NOT persistent (SQLite on ephemeral disk). Set DATABASE_URL to Neon.")
+
+    healthy = db_reachable and DB_PERSISTENT and gemini_configured and (not r2_touched or r2_complete)
+
+    body = {
+        "status": "healthy" if healthy else "unhealthy",
         "database": DB_BACKEND,
         "persistent": DB_PERSISTENT,
         "db_host": host,
+        "checks": {
+            "database_reachable": db_reachable,
+            "gemini_key_configured": gemini_configured,
+            "r2_configured": r2_complete if r2_touched else None,
+        },
+        "problems": problems or None,
         "warning": None if DB_PERSISTENT else
                    "Data is NOT persistent (SQLite on ephemeral disk). Set DATABASE_URL to Neon.",
     }
+    return JSONResponse(content=body, status_code=200 if healthy else 503)
 

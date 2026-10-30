@@ -193,17 +193,32 @@ class Settings(BaseSettings):
     UPLOAD_QUEUE_POLL_SECONDS: int = 5          # how often the worker looks for the next deck
     UPLOAD_QUEUE_MAX_RETRIES: int = 2           # manual-retry cap per deck
 
-    # Data safety: when True, the app refuses to start on a non-persistent SQLite database. Set
-    # REQUIRE_POSTGRES=1 in any deployed environment (Render, Railway) so a missing or unreachable
-    # DATABASE_URL fails loudly at boot instead of silently writing to a disk that gets wiped on
-    # restart. Leave False for local development, where SQLite is intentional.
-    REQUIRE_POSTGRES: bool = False
+    # Data safety: when True (the default), the app refuses to start on a non-persistent SQLite
+    # database. A missing or unreachable DATABASE_URL then fails loudly at boot instead of silently
+    # writing to a disk that gets wiped on restart/redeploy -- this is exactly the failure mode that
+    # lost the question vault once already. Set REQUIRE_POSTGRES=False explicitly for local dev,
+    # where running on SQLite is intentional (see .env.example).
+    REQUIRE_POSTGRES: bool = True
 
-    @field_validator("UPLOAD_QUEUE_ENABLED", "REQUIRE_POSTGRES", mode="before")
+    # A shared secret clients must send as the X-API-Key header. Optional and off by default (empty
+    # = no auth enforced, matching current behavior) so this can be deployed without breaking anything,
+    # then turned on by setting this env var once the frontend is sending the header.
+    API_KEY_SECRET: Optional[str] = None
+
+    @field_validator("UPLOAD_QUEUE_ENABLED", mode="before")
     @classmethod
-    def _parse_safety_bools(cls, v, info):
+    def _parse_upload_queue_enabled(cls, v, info):
         if v == "" or v is None:
-            return False          # both default off; an unset/blank env var means "use the default"
+            return False          # defaults off; an unset/blank env var means "use the default"
+        if isinstance(v, bool):
+            return v
+        return str(v).strip().lower() in {"1", "true", "yes", "on"}
+
+    @field_validator("REQUIRE_POSTGRES", mode="before")
+    @classmethod
+    def _parse_require_postgres(cls, v, info):
+        if v == "" or v is None:
+            return True           # defaults ON; an unset/blank env var means "use the safe default"
         if isinstance(v, bool):
             return v
         return str(v).strip().lower() in {"1", "true", "yes", "on"}
@@ -284,7 +299,7 @@ class Settings(BaseSettings):
                      "BLOB_READ_WRITE_TOKEN", "AZURE_TENANT_ID", "AZURE_CLIENT_ID",
                      "AZURE_CLIENT_SECRET", "SHAREPOINT_SITE_ID", "SHAREPOINT_DRIVE_ID",
                      "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY",
-                     "R2_BUCKET_NAME", "R2_PUBLIC_BASE_URL",
+                     "R2_BUCKET_NAME", "R2_PUBLIC_BASE_URL", "API_KEY_SECRET",
                      mode="before")
     @classmethod
     def parse_empty_keys(cls, v):
