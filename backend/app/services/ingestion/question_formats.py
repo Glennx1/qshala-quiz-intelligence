@@ -100,6 +100,23 @@ def detect_and_structure_format(
                     "image": imgs[len(clues)] if len(clues) < len(imgs) else None,
                 })
                 i += 3
+        if len(clues) < 3:
+            # Fallback to boundary search on Clue 1, Clue 2, Clue 3
+            m1 = re.search(r'(?:^|\n)\s*(?:(?:\d+\.)?\s*)?Clue\s*1\b', q_text, re.I)
+            m2 = re.search(r'(?:^|\n)\s*(?:(?:\d+\.)?\s*)?Clue\s*2\b', q_text, re.I)
+            m3 = re.search(r'(?:^|\n)\s*(?:(?:\d+\.)?\s*)?Clue\s*3\b', q_text, re.I)
+            if m1 and m2 and m3 and m1.start() < m2.start() < m3.start():
+                def _clean_clue_body(raw: str) -> str:
+                    c = re.sub(r'^(?:\s*\(?[+\-\d/]+\)?\s*:?|\s*(?:\d+\.)?\s*Clue\s*\d\s*:?\s*[+\-\d/]*)+', '', raw, flags=re.I)
+                    c = re.sub(r'(?:\n\s*(?:\d+\.)?\s*Clue\s*\d\s*:?\s*[+\-\d/]*)+.*$', '', c, flags=re.I)
+                    return c.strip()
+
+                clues = [
+                    {"step": 1, "points": "+20/-15", "text": _clean_clue_body(q_text[m1.end():m2.start()]), "image": imgs[0] if len(imgs) > 0 else None},
+                    {"step": 2, "points": "+15/-10", "text": _clean_clue_body(q_text[m2.end():m3.start()]), "image": imgs[1] if len(imgs) > 1 else None},
+                    {"step": 3, "points": "+10/-5", "text": _clean_clue_body(q_text[m3.end():]), "image": imgs[2] if len(imgs) > 2 else None},
+                ]
+
         if not clues:
             # Construct standard 3-tier structure
             clues = [
