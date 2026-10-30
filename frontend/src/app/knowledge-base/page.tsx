@@ -55,6 +55,7 @@ function KnowledgeBaseContent() {
   const [subtopic, setSubtopic] = useState('');
   const [tagFilter, setTagFilter] = useState('');
   const [difficulty, setDifficulty] = useState('');
+  const [formatFilter, setFormatFilter] = useState('');
   const [selectedDeckId, setSelectedDeckId] = useState<string>('');
   const [gradeMin, setGradeMin] = useState<number | ''>('');
   const [sortBy, setSortBy] = useState('created_at');
@@ -136,6 +137,7 @@ function KnowledgeBaseContent() {
         subtopic: subtopic || undefined,
         tag: tagFilter.trim() || undefined,
         difficulty: difficulty || undefined,
+        question_format: formatFilter || undefined,
         document_id: selectedDeckId || undefined,
         grade_min: gradeMin !== '' ? Number(gradeMin) : undefined,
         duplicate_status: activeTab === 'duplicates' ? 'POSSIBLE_DUPLICATE' : undefined,
@@ -153,7 +155,7 @@ function KnowledgeBaseContent() {
 
   useEffect(() => {
     fetchQuestions();
-  }, [activeTab, topic, subtopic, tagFilter, difficulty, selectedDeckId, gradeMin, sortBy, sortOrder]);
+  }, [activeTab, topic, subtopic, tagFilter, difficulty, formatFilter, selectedDeckId, gradeMin, sortBy, sortOrder]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -373,6 +375,23 @@ function KnowledgeBaseContent() {
             <option value="Hard">Hard</option>
           </select>
 
+          {/* Format Filter */}
+          <select
+            value={formatFilter}
+            onChange={(e) => setFormatFilter(e.target.value)}
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[13px] font-normal text-slate-700 focus:border-indigo-500 focus:outline-none cursor-pointer"
+          >
+            <option value="">All Formats</option>
+            <option value="CONNECT_4">Connect 4</option>
+            <option value="STEPPED_CLUE">Stepped Clue (Portfolio Builder)</option>
+            <option value="ARRANGE_ORDER">Arrange the Order (Ticker Tangle)</option>
+            <option value="BUZZER">Buzzer (Closing Bell)</option>
+            <option value="VISUAL_CLUE">Visual Clue</option>
+            <option value="VIDEO_CLUE">Video Clue</option>
+            <option value="AUDIO_CLUE">Audio Clue</option>
+            <option value="QA">Direct Question & Answer</option>
+          </select>
+
           {/* Tag Filter */}
           <div className="relative">
             <Tag className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
@@ -419,7 +438,7 @@ function KnowledgeBaseContent() {
             </button>
           </div>
 
-          {(query || topic || subtopic || tagFilter || difficulty || gradeMin || selectedDeckId) && (
+          {(query || topic || subtopic || tagFilter || difficulty || formatFilter || gradeMin || selectedDeckId) && (
             <button
               type="button"
               onClick={() => {
@@ -428,6 +447,7 @@ function KnowledgeBaseContent() {
                 setSubtopic('');
                 setTagFilter('');
                 setDifficulty('');
+                setFormatFilter('');
                 setGradeMin('');
                 setSelectedDeckId('');
               }}
@@ -502,6 +522,42 @@ function KnowledgeBaseContent() {
                             {q.question_label && (
                               <span className="mt-0.5 shrink-0 rounded bg-slate-100 border border-slate-200 px-1.5 py-0.5 text-[10.5px] font-bold text-slate-600">
                                 {q.question_label}
+                              </span>
+                            )}
+                            {q.question_format && (
+                              <span
+                                className={`mt-0.5 shrink-0 rounded border px-1.5 py-0.5 text-[10.5px] font-bold ${
+                                  q.question_format === 'CONNECT_4' || q.question_format === 'CONNECT'
+                                    ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                                    : q.question_format === 'STEPPED_CLUE' || q.question_format === 'THREE_CLUE'
+                                    ? 'bg-amber-50 border-amber-200 text-amber-800'
+                                    : q.question_format === 'ARRANGE_ORDER'
+                                    ? 'bg-teal-50 border-teal-200 text-teal-800'
+                                    : q.question_format === 'BUZZER'
+                                    ? 'bg-rose-50 border-rose-200 text-rose-700'
+                                    : q.question_format === 'VIDEO_CLUE'
+                                    ? 'bg-purple-50 border-purple-200 text-purple-700'
+                                    : q.question_format === 'AUDIO_CLUE'
+                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                    : 'bg-sky-50 border-sky-200 text-sky-700'
+                                }`}
+                                title={`Format: ${q.question_format}`}
+                              >
+                                {q.question_format === 'CONNECT_4' || q.question_format === 'CONNECT'
+                                  ? 'Connect 4'
+                                  : q.question_format === 'STEPPED_CLUE' || q.question_format === 'THREE_CLUE'
+                                  ? 'Stepped Clue'
+                                  : q.question_format === 'ARRANGE_ORDER'
+                                  ? 'Ticker Tangle'
+                                  : q.question_format === 'BUZZER'
+                                  ? 'Buzzer'
+                                  : q.question_format === 'VIDEO_CLUE'
+                                  ? 'Video Clue'
+                                  : q.question_format === 'AUDIO_CLUE'
+                                  ? 'Audio Clue'
+                                  : q.question_format === 'VISUAL_CLUE'
+                                  ? 'Visual Clue'
+                                  : 'Direct QA'}
                               </span>
                             )}
                             <div className="font-semibold text-[13.5px] text-slate-900 leading-snug">

@@ -323,13 +323,20 @@ def infer_formats(slides: List[Dict[str, Any]]) -> Dict[int, str]:
             continue
 
         if stype in _HEADER_TYPES and blob:
+            # Skip social media / follow us announcements
+            if re.search(r"\b(?:connect\s+with\s+us|social\s+media|instagram|twitter|follow\s+us)\b", blob, re.I):
+                sn = s.get("slide_number")
+                if sn is not None:
+                    result[int(sn)] = current
+                continue
+
             fmt = detect_format_in_text(blob)
             if stype == "SECTION_MARKER":
                 current = fmt or "QA"
             elif fmt and words <= 30:
                 # A short non-question slide naming a format works as a header, but a bare "connect"
-                # in a longer slide ("connect with us") must not.
-                if fmt in ("CONNECT_4", "CONNECT") and not re.search(r"\b(round|section|set|questions?|following|next|indicators|market|theme|connect)\b", blob, re.I):
+                # in a slide without round indicators must not.
+                if fmt in ("CONNECT_4", "CONNECT") and not re.search(r"\b(?:round|section|set|questions?|following|next|indicators|market|theme|4\s*pics|common|what\s*connects|connect\s*4)\b", blob, re.I):
                     pass
                 else:
                     current = fmt

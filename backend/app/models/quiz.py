@@ -52,6 +52,7 @@ class GeneratedQuestion(Base):
     grade_max = Column(Integer, default=5)
     topic = Column(String(100), nullable=True)
     question_type = Column(String(50), default="SLIDE_QA")
+    format_payload = Column(JSON, nullable=True)
     
     # Multimodal media & visual clues
     image_refs = Column(JSON, default=list)            # All image URLs

@@ -306,13 +306,6 @@ export const api = {
     return handleResponse<{ message: string }>(res);
   },
 
-  retryDocument: async (id: string): Promise<{ message: string; job_id: string }> => {
-    const res = await fetch(`${getApiBase()}/documents/${id}/retry`, {
-      method: 'POST',
-    });
-    return handleResponse<{ message: string; job_id: string }>(res);
-  },
-
   // Questions / Knowledge Base Vault
   getTopics: async (): Promise<TopicItem[]> => {
     const res = await fetch(`${getApiBase()}/questions/topics`, { cache: 'no-store' });
@@ -335,6 +328,8 @@ export const api = {
     document_id?: string;
     document_title?: string;
     duplicate_status?: string;
+    question_format?: string;
+    format?: string;
     sort_by?: string;
     sort_order?: 'asc' | 'desc';
     limit?: number;
@@ -351,6 +346,7 @@ export const api = {
     if (params.document_id) searchParams.append('document_id', params.document_id);
     if (params.document_title) searchParams.append('document_title', params.document_title);
     if (params.duplicate_status) searchParams.append('duplicate_status', params.duplicate_status);
+    if (params.question_format || params.format) searchParams.append('question_format', (params.question_format || params.format)!);
     if (params.sort_by) searchParams.append('sort_by', params.sort_by);
     if (params.sort_order) searchParams.append('sort_order', params.sort_order);
     if (params.limit) searchParams.append('limit', params.limit.toString());
@@ -657,38 +653,14 @@ export const api = {
     return handleResponse<{ message: string }>(res);
   },
 
-  exportQuizUrl: (quizId: string, format: 'json' | 'csv' | 'pptx', options?: ExportOptions): string => {
-    let url = `${getApiBase()}/quizzes/${quizId}/export?format=${format}`;
-    if (format === 'pptx') {
-      const quizType = options?.quizType || (options?.theme === 'corporate' ? 'corporate' : 'school');
-      url += `&quiz_type=${encodeURIComponent(quizType)}`;
-      if (options?.campusEdition) url += `&campus_edition=${encodeURIComponent(options.campusEdition)}`;
-      if (options?.prizeMoney) url += `&prize_money=${encodeURIComponent(options.prizeMoney)}`;
-      if (options?.customTitle) url += `&custom_title=${encodeURIComponent(options.customTitle)}`;
-      if (options?.includeSocialSlides !== undefined) url += `&include_social_slides=${options.includeSocialSlides}`;
-    }
-    return url;
+  exportQuizUrl: (quizId: string, format: 'json' | 'csv' | 'pptx'): string => {
+    return `${getApiBase()}/quizzes/${quizId}/export?format=${format}`;
   },
 
-  exportQuizDirect: async (
-    quiz: Quiz,
-    format: 'json' | 'csv' | 'pptx' = 'pptx',
-    options?: ExportOptions
-  ): Promise<Blob> => {
-    const params = new URLSearchParams({ format });
-    if (format === 'pptx') {
-      const quizType = options?.quizType || (options?.theme === 'corporate' ? 'corporate' : 'school');
-      params.append('quiz_type', quizType);
-      if (options?.campusEdition) params.append('campus_edition', options.campusEdition);
-      if (options?.prizeMoney) params.append('prize_money', options.prizeMoney);
-      if (options?.customTitle) params.append('custom_title', options.customTitle);
-      if (options?.includeSocialSlides !== undefined) params.append('include_social_slides', String(options.includeSocialSlides));
-    }
-    const queryStr = params.toString();
-
+  exportQuizDirect: async (quiz: Quiz, format: 'json' | 'csv' | 'pptx' = 'pptx'): Promise<Blob> => {
     // 1. Try GET /quizzes/{id}/export first
     try {
-      const getRes = await fetch(`${getApiBase()}/quizzes/${quiz.id}/export?${queryStr}`);
+      const getRes = await fetch(`${getApiBase()}/quizzes/${quiz.id}/export?format=${format}`);
       if (getRes.ok) {
         return await getRes.blob();
       }
@@ -697,7 +669,7 @@ export const api = {
     }
 
     // 2. Fallback to POST /quizzes/export with full quiz payload
-    const postRes = await fetch(`${getApiBase()}/quizzes/export?${queryStr}`, {
+    const postRes = await fetch(`${getApiBase()}/quizzes/export?format=${format}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(quiz),
@@ -709,23 +681,8 @@ export const api = {
   },
 };
 
-export interface ExportOptions {
-  quizType?: 'school' | 'corporate' | 'minimalist';
-  campusEdition?: string;
-  prizeMoney?: string;
-  customTitle?: string;
-  includeSocialSlides?: boolean;
-  theme?: string;
-  customSubtitle?: string;
-  showAnswerDivider?: boolean;
-}
-
-export async function downloadQuizFile(
-  quiz: Quiz,
-  format: 'json' | 'csv' | 'pptx' = 'pptx',
-  options?: ExportOptions
-): Promise<void> {
-  const blob = await api.exportQuizDirect(quiz, format, options);
+export async function downloadQuizFile(quiz: Quiz, format: 'json' | 'csv' | 'pptx' = 'pptx'): Promise<void> {
+  const blob = await api.exportQuizDirect(quiz, format);
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

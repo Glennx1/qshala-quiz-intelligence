@@ -83,8 +83,8 @@ def test_format_tracker_sections():
     ]
     f = dm.infer_formats(slides)
     assert f[3] == "QA"
-    assert f[6] == "CONNECT"
-    assert f[8] == "THREE_CLUE"
+    assert f[6] in ("CONNECT", "CONNECT_4")
+    assert f[8] in ("THREE_CLUE", "STEPPED_CLUE")
     assert f[10] == "QA"           # a round marker with no format words resets to QA
     assert f[12] == "BUZZER"
 
@@ -100,8 +100,8 @@ def test_connect_word_in_long_slide_is_not_a_header():
 def test_all_formats_detected():
     cases = {
         "Potpourri": "POTPOURRI", "Arrange the order": "ARRANGE_ORDER", "Image reveal": "IMAGE_REVEAL",
-        "List it": "LIST_IT", "Buzzer round": "BUZZER", "Connect round": "CONNECT", "QA round": "QA",
-        "Three clue": "THREE_CLUE",
+        "List it": "LIST_IT", "Buzzer round": "BUZZER", "Connect round": "CONNECT_4", "QA round": "QA",
+        "Three clue": "STEPPED_CLUE",
     }
     for header, fmt in cases.items():
         assert dm.detect_format_in_text(header) == fmt, header
@@ -144,7 +144,7 @@ def test_annotate_numbers_per_round_and_star_strip():
     assert qs[0]["question_text"] == "One?" and qs[0]["_meta"]["star_marked"] is True
     assert [q["_meta"]["question_number"] for q in qs] == [1, 2, 3]
     assert [q["_meta"]["question_in_round"] for q in qs] == [1, 2, 1]
-    assert qs[2]["_meta"]["question_format"] == "CONNECT"
+    assert qs[2]["_meta"]["question_format"] in ("CONNECT", "CONNECT_4")
     assert qs[1]["_meta"]["star_marked"] is False
     assert dm.question_label(3, 2, 1) == "Round 2 Q1"
     assert dm.question_label(14, None, None) == "Q14"

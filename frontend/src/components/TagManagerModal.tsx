@@ -831,6 +831,7 @@ function mergeIntoQuestion(q: HistoricalQuestion, d: QuestionDetail): Historical
     repeated_count: d.repeated.length,
     question_number: d.meta.question_number ?? null,
     question_label: d.meta.question_label || null,
+    question_format: d.meta.question_format || q.question_format,
     star_marked: d.meta.star_marked,
   };
 }

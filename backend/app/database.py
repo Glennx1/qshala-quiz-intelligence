@@ -252,7 +252,8 @@ def ensure_schema_columns():
                     ("audio_refs", "TEXT DEFAULT '[]'"),
                     ("question_audio", "TEXT DEFAULT '[]'"),
                     ("answer_audio", "TEXT DEFAULT '[]'"),
-                    ("visual_clues", "TEXT")
+                    ("visual_clues", "TEXT"),
+                    ("format_payload", "JSON")
                 ]
                 for col_name, col_type in gen_q_cols:
                     try:

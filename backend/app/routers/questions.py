@@ -339,6 +339,8 @@ async def search_questions(
     duplicate_status: Optional[str] = Query(None),
     document_id: Optional[str] = Query(None),
     document_title: Optional[str] = Query(None),
+    question_format: Optional[str] = Query(None, description="Filter by format: CONNECT_4, STEPPED_CLUE, ARRANGE_ORDER, BUZZER, QA, VISUAL_CLUE, AUDIO_CLUE, VIDEO_CLUE"),
+    format: Optional[str] = Query(None, description="Alias for question_format"),
     sort_by: Optional[str] = Query("created_at"),
     sort_order: Optional[str] = Query("desc"),
     limit: int = Query(50, ge=1, le=200),
@@ -354,6 +356,8 @@ async def search_questions(
     dup_status_str = duplicate_status if isinstance(duplicate_status, str) and duplicate_status.strip() else None
     doc_id_str = document_id if isinstance(document_id, str) and document_id.strip() else None
     doc_title_str = document_title if isinstance(document_title, str) and document_title.strip() else None
+    fmt_raw = question_format or format
+    fmt_str = fmt_raw.strip().upper() if isinstance(fmt_raw, str) and fmt_raw.strip() else None
     grade_min_val = grade_min if isinstance(grade_min, int) else None
     grade_max_val = grade_max if isinstance(grade_max, int) else None
     sort_by_str = sort_by if isinstance(sort_by, str) else "created_at"
@@ -425,6 +429,21 @@ async def search_questions(
         q_builder = q_builder.filter(Question.grade_min >= grade_min_val)
     if grade_max_val is not None:
         q_builder = q_builder.filter(Question.grade_max <= grade_max_val)
+    if fmt_str:
+        target_fmts = [fmt_str]
+        if fmt_str in ("CONNECT_4", "CONNECT"):
+            target_fmts = ["CONNECT_4", "CONNECT"]
+        elif fmt_str in ("STEPPED_CLUE", "THREE_CLUE"):
+            target_fmts = ["STEPPED_CLUE", "THREE_CLUE"]
+        from backend.app.models.qshala_tag import QshalaQuestionMetadata
+        q_builder = q_builder.outerjoin(
+            QshalaQuestionMetadata, Question.id == QshalaQuestionMetadata.question_id
+        ).filter(
+            or_(
+                Question.question_type.in_(target_fmts),
+                QshalaQuestionMetadata.question_format.in_(target_fmts)
+            )
+        )
 
     # Sorting
     sort_col = getattr(Question, sort_by_str, Question.created_at)
