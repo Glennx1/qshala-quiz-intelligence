@@ -63,13 +63,14 @@ export function getFallbackMediaUrl(currentUrl: string): string | null {
 }
 
 // Size of each slice sent by uploadDocumentChunked. Exported so the UI can show the same number.
-// 16 MB: Cloud Run enforces a hard 32 MiB request-body cap on HTTP/1 (no limit only if the service
+// 24 MB: Cloud Run enforces a hard 32 MiB request-body cap on HTTP/1 (no limit only if the service
 // speaks HTTP/2 end-to-end, which the backend doesn't). A 50 MB slice was fine on Render -- which
 // has no such cap -- but silently gets dropped mid-request on Cloud Run, which looks like the
-// upload resetting rather than a clean error. 16 MB leaves real headroom under the 32 MiB ceiling
-// (multipart overhead, any proxy in front, etc). The real cost of a smaller slice is only that a
-// failed slice has to resend less.
-export const UPLOAD_CHUNK_SIZE = 16 * 1024 * 1024;
+// upload resetting rather than a clean error. 24 MB leaves comfortable headroom under the 32 MiB
+// ceiling (multipart overhead, any proxy in front, etc) while keeping the chunk count lower than
+// a more conservative 16 MB would. The real cost of a smaller slice is only that a failed slice
+// has to resend less.
+export const UPLOAD_CHUNK_SIZE = 24 * 1024 * 1024;
 
 /** Live numbers the Upload Center shows while a file is going up. */
 export interface UploadProgressInfo {
