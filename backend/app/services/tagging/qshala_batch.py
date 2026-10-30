@@ -44,7 +44,7 @@ from backend.app.services.tagging.qshala_tagger import (
 logger = logging.getLogger(__name__)
 
 CHUNK_SIZE = 12          # questions per Gemini call; keeps the response JSON well under the token ceiling
-CHUNK_CONCURRENCY = int(os.getenv("CHUNK_CONCURRENCY", "4"))    # chunks in flight at once; scaled for 2048 MB Cloud Run budget
+CHUNK_CONCURRENCY = int(os.getenv("CHUNK_CONCURRENCY", "8"))    # chunks in flight at once; scaled for 2048 MB Cloud Run budget
 CHUNK_TIMEOUT_S = 75.0   # a chunk slower than this is abandoned and its questions go to review
 MAX_CHUNK_RETRIES = 3
 

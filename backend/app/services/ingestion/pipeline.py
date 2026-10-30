@@ -36,8 +36,8 @@ from backend.app.services.tagging.difficulty_engine import DifficultyEngine
 
 # Feature toggle: set to False to revert to legacy AutoTagger writing topic tags on upload
 USE_QSHALA_TAGGER: bool = True
-VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "4"))   # parallel image-description calls (scaled for 2048 MB Google Cloud Run budget)
-TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "3"))   # parallel Gemini tagging calls per deck
+VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "12"))   # parallel image-description calls (scaled for 2048 MB Google Cloud Run budget)
+TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "8"))   # parallel Gemini tagging calls per deck
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
 

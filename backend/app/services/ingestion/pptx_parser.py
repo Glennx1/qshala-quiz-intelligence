@@ -6,7 +6,7 @@ import posixpath
 import tempfile
 import threading
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import hashlib
 import mimetypes
@@ -42,7 +42,9 @@ _TEMPLATE_REL_PREFIXES = (
     "ppt/notesMasters/_rels/", "ppt/handoutMasters/_rels/",
 )
 
-_COPY_CHUNK = 1024 * 1024
+_COPY_CHUNK = int(os.getenv('STREAM_COPY_CHUNK', str(2 * 1024 * 1024)))
+UPLOAD_CONCURRENCY = int(os.getenv('UPLOAD_CONCURRENCY', '32'))
+UPLOAD_SLOTS = int(os.getenv('UPLOAD_SLOTS', '64'))
 
 
 def _attach_template_media() -> bool:
@@ -109,7 +111,7 @@ class PPTXParser:
         self._header_cache: Dict[str, Optional[Tuple[str, Tuple[int, int]]]] = {}
         self._icon_cache: Dict[str, bool] = {}
         self._tmp_dir: Optional[Path] = None             # staging area when write_to_disk=False but R2 is on
-        self._upload_slots = threading.BoundedSemaphore(16)
+        self._upload_slots = threading.BoundedSemaphore(UPLOAD_SLOTS)
         self._stats = {"stored": 0, "stored_bytes": 0, "reused": 0, "template_skipped": 0}
         self.output_dir = settings.SLIDES_DIR / document_id
         self.output_media_dir = self.output_dir / "media"
@@ -248,7 +250,7 @@ class PPTXParser:
             # The public URL is predictable, so the upload can finish in the background.
             servable_url = f"{r2.public_base_url}/{r2_key.lstrip('/')}"
             if self._executor is None:
-                self._executor = ThreadPoolExecutor(max_workers=8)
+                self._executor = ThreadPoolExecutor(max_workers=UPLOAD_CONCURRENCY)
             temp_copy = stage_path if not self.write_to_disk else None
             if temp_copy is not None:
                 self._upload_slots.acquire()            # bound the staged files waiting to upload
@@ -304,7 +306,11 @@ class PPTXParser:
     def _finish_uploads(self) -> None:
         failed = 0
         total = len(self._pending)
-        for i, (name, fut) in enumerate(self._pending, start=1):
+        if not total:
+            return
+        fut_map = {fut: name for name, fut in self._pending}
+        for i, fut in enumerate(as_completed(fut_map), start=1):
+            name = fut_map[fut]
             if self.on_progress is not None:
                 try:
                     self.on_progress(f"Saving pictures to storage ({i}/{total})")

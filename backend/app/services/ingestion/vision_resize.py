@@ -23,9 +23,9 @@ MIN_BYTES: int = 60 * 1024  # don't bother re-encoding small images
 #  - anything that would decode to more than MAX_DECODE_PIXELS is sent as-is instead of shrunk
 #    (a bigger upload to the vision model beats an out-of-memory crash);
 #  - only one large decode runs at a time, however many vision calls are in flight.
-MAX_DECODE_PIXELS: int = int(os.getenv("VISION_MAX_DECODE_PIXELS", "48000000"))
+MAX_DECODE_PIXELS: int = int(os.getenv("VISION_MAX_DECODE_PIXELS", "96000000"))
 _BIG_DECODE_PIXELS: int = 4_000_000
-_big_decode_gate = threading.Semaphore(int(os.getenv("BIG_DECODE_CONCURRENCY", "3")))
+_big_decode_gate = threading.Semaphore(int(os.getenv("BIG_DECODE_CONCURRENCY", "6")))
 
 
 def shrink_for_vision(data: bytes, mime_type: str) -> Tuple[bytes, str]:
