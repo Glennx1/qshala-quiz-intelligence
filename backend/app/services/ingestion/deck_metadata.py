@@ -22,7 +22,21 @@ from backend.app.services.tagging.qshala_rules import CITIES_IN, CITIES_INTL
 
 # ---------------------------------------------------------------------- vocabularies
 
-QUESTION_FORMATS = ["QA", "THREE_CLUE", "POTPOURRI", "CONNECT", "ARRANGE_ORDER", "IMAGE_REVEAL", "LIST_IT", "BUZZER"]
+QUESTION_FORMATS = [
+    "QA",
+    "CONNECT_4",
+    "STEPPED_CLUE",
+    "ARRANGE_ORDER",
+    "BUZZER",
+    "VISUAL_CLUE",
+    "AUDIO_CLUE",
+    "VIDEO_CLUE",
+    "POTPOURRI",
+    "IMAGE_REVEAL",
+    "LIST_IT",
+    "CONNECT",
+    "THREE_CLUE",
+]
 
 STAGE_WORDS: Dict[str, str] = {
     "prelim": "Prelims", "prelims": "Prelims", "preliminary": "Prelims", "preliminaries": "Prelims",
@@ -258,14 +272,22 @@ def parse_deck_filename(filename: Optional[str], title: Optional[str] = None) ->
 # ---------------------------------------------------------------------- question format tracker
 
 _FORMAT_PATTERNS: List[Tuple[str, "re.Pattern[str]"]] = [
-    ("THREE_CLUE", re.compile(r"\b(?:3|three)[\s\-]*clues?\b", re.I)),
+    # 1. Stepped clues / Portfolio Builder (must precede generic buzzer)
+    ("STEPPED_CLUE", re.compile(r"\b(?:portfolio\s*builder|stepped\s*clues?|(?:3|three)[\s\-]*clues?|3\s*parts/clues|\+20\s*/\s*-15)\b", re.I)),
+    # 2. Connect 4 / Common Link / Market Indicators (must precede generic buzzer)
+    ("CONNECT_4", re.compile(r"\b(?:market\s*indicators|connect\s*4|4\s*pics\s*1\s*word|four\s*images|common\s*(?:theme|link|thread)|what\s*connects|connect(?:ion|ions|s)?\b|\bfind\s+the\s+link\b)", re.I)),
+    # 3. Arrange the order / Ticker Tangle
+    ("ARRANGE_ORDER", re.compile(r"\b(?:ticker\s*tangle|arrange\b|\bin\s+(?:the\s+)?(?:right|correct)\s+order\b|\border\s+(?:the|them)\b|\bsequenc|chronolog|lowest\s+to\s+highest|earliest\s+to\s+latest)", re.I)),
+    # 4. Potpourri
     ("POTPOURRI", re.compile(r"\bpotpourri\b", re.I)),
+    # 5. Image reveal
     ("IMAGE_REVEAL", re.compile(r"\bimage\s*reveal\b|\breveal\s*round\b|\bpixelat", re.I)),
-    ("ARRANGE_ORDER", re.compile(r"\barrange\b|\bin\s+(?:the\s+)?(?:right|correct)\s+order\b|\border\s+(?:the|them)\b|\bsequenc", re.I)),
+    # 6. List it
     ("LIST_IT", re.compile(r"\blist[\s\-]*it\b", re.I)),
-    ("BUZZER", re.compile(r"\bbuzzer\b|\bbuzz\s*round\b|\brapid\s*fire\b", re.I)),
-    ("CONNECT", re.compile(r"\bconnect(?:ion|ions|s)?\b|\bwhat\s+connects\b|\bfind\s+the\s+link\b", re.I)),
-    ("QA", re.compile(r"\bq\s*&\s*a\b|\bqa\b|\bquestion[\s\-]*answer\b|\bdirect\s+questions?\b", re.I)),
+    # 7. Rapid Fire / Buzzer (Closing Bell)
+    ("BUZZER", re.compile(r"\b(?:closing\s*bell|buzzer\s*round|rapid\s*fire|buzzers?!)\b", re.I)),
+    # 8. Standard QA (Opening Bell / Direct)
+    ("QA", re.compile(r"\b(?:opening\s*bell|direct\s*questions?|q\s*&\s*a\b|\bqa\b|\bquestion[\s\-]*answer\b)", re.I)),
 ]
 _HEADER_TYPES = {"SECTION_MARKER", "ANNOUNCEMENT", "RULES", "TITLE", "CONTENT"}
 
@@ -293,6 +315,13 @@ def infer_formats(slides: List[Dict[str, Any]]) -> Dict[int, str]:
         blob = f"{title} {text}".strip()
         words = len(blob.split())
 
+        # Ignore agenda / structure overview slides
+        if re.search(r"\b(?:structure\s+of\s+(?:the\s+)?quiz|quiz\s+structure|overview|agenda)\b", blob, re.I):
+            sn = s.get("slide_number")
+            if sn is not None:
+                result[int(sn)] = current
+            continue
+
         if stype in _HEADER_TYPES and blob:
             fmt = detect_format_in_text(blob)
             if stype == "SECTION_MARKER":
@@ -300,7 +329,7 @@ def infer_formats(slides: List[Dict[str, Any]]) -> Dict[int, str]:
             elif fmt and words <= 30:
                 # A short non-question slide naming a format works as a header, but a bare "connect"
                 # in a longer slide ("connect with us") must not.
-                if fmt == "CONNECT" and not re.search(r"\b(round|section|set|questions?|following|next)\b", blob, re.I):
+                if fmt in ("CONNECT_4", "CONNECT") and not re.search(r"\b(round|section|set|questions?|following|next|indicators|market|theme|connect)\b", blob, re.I):
                     pass
                 else:
                     current = fmt

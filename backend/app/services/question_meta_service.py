@@ -46,7 +46,37 @@ QUESTION_EDITABLE = {
 INT_FIELDS = {"question_number", "round_number", "question_in_round", "deck_year", "relevant_year"}
 BOOL_FIELDS = {"star_marked", "is_varsity"}
 
-QUESTION_FORMATS = ["QA", "THREE_CLUE", "POTPOURRI", "CONNECT", "ARRANGE_ORDER", "IMAGE_REVEAL", "LIST_IT", "BUZZER"]
+QUESTION_FORMATS = [
+    "QA",
+    "CONNECT_4",
+    "STEPPED_CLUE",
+    "ARRANGE_ORDER",
+    "BUZZER",
+    "VISUAL_CLUE",
+    "AUDIO_CLUE",
+    "VIDEO_CLUE",
+    "POTPOURRI",
+    "IMAGE_REVEAL",
+    "LIST_IT",
+    "CONNECT",
+    "THREE_CLUE",
+]
+
+FORMAT_LABELS: Dict[str, str] = {
+    "QA": "Question and Answer (Direct)",
+    "CONNECT_4": "Connect 4",
+    "CONNECT": "Connect 4",
+    "STEPPED_CLUE": "Stepped Clue (Portfolio Builder)",
+    "THREE_CLUE": "Stepped Clue (Portfolio Builder)",
+    "ARRANGE_ORDER": "Arrange the Order (Ticker Tangle)",
+    "BUZZER": "Buzzer (Closing Bell / Rapid Fire)",
+    "VISUAL_CLUE": "Visual Clue",
+    "AUDIO_CLUE": "Audio Clue",
+    "VIDEO_CLUE": "Video Clue",
+    "POTPOURRI": "Potpourri",
+    "IMAGE_REVEAL": "Image Reveal",
+    "LIST_IT": "List It",
+}
 ANSWER_TYPES = ["TEXT", "TEXT_IMAGE", "IMAGE", "TEXT_VIDEO", "VIDEO", "TEXT_AUDIO", "AUDIO"]
 GEOGRAPHIES = ["IN", "INTL", "NA"]
 

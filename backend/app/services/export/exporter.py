@@ -1438,7 +1438,7 @@ class QuizExporter:
             )
             explanation = "" if is_dup_explanation else raw_exp
 
-            if fmt == "CONNECT_4" or (format_payload and format_payload.get("type") == "CONNECT_4"):
+            if fmt in ("CONNECT_4", "CONNECT") or (format_payload and format_payload.get("type") in ("CONNECT_4", "CONNECT")):
                 QuizExporter._render_connect4_slides(
                     prs=prs, blank_layout=blank_layout, q=q, idx=idx, payload=format_payload,
                     resolved_q_imgs=resolved_q_imgs, question_bg=question_bg,
@@ -1452,7 +1452,7 @@ class QuizExporter:
                 )
                 continue
 
-            elif fmt == "STEPPED_CLUE" or (format_payload and format_payload.get("type") == "STEPPED_CLUE"):
+            elif fmt in ("STEPPED_CLUE", "THREE_CLUE") or (format_payload and format_payload.get("type") in ("STEPPED_CLUE", "THREE_CLUE")):
                 QuizExporter._render_stepped_clue_slides(
                     prs=prs, blank_layout=blank_layout, q=q, idx=idx, payload=format_payload,
                     resolved_q_imgs=resolved_q_imgs, question_bg=question_bg,

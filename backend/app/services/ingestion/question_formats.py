@@ -17,9 +17,29 @@ FMT_QA = "QA"
 FMT_CONNECT_4 = "CONNECT_4"
 FMT_STEPPED_CLUE = "STEPPED_CLUE"
 FMT_ARRANGE_ORDER = "ARRANGE_ORDER"
+FMT_BUZZER = "BUZZER"
 FMT_VISUAL_CLUE = "VISUAL_CLUE"
 FMT_AUDIO_CLUE = "AUDIO_CLUE"
 FMT_VIDEO_CLUE = "VIDEO_CLUE"
+FMT_POTPOURRI = "POTPOURRI"
+FMT_IMAGE_REVEAL = "IMAGE_REVEAL"
+FMT_LIST_IT = "LIST_IT"
+
+FORMAT_LABELS: Dict[str, str] = {
+    FMT_QA: "Question and Answer (Direct)",
+    FMT_CONNECT_4: "Connect 4",
+    "CONNECT": "Connect 4",
+    FMT_STEPPED_CLUE: "Stepped Clue (Portfolio Builder)",
+    "THREE_CLUE": "Stepped Clue (Portfolio Builder)",
+    FMT_ARRANGE_ORDER: "Arrange the Order (Ticker Tangle)",
+    FMT_BUZZER: "Buzzer (Closing Bell / Rapid Fire)",
+    FMT_VISUAL_CLUE: "Visual Clue",
+    FMT_AUDIO_CLUE: "Audio Clue",
+    FMT_VIDEO_CLUE: "Video Clue",
+    FMT_POTPOURRI: "Potpourri",
+    FMT_IMAGE_REVEAL: "Image Reveal",
+    FMT_LIST_IT: "List It",
+}
 
 
 # Regex detectors
@@ -37,7 +57,7 @@ _ARRANGE_RE = re.compile(
 )
 
 _CONNECT_RE = re.compile(
-    r"(?:\bconnect(?:ion|ions|s)?\b|what\s+connects|common\s+link|find\s+the\s+link|"
+    r"(?:\bmarket\s*indicators\b|\bconnect(?:ion|ions|s)?\b|what\s+connects|common\s*(?:theme|link|thread)|find\s+the\s+link|"
     r"4\s*pics\s*1\s*word|four\s*images|connect\s*4)",
     re.IGNORECASE
 )
@@ -62,7 +82,7 @@ def detect_and_structure_format(
     opts = options or []
 
     # 1. Stepped Clue (Portfolio Builder / 3 Clues buzzer round)
-    if _STEPPED_RE.search(combined) or deck_round_format in ("THREE_CLUE", "BUZZER") and ("clue" in q_text.lower() or "clue 1" in combined.lower()):
+    if _STEPPED_RE.search(combined) or deck_round_format in ("STEPPED_CLUE", "THREE_CLUE", "PORTFOLIO_BUILDER") or (deck_round_format == "BUZZER" and ("clue" in q_text.lower() or "clue 1" in combined.lower())): 
         clues: List[Dict[str, Any]] = []
         # Attempt to parse progressive clues if embedded in text
         clue_matches = re.split(r"(?:^|\n)\s*(?:(?:\d+\.)?\s*Clue\s*(\d)\s*:\s*([+\-\d/]+))", q_text, flags=re.I)
@@ -96,7 +116,7 @@ def detect_and_structure_format(
         return FMT_STEPPED_CLUE, payload
 
     # 2. Arrange Order (Ticker Tangle / Chronology)
-    if _ARRANGE_RE.search(combined) or deck_round_format == "ARRANGE_ORDER":
+    if _ARRANGE_RE.search(combined) or deck_round_format in ("ARRANGE_ORDER", "TICKER_TANGLE"):
         items: List[Dict[str, Any]] = []
         # Check if options contain 4 items (A, B, C, D)
         if opts and len(opts) >= 4:
@@ -131,7 +151,7 @@ def detect_and_structure_format(
         return FMT_ARRANGE_ORDER, payload
 
     # 3. Connect / Connect 4
-    if _CONNECT_RE.search(combined) or deck_round_format == "CONNECT" or (imgs and len(imgs) >= 4 and not opts):
+    if _CONNECT_RE.search(combined) or deck_round_format in ("CONNECT_4", "CONNECT", "MARKET_INDICATORS") or (imgs and len(imgs) >= 4 and not opts):
         elements: List[Dict[str, Any]] = []
         for i in range(min(4, len(imgs) if imgs else 4)):
             img = imgs[i] if i < len(imgs) else None
@@ -149,7 +169,17 @@ def detect_and_structure_format(
         }
         return FMT_CONNECT_4, payload
 
-    # 4. Media-specific clues
+    # 4. Specific deck round formats
+    if deck_round_format in ("BUZZER", "CLOSING_BELL", "RAPID_FIRE"):
+        return FMT_BUZZER, {"type": FMT_BUZZER, "badge": "Buzzer / Rapid Fire"}
+    if deck_round_format == "POTPOURRI":
+        return FMT_POTPOURRI, {"type": FMT_POTPOURRI, "badge": "Potpourri"}
+    if deck_round_format == "IMAGE_REVEAL":
+        return FMT_IMAGE_REVEAL, {"type": FMT_IMAGE_REVEAL, "badge": "Image Reveal"}
+    if deck_round_format == "LIST_IT":
+        return FMT_LIST_IT, {"type": FMT_LIST_IT, "badge": "List It"}
+
+    # 5. Media-specific clues
     if vids:
         return FMT_VIDEO_CLUE, {"type": FMT_VIDEO_CLUE, "video_url": vids[0]}
     if auds:
@@ -157,5 +187,5 @@ def detect_and_structure_format(
     if imgs:
         return FMT_VISUAL_CLUE, {"type": FMT_VISUAL_CLUE, "image_url": imgs[0]}
 
-    # 5. Default QA
+    # 6. Default QA
     return FMT_QA, {"type": FMT_QA}

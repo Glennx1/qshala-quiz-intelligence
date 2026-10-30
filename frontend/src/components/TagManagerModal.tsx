@@ -34,15 +34,34 @@ const TABS: { key: TabKey; label: string }[] = [
 ];
 
 const FORMAT_LABELS: Record<string, string> = {
-  QA: 'Question and answer',
-  THREE_CLUE: '3 clue',
+  QA: 'Question and Answer (Direct)',
+  CONNECT_4: 'Connect 4',
+  CONNECT: 'Connect 4',
+  STEPPED_CLUE: 'Stepped Clue (Portfolio Builder)',
+  THREE_CLUE: 'Stepped Clue (Portfolio Builder)',
+  ARRANGE_ORDER: 'Arrange the Order (Ticker Tangle)',
+  BUZZER: 'Buzzer (Closing Bell / Rapid Fire)',
+  VISUAL_CLUE: 'Visual Clue',
+  AUDIO_CLUE: 'Audio Clue',
+  VIDEO_CLUE: 'Video Clue',
   POTPOURRI: 'Potpourri',
-  CONNECT: 'Connect',
-  ARRANGE_ORDER: 'Arrange the order',
-  IMAGE_REVEAL: 'Image reveal',
-  LIST_IT: 'List it',
-  BUZZER: 'Buzzer',
+  IMAGE_REVEAL: 'Image Reveal',
+  LIST_IT: 'List It',
 };
+
+const CANONICAL_FORMAT_OPTIONS = [
+  'QA',
+  'CONNECT_4',
+  'STEPPED_CLUE',
+  'ARRANGE_ORDER',
+  'BUZZER',
+  'VISUAL_CLUE',
+  'AUDIO_CLUE',
+  'VIDEO_CLUE',
+  'POTPOURRI',
+  'IMAGE_REVEAL',
+  'LIST_IT',
+];
 const ANSWER_TYPE_LABELS: Record<string, string> = {
   TEXT: 'Text',
   TEXT_IMAGE: 'Text + image',
@@ -591,8 +610,22 @@ export default function TagManagerModal({ isOpen, onClose, question, onSaved, on
                     <Field label="Round"><input type="number" className={inputCls} value={meta.round_number ?? ''} onChange={(e) => setMetaField('round_number', e.target.value)} /></Field>
                     <Field label="Number in the round"><input type="number" className={inputCls} value={meta.question_in_round ?? ''} onChange={(e) => setMetaField('question_in_round', e.target.value)} /></Field>
                     <Field label="Question format">
-                      <select className={inputCls} value={meta.question_format ?? 'QA'} onChange={(e) => setMetaField('question_format', e.target.value)}>
-                        {(taxonomy?.formats ?? Object.keys(FORMAT_LABELS)).map((f) => <option key={f} value={f}>{FORMAT_LABELS[f] || f}</option>)}
+                      <select
+                        className={inputCls}
+                        value={
+                          meta.question_format === 'CONNECT'
+                            ? 'CONNECT_4'
+                            : meta.question_format === 'THREE_CLUE'
+                            ? 'STEPPED_CLUE'
+                            : meta.question_format ?? 'QA'
+                        }
+                        onChange={(e) => setMetaField('question_format', e.target.value)}
+                      >
+                        {(taxonomy?.formats ?? CANONICAL_FORMAT_OPTIONS).map((f) => (
+                          <option key={f} value={f}>
+                            {FORMAT_LABELS[f] || f}
+                          </option>
+                        ))}
                       </select>
                     </Field>
                     <Field label="Answer type">
