@@ -33,6 +33,7 @@ const fetch = (input: RequestInfo | URL, init: RequestInit = {}): Promise<Respon
   return globalThis.fetch(input, { ...init, headers });
 };
 
+
 export function getApiBase(): string {
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL;
@@ -316,6 +317,13 @@ export const api = {
       method: 'DELETE',
     });
     return handleResponse<{ message: string }>(res);
+  },
+
+  retryDocument: async (id: string): Promise<{ message: string; job_id: string }> => {
+    const res = await fetch(`${getApiBase()}/documents/${id}/retry`, {
+      method: 'POST',
+    });
+    return handleResponse<{ message: string; job_id: string }>(res);
   },
 
   // Questions / Knowledge Base Vault
@@ -665,14 +673,38 @@ export const api = {
     return handleResponse<{ message: string }>(res);
   },
 
-  exportQuizUrl: (quizId: string, format: 'json' | 'csv' | 'pptx'): string => {
-    return `${getApiBase()}/quizzes/${quizId}/export?format=${format}`;
+  exportQuizUrl: (quizId: string, format: 'json' | 'csv' | 'pptx', options?: ExportOptions): string => {
+    let url = `${getApiBase()}/quizzes/${quizId}/export?format=${format}`;
+    if (format === 'pptx') {
+      const quizType = options?.quizType || (options?.theme === 'corporate' ? 'corporate' : 'school');
+      url += `&quiz_type=${encodeURIComponent(quizType)}`;
+      if (options?.campusEdition) url += `&campus_edition=${encodeURIComponent(options.campusEdition)}`;
+      if (options?.prizeMoney) url += `&prize_money=${encodeURIComponent(options.prizeMoney)}`;
+      if (options?.customTitle) url += `&custom_title=${encodeURIComponent(options.customTitle)}`;
+      if (options?.includeSocialSlides !== undefined) url += `&include_social_slides=${options.includeSocialSlides}`;
+    }
+    return url;
   },
 
-  exportQuizDirect: async (quiz: Quiz, format: 'json' | 'csv' | 'pptx' = 'pptx'): Promise<Blob> => {
+  exportQuizDirect: async (
+    quiz: Quiz,
+    format: 'json' | 'csv' | 'pptx' = 'pptx',
+    options?: ExportOptions
+  ): Promise<Blob> => {
+    const params = new URLSearchParams({ format });
+    if (format === 'pptx') {
+      const quizType = options?.quizType || (options?.theme === 'corporate' ? 'corporate' : 'school');
+      params.append('quiz_type', quizType);
+      if (options?.campusEdition) params.append('campus_edition', options.campusEdition);
+      if (options?.prizeMoney) params.append('prize_money', options.prizeMoney);
+      if (options?.customTitle) params.append('custom_title', options.customTitle);
+      if (options?.includeSocialSlides !== undefined) params.append('include_social_slides', String(options.includeSocialSlides));
+    }
+    const queryStr = params.toString();
+
     // 1. Try GET /quizzes/{id}/export first
     try {
-      const getRes = await fetch(`${getApiBase()}/quizzes/${quiz.id}/export?format=${format}`);
+      const getRes = await fetch(`${getApiBase()}/quizzes/${quiz.id}/export?${queryStr}`);
       if (getRes.ok) {
         return await getRes.blob();
       }
@@ -681,7 +713,7 @@ export const api = {
     }
 
     // 2. Fallback to POST /quizzes/export with full quiz payload
-    const postRes = await fetch(`${getApiBase()}/quizzes/export?format=${format}`, {
+    const postRes = await fetch(`${getApiBase()}/quizzes/export?${queryStr}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(quiz),
@@ -693,8 +725,23 @@ export const api = {
   },
 };
 
-export async function downloadQuizFile(quiz: Quiz, format: 'json' | 'csv' | 'pptx' = 'pptx'): Promise<void> {
-  const blob = await api.exportQuizDirect(quiz, format);
+export interface ExportOptions {
+  quizType?: 'school' | 'corporate' | 'minimalist';
+  campusEdition?: string;
+  prizeMoney?: string;
+  customTitle?: string;
+  includeSocialSlides?: boolean;
+  theme?: string;
+  customSubtitle?: string;
+  showAnswerDivider?: boolean;
+}
+
+export async function downloadQuizFile(
+  quiz: Quiz,
+  format: 'json' | 'csv' | 'pptx' = 'pptx',
+  options?: ExportOptions
+): Promise<void> {
+  const blob = await api.exportQuizDirect(quiz, format, options);
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
