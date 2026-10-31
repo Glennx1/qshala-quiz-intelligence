@@ -8,11 +8,11 @@ import {
   FileSpreadsheet,
   Presentation,
   ArrowRight,
-  Loader2,
   Trash2,
 } from 'lucide-react';
 import { api, downloadQuizFile, ExportOptions } from '../../lib/api';
 import ExportQuizModal from '../../components/ExportQuizModal';
+import TableSkeleton from '../../components/TableSkeleton';
 import { Quiz } from '../../lib/types';
 import { getLocalQuizzes, deleteLocalQuiz, mergeQuizzes, saveLocalQuiz } from '../../lib/quizStorage';
 
@@ -100,10 +100,7 @@ export default function QuizzesLibraryPage() {
       {/* Clean Table List of Quizzes */}
       <div className="rounded-xl border border-slate-200/80 bg-white shadow-sm shadow-slate-100/50 overflow-hidden">
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-20">
-            <Loader2 className="h-6 w-6 animate-spin text-blue-600 mb-2" />
-            <p className="text-[13px] text-slate-400 font-normal">Loading generated quizzes...</p>
-          </div>
+          <TableSkeleton columns={7} />
         ) : (
           <table className="w-full text-left text-[13px] border-collapse">
             <thead>

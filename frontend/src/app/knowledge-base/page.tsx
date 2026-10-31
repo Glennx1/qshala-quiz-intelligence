@@ -6,7 +6,6 @@ import {
   Search,
   Filter,
   ExternalLink,
-  Loader2,
   ArrowUpDown,
   Layers,
   Tag,
@@ -28,7 +27,8 @@ import { api, resolveMediaUrl, getFallbackMediaUrl } from '../../lib/api';
 import { HistoricalQuestion, TopicItem, DocumentItem } from '../../lib/types';
 import SlideViewerModal from '../../components/SlideViewerModal';
 import TagManagerModal from '../../components/TagManagerModal';
-import MediaViewerModal from '../../components/MediaViewerModal';
+import MediaViewerModal from '../../components/MediaViewerModal';
+import TableSkeleton from '../../components/TableSkeleton';
 
 const PLACEHOLDER_ICONS = new Set([
   'slide_41_img_1.png', 'slide_40_img_1.png', 'slide_49_img_1.png',
@@ -583,10 +583,7 @@ function KnowledgeBaseContent() {
       {/* Professional CMS Data Table */}
       <div className="rounded-xl border border-slate-200/80 bg-white shadow-sm shadow-slate-100/50 overflow-hidden">
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-20">
-            <Loader2 className="h-6 w-6 animate-spin text-blue-600 mb-2" />
-            <p className="text-[13px] text-slate-400 font-normal">Loading questions...</p>
-          </div>
+          <TableSkeleton columns={3} />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-[13px] border-collapse">
