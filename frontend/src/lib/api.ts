@@ -13,6 +13,10 @@ import {
   SharePointSyncStatus,
   SharePointFileItem,
   IngestionJobItem,
+  SharePointSyncResponse,
+  RequeueResponse,
+  JobActionResponse,
+  JobRetryResponse,
   QuestionDetail,
   TopicPath,
   RepeatEntry,
@@ -448,12 +452,12 @@ export const api = {
     return handleResponse<SharePointSyncStatus>(res);
   },
 
-  triggerSharePointSync: async (driveId?: string): Promise<any> => {
+  triggerSharePointSync: async (driveId?: string): Promise<SharePointSyncResponse> => {
     const url = driveId ? `${getApiBase()}/sharepoint/sync?drive_id=${encodeURIComponent(driveId)}` : `${getApiBase()}/sharepoint/sync`;
     const res = await fetch(url, {
       method: 'POST',
     });
-    return handleResponse<any>(res);
+    return handleResponse<SharePointSyncResponse>(res);
   },
 
   listSharePointFiles: async (sync_status?: string): Promise<{ total: number; files: SharePointFileItem[] }> => {
@@ -462,11 +466,11 @@ export const api = {
     return handleResponse<{ total: number; files: SharePointFileItem[] }>(res);
   },
 
-  requeueSharePointFile: async (fileId: string): Promise<any> => {
+  requeueSharePointFile: async (fileId: string): Promise<RequeueResponse> => {
     const res = await fetch(`${getApiBase()}/sharepoint/files/${fileId}/re-queue`, {
       method: 'POST',
     });
-    return handleResponse<any>(res);
+    return handleResponse<RequeueResponse>(res);
   },
 
   listJobs: async (status?: string): Promise<{ total: number; jobs: IngestionJobItem[] }> => {
@@ -475,18 +479,18 @@ export const api = {
     return handleResponse<{ total: number; jobs: IngestionJobItem[] }>(res);
   },
 
-  processNextJob: async (): Promise<any> => {
+  processNextJob: async (): Promise<JobActionResponse> => {
     const res = await fetch(`${getApiBase()}/jobs/process-next`, {
       method: 'POST',
     });
-    return handleResponse<any>(res);
+    return handleResponse<JobActionResponse>(res);
   },
 
-  retryJob: async (jobId: string): Promise<any> => {
+  retryJob: async (jobId: string): Promise<JobRetryResponse> => {
     const res = await fetch(`${getApiBase()}/jobs/${jobId}/retry`, {
       method: 'POST',
     });
-    return handleResponse<any>(res);
+    return handleResponse<JobRetryResponse>(res);
   },
 
   updateQuestionTags: async (

@@ -219,6 +219,33 @@ export interface SharePointFileItem {
   error_message?: string | null;
 }
 
+export interface SharePointSyncResponse {
+  status: string;
+  pages_processed: number;
+  discovered_files_count: number;
+  enqueued_jobs_count: number;
+  deleted_files_count: number;
+  enqueued_job_ids: string[];
+  delta_token?: string | null;
+}
+
+export interface RequeueResponse {
+  message: string;
+  job_id: string;
+}
+
+export interface JobActionResponse {
+  status: 'SUCCESS' | 'NO_JOBS_PENDING' | 'IDLE' | 'ERROR';
+  job?: IngestionJobItem | null;
+  processed?: boolean;
+  error?: string;
+}
+
+export interface JobRetryResponse {
+  message: string;
+  job: IngestionJobItem;
+}
+
 export interface IngestionJobItem {
   id: string;
   source_type: string;
