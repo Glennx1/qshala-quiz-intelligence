@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import shutil
@@ -23,7 +24,7 @@ from backend.app.services.ingestion.cancellation import (
 logger = logging.getLogger(__name__)
 
 
-def _schedule_ingestion(doc, db: Session, background_tasks: BackgroundTasks) -> None:
+def _schedule_ingestion(doc, db: Session, background_tasks: BackgroundTasks, raw_already_in_r2: bool = False) -> None:
     """Start ingestion for an uploaded deck.
 
     Three modes, in priority order:
@@ -34,6 +35,11 @@ def _schedule_ingestion(doc, db: Session, background_tasks: BackgroundTasks) -> 
          process it over time — several uploads then ingest one-at-a-time instead of all at once
          (which OOMs a small host).
       3. Neither -- the old immediate per-upload background task, in-process.
+
+    `raw_already_in_r2` is set by /upload-chunk when it streamed the slices straight into an R2
+    multipart upload as they arrived (see _upload_chunk_direct_to_r2) -- in that case the raw deck
+    is already sitting at the exact key this function would otherwise stage it to, so the
+    read-local-file-and-re-upload step below is skipped entirely.
     """
     if settings.INGESTION_MODE == "cloud_run_job":
         from backend.app.services.ingestion.job_trigger import trigger_ingestion_job, IngestionJobTriggerError
@@ -69,16 +75,19 @@ def _schedule_ingestion(doc, db: Session, background_tasks: BackgroundTasks) -> 
             )
             db.commit()
             return
-        try:
-            raw_key = f"raw-uploads/{doc.id}{os.path.splitext(doc.storage_path)[1]}"
-            r2.upload_file(raw_key, doc.storage_path)
-            logger.info("[UPLOAD] staged raw deck in R2 for worker: doc_id=%s key=%s", doc.id, raw_key)
-        except Exception as e:
-            logger.exception("[UPLOAD] failed to stage raw deck in R2 for doc_id=%s: %s", doc.id, e)
-            doc.processing_status = "FAILED"
-            doc.processing_error = f"Failed to stage upload for ingestion worker: {e}"
-            db.commit()
-            return
+        if raw_already_in_r2:
+            logger.info("[UPLOAD] raw deck already staged in R2 via chunk-streamed multipart upload: doc_id=%s", doc.id)
+        else:
+            try:
+                raw_key = f"raw-uploads/{doc.id}{os.path.splitext(doc.storage_path)[1]}"
+                r2.upload_file(raw_key, doc.storage_path)
+                logger.info("[UPLOAD] staged raw deck in R2 for worker: doc_id=%s key=%s", doc.id, raw_key)
+            except Exception as e:
+                logger.exception("[UPLOAD] failed to stage raw deck in R2 for doc_id=%s: %s", doc.id, e)
+                doc.processing_status = "FAILED"
+                doc.processing_error = f"Failed to stage upload for ingestion worker: {e}"
+                db.commit()
+                return
 
         try:
             trigger_ingestion_job(doc.id)
@@ -223,6 +232,146 @@ async def upload_document(
     _schedule_ingestion(doc, db, background_tasks)
     return doc
 
+_MULTIPART_STATE_FILE = "r2_multipart_state.json"
+
+
+async def _upload_chunk_direct_to_r2(
+    chunk_dir, chunk: UploadFile, upload_id: str, chunk_index: int, total_chunks: int,
+    ext: str, filename: str, title: Optional[str], year: Optional[int],
+    r2, db: Session, background_tasks: BackgroundTasks,
+):
+    """The cloud_run_job+R2 path for /upload-chunk: every slice goes straight into an R2
+    multipart upload (one part per slice -- the frontend's 24 MB slices are already well above
+    S3/R2's 5 MB minimum part size, and the last part is exempt from that minimum anyway).
+
+    State (the doc id, R2's own multipart UploadId, and the ETag of each part received so far)
+    lives in a small JSON file under the same tmp_chunks/<upload_id> directory the old local-disk
+    path used for its .part files -- that's a few hundred bytes of bookkeeping, not the deck
+    itself, and `remove_chunk_dir` already cleans it up on completion or cancellation. Keyed by
+    part number rather than assumed-sequential, since retries or concurrent requests could land
+    parts out of order; R2/S3 multipart doesn't require them in order either.
+
+    Carries over the same MAX_FILE_SIZE_BYTES ceiling the old stitch-then-check path enforced,
+    checked cumulatively per part instead of once at the end (there's no final stitched file to
+    measure here).
+    """
+    state_path = chunk_dir / _MULTIPART_STATE_FILE
+
+    if not state_path.exists():
+        if chunk_index != 0:
+            # The chunk that would have created this state (index 0) hasn't landed here yet --
+            # most likely still in flight, or it landed on a different Cloud Run instance (the
+            # old local-disk path has this exact same single-instance assumption, so this isn't
+            # a new limitation). The frontend's chunk upload already retries on failure.
+            raise HTTPException(
+                status_code=409,
+                detail="Upload not yet initialized for this slice; retrying should resolve it.",
+            )
+        doc_id = str(uuid.uuid4())
+        raw_key = f"raw-uploads/{doc_id}{ext}"
+        r2_upload_id = r2.create_multipart_upload(raw_key)
+        state = {
+            "doc_id": doc_id, "raw_key": raw_key, "r2_upload_id": r2_upload_id,
+            "filename": filename, "title": title, "year": year,
+            "parts": {}, "total_bytes": 0,
+        }
+    else:
+        state = json.loads(state_path.read_text())
+
+    body = await chunk.read()
+    new_total = state["total_bytes"] + len(body)
+    if new_total > MAX_FILE_SIZE_BYTES:
+        r2.abort_multipart_upload(state["raw_key"], state["r2_upload_id"])
+        remove_chunk_dir(upload_id)
+        raise HTTPException(
+            status_code=413,
+            detail=(f"Upload ({new_total / (1024 * 1024):.1f} MB so far) exceeds the maximum "
+                    f"upload size ({MAX_FILE_SIZE_MB:.0f} MB). Raise MAX_UPLOAD_MB on the backend."),
+        )
+
+    etag = r2.upload_part(state["raw_key"], state["r2_upload_id"], chunk_index + 1, body)
+    state["parts"][str(chunk_index + 1)] = etag
+    state["total_bytes"] = new_total
+    state_path.write_text(json.dumps(state))
+
+    # A cancel may have landed while this slice was still uploading: discard everything.
+    if upload_cancel_requested(upload_id):
+        r2.abort_multipart_upload(state["raw_key"], state["r2_upload_id"])
+        remove_chunk_dir(upload_id)
+        raise HTTPException(status_code=409, detail="Upload was cancelled.")
+
+    if len(state["parts"]) < total_chunks:
+        return {
+            "status": "CHUNK_RECEIVED",
+            "chunk_index": chunk_index,
+            "total_chunks": total_chunks,
+            "progress_percentage": round((len(state["parts"]) / total_chunks) * 100),
+        }
+
+    # All parts received -- finish the multipart upload. The raw deck now exists in R2 and
+    # nothing was ever written to local disk.
+    parts = [{"PartNumber": int(pn), "ETag": tag} for pn, tag in state["parts"].items()]
+    r2.complete_multipart_upload(state["raw_key"], state["r2_upload_id"], parts)
+
+    doc_id = state["doc_id"]
+    save_filename = f"{doc_id}{ext}"
+    settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    # Never actually written here -- worker.py's _fetch_raw_deck downloads the R2 object to this
+    # exact local path before ingestion runs, same as it already does for a cancelled-mid-way
+    # local upload. Kept as the same path shape as the local-disk path purely so every other
+    # piece of code that reads doc.storage_path (extension sniffing, cleanup on delete, etc.)
+    # keeps working unchanged.
+    storage_path = str(settings.UPLOAD_DIR / save_filename)
+
+    try:
+        remove_chunk_dir(upload_id)
+    except Exception as e:
+        logger.warning(f"[UPLOAD-CHUNK] failed to remove temporary state dir {chunk_dir}: {e}")
+
+    clean_title = state.get("title") or os.path.splitext(state["filename"])[0].replace("_", " ").title()
+
+    try:
+        doc = Document(
+            id=doc_id,
+            filename=state["filename"],
+            title=clean_title,
+            year=state.get("year") or datetime.now().year,
+            file_type=ext.replace(".", ""),
+            storage_path=storage_path,
+            file_size_bytes=state["total_bytes"],
+            processing_status="PROCESSING",
+        )
+        db.add(doc)
+        db.commit()
+        db.refresh(doc)
+    except Exception as e:
+        logger.exception(f"[UPLOAD-CHUNK] database record creation failed: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Database error while registering document.")
+
+    logger.info(f"[UPLOAD-CHUNK] file streamed directly to R2: doc_id={doc_id} key={state['raw_key']}")
+
+    _schedule_ingestion(doc, db, background_tasks, raw_already_in_r2=True)
+
+    return {
+        "status": "COMPLETED",
+        "document": {
+            "id": doc.id,
+            "filename": doc.filename,
+            "title": doc.title,
+            "year": doc.year,
+            "file_type": doc.file_type,
+            "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
+            "storage_path": doc.storage_path,
+            "file_size_bytes": doc.file_size_bytes,
+            "slide_count": doc.slide_count,
+            "question_count": doc.question_count,
+            "processing_status": doc.processing_status,
+            "processing_error": doc.processing_error,
+        },
+    }
+
+
 @router.post("/upload-chunk")
 async def upload_document_chunk(
     background_tasks: BackgroundTasks,
@@ -256,6 +405,23 @@ async def upload_document_chunk(
 
     chunk_dir = settings.STORAGE_DIR / "tmp_chunks" / upload_id
     chunk_dir.mkdir(parents=True, exist_ok=True)
+
+    # When ingestion runs on a separate Cloud Run Job and R2 is configured, stream each slice
+    # straight into an R2 multipart upload as it arrives instead of writing it to local disk and
+    # stitching a full copy afterward -- the worker already fetches the raw deck from R2 (see
+    # _fetch_raw_deck in worker.py), so a local copy here is pure overhead that mode never needs.
+    # Every other mode (in_process, the upload queue, or R2 not configured) falls through to the
+    # original local-disk path below completely untouched.
+    from backend.app.services.storage.r2_storage import get_r2_service
+    r2 = get_r2_service()
+    if settings.INGESTION_MODE == "cloud_run_job" and r2.is_configured:
+        return await _upload_chunk_direct_to_r2(
+            chunk_dir=chunk_dir, chunk=chunk, upload_id=upload_id,
+            chunk_index=chunk_index, total_chunks=total_chunks,
+            ext=ext, filename=filename, title=title, year=year,
+            r2=r2, db=db, background_tasks=background_tasks,
+        )
+
     chunk_path = chunk_dir / f"chunk_{chunk_index:05d}.part"
 
     # Stream chunk to disk
@@ -364,6 +530,19 @@ def cancel_chunked_upload(upload_id: str):
     if not valid_upload_id(upload_id):
         raise HTTPException(status_code=400, detail="Invalid upload_id.")
     request_upload_cancel(upload_id)
+
+    # If this upload was streaming straight into an R2 multipart upload (cloud_run_job mode),
+    # abort that too -- otherwise the parts already received linger in R2 as billable incomplete
+    # storage forever, since nothing else ever completes or expires them.
+    state_path = settings.STORAGE_DIR / "tmp_chunks" / upload_id / _MULTIPART_STATE_FILE
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text())
+            from backend.app.services.storage.r2_storage import get_r2_service
+            get_r2_service().abort_multipart_upload(state["raw_key"], state["r2_upload_id"])
+        except Exception as e:
+            logger.warning(f"[UPLOAD-CHUNK] failed to abort R2 multipart upload for {upload_id}: {e}")
+
     remove_chunk_dir(upload_id)
     logger.info(f"[UPLOAD-CHUNK] upload {upload_id} cancelled by user, slices removed")
     return {"status": "CANCELLED", "upload_id": upload_id}

@@ -111,6 +111,72 @@ class CloudflareR2Service:
         logger.info(f"[CloudflareR2Service] Uploaded {clean_key} from file -> {url}")
         return url
 
+    def create_multipart_upload(self, key: str, content_type: Optional[str] = None) -> str:
+        """
+        Starts an S3-compatible multipart upload and returns its UploadId. Lets a chunked
+        frontend upload stream straight into R2 one part per chunk, instead of writing the
+        full deck to local disk first and uploading it as a second pass (see upload_part /
+        complete_multipart_upload below, used together from documents.py's /upload-chunk).
+        """
+        if not self.is_configured or self._client is None:
+            raise RuntimeError("CloudflareR2Service is not configured")
+        clean_key = key.lstrip("/").replace("\\", "/")
+        if not content_type:
+            content_type, _ = mimetypes.guess_type(clean_key)
+            content_type = content_type or "application/octet-stream"
+        resp = self._client.create_multipart_upload(
+            Bucket=self.bucket_name, Key=clean_key, ContentType=content_type,
+        )
+        return resp["UploadId"]
+
+    def upload_part(self, key: str, upload_id: str, part_number: int, data: bytes) -> str:
+        """
+        Uploads one part of an in-progress multipart upload and returns its ETag (needed later
+        to complete the upload). Parts may arrive out of order -- S3/R2 only cares about
+        PartNumber, not upload order -- so callers may retry or reorder freely as long as each
+        part keeps the same PartNumber. Every part except the last must be >= 5 MB.
+        """
+        if not self.is_configured or self._client is None:
+            raise RuntimeError("CloudflareR2Service is not configured")
+        clean_key = key.lstrip("/").replace("\\", "/")
+        resp = self._client.upload_part(
+            Bucket=self.bucket_name, Key=clean_key, UploadId=upload_id,
+            PartNumber=part_number, Body=data,
+        )
+        return resp["ETag"]
+
+    def complete_multipart_upload(self, key: str, upload_id: str, parts: List[dict]) -> str:
+        """
+        Finishes a multipart upload once every part has been uploaded. `parts` is
+        [{"PartNumber": int, "ETag": str}, ...] -- order doesn't matter, this sorts them by
+        PartNumber itself, since R2/S3 requires the Parts list ascending. Returns the object's
+        public HTTPS URL, same shape as upload_bytes/upload_file.
+        """
+        if not self.is_configured or self._client is None:
+            raise RuntimeError("CloudflareR2Service is not configured")
+        clean_key = key.lstrip("/").replace("\\", "/")
+        self._client.complete_multipart_upload(
+            Bucket=self.bucket_name, Key=clean_key, UploadId=upload_id,
+            MultipartUpload={"Parts": sorted(parts, key=lambda p: p["PartNumber"])},
+        )
+        url = f"{self.public_base_url}/{clean_key}"
+        logger.info(f"[CloudflareR2Service] Completed multipart upload {clean_key} -> {url}")
+        return url
+
+    def abort_multipart_upload(self, key: str, upload_id: str) -> None:
+        """
+        Cancels an in-progress multipart upload and discards any parts already received, so
+        they don't linger as billable incomplete-upload storage. Best-effort: swallows errors
+        since this only ever runs during cleanup (user cancelled, or a size limit was hit).
+        """
+        if not self.is_configured or self._client is None:
+            return
+        clean_key = key.lstrip("/").replace("\\", "/")
+        try:
+            self._client.abort_multipart_upload(Bucket=self.bucket_name, Key=clean_key, UploadId=upload_id)
+        except Exception as e:
+            logger.warning(f"[CloudflareR2Service] Failed to abort multipart upload {clean_key}: {e}")
+
     def upload(
         self,
         pathname: str,
