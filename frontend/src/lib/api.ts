@@ -21,6 +21,50 @@ import {
   DeckMeta,
 } from './types';
 
+// Module-scoped fetch shadow, applied to every existing fetch() call site in this file with no
+// per-call changes needed. Does two things:
+//  1. Attaches X-API-Key automatically once NEXT_PUBLIC_API_KEY is set (matches the optional
+//     backend auth gate -- see API_KEY_SECRET in config.py). A no-op while that env var is unset.
+//  2. Retries GET requests up to 2 extra times with exponential backoff (300ms, 900ms) on a
+//     network failure or a 429/5xx response. Only GET is retried -- retrying a POST/PUT/DELETE
+//     here could duplicate a write (e.g. double-create), so those still fail on the first error
+//     and are handled by their own call sites (chunked upload already has its own retry loop).
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+const RETRY_DELAYS_MS = [300, 900];
+
+const fetch = async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
+  const apiKey = process.env.NEXT_PUBLIC_API_KEY;
+  let finalInit = init;
+  if (apiKey) {
+    const headers = new Headers(init.headers || {});
+    headers.set('X-API-Key', apiKey);
+    finalInit = { ...init, headers };
+  }
+
+  const method = (finalInit.method || 'GET').toUpperCase();
+  if (method !== 'GET') {
+    return globalThis.fetch(input, finalInit);
+  }
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const response = await globalThis.fetch(input, finalInit);
+      if (!RETRYABLE_STATUSES.has(response.status) || attempt === RETRY_DELAYS_MS.length) {
+        return response;
+      }
+      lastError = new Error(`HTTP ${response.status}`);
+    } catch (err) {
+      lastError = err;
+      if (attempt === RETRY_DELAYS_MS.length) {
+        throw err;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+  }
+  throw lastError;
+};
+
 export function getApiBase(): string {
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL;

@@ -212,6 +212,13 @@ class Settings(BaseSettings):
     # then turned on by setting this env var once the frontend is sending the header.
     API_KEY_SECRET: Optional[str] = None
 
+    # Comma-separated list of allowed frontend origins (e.g. "https://qshala.vercel.app,
+    # https://qshala-git-main-yourteam.vercel.app"). Empty/unset falls back to localhost-only --
+    # safe for local dev, but means nothing deployed can reach the API until this is set. Never
+    # falls back to "*": an open CORS policy combined with the optional X-API-Key auth above would
+    # let any website relay authenticated requests once a key is in use.
+    CORS_ORIGINS: Optional[str] = None
+
     @field_validator("UPLOAD_QUEUE_ENABLED", mode="before")
     @classmethod
     def _parse_upload_queue_enabled(cls, v, info):
@@ -312,6 +319,7 @@ class Settings(BaseSettings):
                      "AZURE_CLIENT_SECRET", "SHAREPOINT_SITE_ID", "SHAREPOINT_DRIVE_ID",
                      "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY",
                      "R2_BUCKET_NAME", "R2_PUBLIC_BASE_URL", "API_KEY_SECRET",
+                     "CORS_ORIGINS",
                      mode="before")
     @classmethod
     def parse_empty_keys(cls, v):
