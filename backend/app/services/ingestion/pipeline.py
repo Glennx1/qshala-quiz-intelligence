@@ -65,13 +65,16 @@ def _ensure_clean(db: Session, where: str) -> None:
 
 
 def _stage_log(document_id: str, stage: str, t0: float) -> float:
-    """Log wall-clock + process memory for a finished stage and return a new start time."""
+    """Log wall-clock + process memory for a finished stage, warn once (soft, non-blocking) if
+    memory is getting close to the container's limit, and return a new start time."""
+    rss = None
     try:
         from backend.app.services.ingestion import progress as _p
         mem = _p.memory_mb() or {}
-        rss = mem.get("rss") or mem.get("current") or mem.get("process")
+        rss = mem.get("memory_mb")
+        _p.maybe_warn_memory(INGESTION_STATUS_REGISTRY.get(document_id), mem)
     except Exception:
-        rss = None
+        pass
     dt = time.perf_counter() - t0
     logger.info("stage[%s] %-22s %6.1fs  mem=%s MB", document_id[:8], stage, dt, rss)
     return time.perf_counter()

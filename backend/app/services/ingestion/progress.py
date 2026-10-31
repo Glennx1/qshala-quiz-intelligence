@@ -40,6 +40,33 @@ def memory_mb() -> Dict[str, Optional[float]]:
     return {"memory_mb": r(cur), "peak_memory_mb": r(peak), "memory_limit_mb": effective_limit}
 
 
+# A safety margin for the activity log, not a hard limit: Cloud Run gives this worker 2048 MB,
+# and crossing this threshold logs one warning so a deck getting close to that real ceiling is
+# visible before it ever gets there. Deliberately NOT used to throttle or abort ingestion --
+# only to warn. 1792 MB = 1.75 GB, leaving ~256 MB of headroom below the container's actual limit.
+MEMORY_WARN_THRESHOLD_MB = float(os.getenv("MEMORY_WARN_THRESHOLD_MB", "1792"))
+
+
+def maybe_warn_memory(reg: Optional[Dict[str, Any]], mem: Optional[Dict[str, Optional[float]]] = None) -> None:
+    """Logs one activity-log warning the first time this document's memory usage crosses
+    MEMORY_WARN_THRESHOLD_MB. Never aborts, cancels, or throttles ingestion -- it only makes a
+    deck that's getting close to the container's real memory ceiling visible in the UI's
+    activity log before it actually gets there, instead of the first sign of trouble being an
+    OOM kill with no warning at all.
+    """
+    if reg is None or reg.get("_memory_warned"):
+        return
+    mem = mem or memory_mb()
+    cur = mem.get("memory_mb")
+    limit = mem.get("memory_limit_mb")
+    if cur is None or cur < MEMORY_WARN_THRESHOLD_MB:
+        return
+    reg["_memory_warned"] = True
+    limit_desc = f"{limit:.0f}" if limit is not None else "?"
+    event(reg, f"Memory usage is high ({cur:.0f} of {limit_desc} MB) -- still processing, but an "
+               f"even larger or more image-heavy deck could approach the container's limit.")
+
+
 def update(reg: Dict[str, Any], detail: Optional[str] = None, pct: Optional[float] = None,
            step: Optional[str] = None) -> None:
     if detail is not None:
