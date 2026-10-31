@@ -71,6 +71,39 @@ async def _poll_cancel(document_id: str, stop_event: asyncio.Event) -> None:
             pass
 
 
+def _fetch_raw_deck(document_id: str) -> None:
+    """Downloads the raw deck from R2 to doc.storage_path if it isn't already on this
+    container's local disk. The API service staged it there (see documents.py's
+    _schedule_ingestion, cloud_run_job branch) under a deterministic key precisely because this
+    worker runs in its own container with an empty filesystem -- doc.storage_path is only a
+    meaningful local path again once this runs. A no-op for every other ingestion mode, and for
+    local/manual testing where the file is already sitting on disk.
+    """
+    from backend.app.database import SessionLocal
+    from backend.app.models.document import Document
+    from backend.app.services.storage.r2_storage import get_r2_service
+
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter(Document.id == document_id).first()
+        if doc is None:
+            raise RuntimeError(f"Document {document_id} not found")
+        if doc.storage_path and os.path.exists(doc.storage_path):
+            return
+        r2 = get_r2_service()
+        if not r2.is_configured:
+            raise RuntimeError(
+                "R2 is not configured, but the raw deck isn't on local disk -- nothing to process"
+            )
+        raw_key = f"raw-uploads/{doc.id}{os.path.splitext(doc.storage_path)[1]}"
+        dest = Path(doc.storage_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        r2.download_to_file(raw_key, dest)
+        logger.info("[WORKER] fetched raw deck from R2: doc_id=%s key=%s", document_id, raw_key)
+    finally:
+        db.close()
+
+
 async def _run(document_id: str) -> None:
     from backend.app.services.ingestion.pipeline import IngestionPipeline
 
@@ -78,6 +111,7 @@ async def _run(document_id: str) -> None:
     poller = asyncio.create_task(_poll_cancel(document_id, stop_event))
     try:
         logger.info("[WORKER] starting ingestion for doc_id=%s", document_id)
+        await asyncio.to_thread(_fetch_raw_deck, document_id)
         await IngestionPipeline().run(document_id)
         logger.info("[WORKER] finished ingestion for doc_id=%s", document_id)
     finally:

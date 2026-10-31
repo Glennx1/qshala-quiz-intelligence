@@ -37,6 +37,7 @@ def _schedule_ingestion(doc, db: Session, background_tasks: BackgroundTasks) -> 
     """
     if settings.INGESTION_MODE == "cloud_run_job":
         from backend.app.services.ingestion.job_trigger import trigger_ingestion_job, IngestionJobTriggerError
+        from backend.app.services.storage.r2_storage import get_r2_service
         # Deliberately does NOT write to INGESTION_STATUS_REGISTRY: that dict is this process's
         # own memory, but the pipeline runs inside a separate worker container for this mode. An
         # entry written here would never be updated again -- the worker can't see this process's
@@ -48,6 +49,37 @@ def _schedule_ingestion(doc, db: Session, background_tasks: BackgroundTasks) -> 
         # by the pipeline itself regardless of which process runs it) is what actually reflects
         # progress here -- the same fallback that already covers "a document this process never
         # saw ingestion start for," e.g. after a restart.
+
+        # The raw deck this process just streamed to local disk (doc.storage_path) lives only in
+        # THIS container's own ephemeral filesystem -- the worker Job runs in a completely
+        # separate container with its own empty disk and never sees it (this caused every
+        # cloud_run_job upload to fail with FileNotFoundError in pptx_parser). Stage it in R2
+        # under a key the worker can derive from doc.id/extension, so worker.py can fetch it
+        # before handing off to the unmodified pipeline, which still just reads doc.storage_path.
+        r2 = get_r2_service()
+        if not r2.is_configured:
+            logger.error(
+                "[UPLOAD] INGESTION_MODE=cloud_run_job requires R2 to hand the raw deck to the "
+                "worker, but R2 isn't configured (doc_id=%s)", doc.id,
+            )
+            doc.processing_status = "FAILED"
+            doc.processing_error = (
+                "Server misconfiguration: R2 storage must be configured for Cloud Run Job "
+                "ingestion mode (the worker can't otherwise see the uploaded file)."
+            )
+            db.commit()
+            return
+        try:
+            raw_key = f"raw-uploads/{doc.id}{os.path.splitext(doc.storage_path)[1]}"
+            r2.upload_file(raw_key, doc.storage_path)
+            logger.info("[UPLOAD] staged raw deck in R2 for worker: doc_id=%s key=%s", doc.id, raw_key)
+        except Exception as e:
+            logger.exception("[UPLOAD] failed to stage raw deck in R2 for doc_id=%s: %s", doc.id, e)
+            doc.processing_status = "FAILED"
+            doc.processing_error = f"Failed to stage upload for ingestion worker: {e}"
+            db.commit()
+            return
+
         try:
             trigger_ingestion_job(doc.id)
             logger.info("[UPLOAD] Cloud Run Job triggered for doc_id=%s", doc.id)
