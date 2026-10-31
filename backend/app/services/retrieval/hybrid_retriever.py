@@ -16,6 +16,12 @@ from backend.app.services.retrieval.vector_search import batch_cosine_similariti
 logger = logging.getLogger(__name__)
 
 TAXONOMY_FILE = Path(__file__).resolve().parent.parent / "tagging" / "taxonomy.json"
+# Search-query synonym expansions, externalized to its own editable file (QShala priority plan
+# P3-3): this used to be a dict hardcoded into this module with one customer's domain
+# (Australian quiz content) baked in, which silently polluted search for every other topic
+# domain. A missing/unreadable file now falls back to {} -- no synonym expansion at all -- rather
+# than silently reintroducing that single-customer bias as a code-level default.
+SYNONYM_EXPANSIONS_FILE = Path(__file__).resolve().parent / "synonym_expansions.json"
 
 class HybridRetriever:
     """
@@ -63,13 +69,22 @@ class HybridRetriever:
         return embedding
 
     def _load_synonym_expansions(self) -> Dict[str, List[str]]:
-        expansions = {
-            "indigenous": ["aboriginal", "first peoples", "early inhabitants", "dreamtime", "jukurrpa", "native"],
-            "australian history": ["first fleet", "captain cook", "edmund barton", "canberra", "federation", "eureka", "ned kelly", "convicts"],
-            "capital": ["canberra", "sydney", "melbourne", "city", "parliament"],
-            "space": ["solar system", "planet", "astronomy", "moon", "galaxy", "orbit", "nasa"],
-            "nature": ["wildlife", "animal", "flora", "fauna", "ecosystem", "species"]
-        }
+        expansions: Dict[str, List[str]] = {}
+        if SYNONYM_EXPANSIONS_FILE.exists():
+            try:
+                with open(SYNONYM_EXPANSIONS_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    expansions.update({
+                        k.lower(): v for k, v in data.items() if not k.startswith("_")
+                    })
+            except Exception:
+                logger.warning(
+                    "Failed to load %s; continuing with no synonym expansions",
+                    SYNONYM_EXPANSIONS_FILE,
+                )
+        # Separately, the taxonomy file's own categories (if it defines any) also expand
+        # queries -- this part isn't domain-specific, it's just reusing whatever taxonomy the
+        # deployment is already configured with.
         if TAXONOMY_FILE.exists():
             try:
                 with open(TAXONOMY_FILE, "r", encoding="utf-8") as f:

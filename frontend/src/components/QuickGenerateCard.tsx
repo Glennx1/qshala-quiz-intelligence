@@ -58,7 +58,7 @@ export default function QuickGenerateCard() {
   const router = useRouter();
 
   // Topic Predictive State
-  const [topic, setTopic] = useState('Australian History');
+  const [topic, setTopic] = useState('');
   const [subtopic, setSubtopic] = useState('');
   const [topicsList, setTopicsList] = useState<TopicItem[]>([]);
   const [filteredTopics, setFilteredTopics] = useState<TopicItem[]>([]);

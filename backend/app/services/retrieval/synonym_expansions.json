@@ -1,0 +1,8 @@
+{
+  "_comment": "Search-query synonym expansions, keyed by trigger phrase. When a search query contains the key (as a substring, or a token of the query is a substring of the key), every value is added to the search terms. Edit freely per customer/domain -- this file is just data, no code or redeploy needed. See hybrid_retriever.py's _load_synonym_expansions().",
+  "indigenous": ["aboriginal", "first peoples", "early inhabitants", "dreamtime", "jukurrpa", "native"],
+  "australian history": ["first fleet", "captain cook", "edmund barton", "canberra", "federation", "eureka", "ned kelly", "convicts"],
+  "capital": ["canberra", "sydney", "melbourne", "city", "parliament"],
+  "space": ["solar system", "planet", "astronomy", "moon", "galaxy", "orbit", "nasa"],
+  "nature": ["wildlife", "animal", "flora", "fauna", "ecosystem", "species"]
+}
