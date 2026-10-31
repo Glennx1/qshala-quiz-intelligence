@@ -31,6 +31,13 @@ class Document(Base):
     # worker (INGESTION_MODE=cloud_run_job) runs in a separate process/container that can't see
     # that in-memory set, so it polls this column instead -- see worker.py's cancel poller.
     cancel_requested = Column(Boolean, default=False)
+    # Periodic snapshot of the live in-process progress registry (progress.py), written by
+    # worker.py every few seconds under INGESTION_MODE=cloud_run_job so /status's DB fallback can
+    # show the same detail/activity-log/server-memory telemetry the upload page already renders
+    # for in-process ingestion -- that telemetry otherwise lives only in the worker container's
+    # own memory, same cross-process visibility gap as cancel_requested above. Unused (stays
+    # null) for in_process/upload_queue modes, which already have it live via the registry.
+    progress_detail = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

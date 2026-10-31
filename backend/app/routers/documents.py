@@ -427,14 +427,31 @@ def get_ingestion_status(document_id: str, db: Session = Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    # doc.progress_detail is the cross-process mirror worker.py writes every few seconds under
+    # INGESTION_MODE=cloud_run_job (see worker.py's _sync_progress_to_db) -- a periodic snapshot
+    # of the same live detail/activity-log/server-memory registry entry that pipeline.py writes
+    # continuously, which this process can only read directly when ingestion runs in its own
+    # memory (the INGESTION_STATUS_REGISTRY fast path above). Falls back to the coarse
+    # PROCESSING/COMPLETED/FAILED-only view when no snapshot has landed yet (e.g. right after the
+    # job was triggered, before its first sync tick).
+    pd = doc.progress_detail or {}
     return {
         "document_id": doc.id,
         "status": doc.processing_status,
-        "progress_percentage": 100 if doc.processing_status == "COMPLETED" else 0,
-        "current_step": "Completed" if doc.processing_status == "COMPLETED" else doc.processing_status,
+        "progress_percentage": pd.get(
+            "progress_percentage", 100 if doc.processing_status == "COMPLETED" else 0
+        ),
+        "current_step": pd.get("current_step") or (
+            "Completed" if doc.processing_status == "COMPLETED" else doc.processing_status
+        ),
         "slides_processed": doc.slide_count,
         "questions_extracted": doc.question_count,
-        "error": doc.processing_error
+        "error": doc.processing_error or pd.get("error"),
+        "detail": pd.get("detail"),
+        "events": pd.get("events"),
+        "memory_mb": pd.get("memory_mb"),
+        "peak_memory_mb": pd.get("peak_memory_mb"),
+        "memory_limit_mb": pd.get("memory_limit_mb"),
     }
 
 @router.delete("/{document_id}")
