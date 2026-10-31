@@ -37,11 +37,17 @@ def _schedule_ingestion(doc, db: Session, background_tasks: BackgroundTasks) -> 
     """
     if settings.INGESTION_MODE == "cloud_run_job":
         from backend.app.services.ingestion.job_trigger import trigger_ingestion_job, IngestionJobTriggerError
-        INGESTION_STATUS_REGISTRY[doc.id] = {
-            "document_id": doc.id, "status": "PROCESSING", "progress_percentage": 5,
-            "current_step": "Starting ingestion worker", "slides_processed": 0,
-            "questions_extracted": 0, "error": None,
-        }
+        # Deliberately does NOT write to INGESTION_STATUS_REGISTRY: that dict is this process's
+        # own memory, but the pipeline runs inside a separate worker container for this mode. An
+        # entry written here would never be updated again -- the worker can't see this process's
+        # memory any more than this process can see the worker's -- which would permanently mask
+        # the real status behind a frozen "just started" snapshot. (This was a real bug in the
+        # first version of this code path: every poll kept returning this stale entry instead of
+        # falling through to live data.) The /status endpoint's existing DB fallback
+        # (Document.processing_status/slide_count/question_count/processing_error, all written
+        # by the pipeline itself regardless of which process runs it) is what actually reflects
+        # progress here -- the same fallback that already covers "a document this process never
+        # saw ingestion start for," e.g. after a restart.
         try:
             trigger_ingestion_job(doc.id)
             logger.info("[UPLOAD] Cloud Run Job triggered for doc_id=%s", doc.id)
@@ -52,11 +58,6 @@ def _schedule_ingestion(doc, db: Session, background_tasks: BackgroundTasks) -> 
             doc.processing_status = "FAILED"
             doc.processing_error = str(e)
             db.commit()
-            INGESTION_STATUS_REGISTRY[doc.id] = {
-                "document_id": doc.id, "status": "FAILED", "progress_percentage": 0,
-                "current_step": "Failed to start", "slides_processed": 0,
-                "questions_extracted": 0, "error": str(e),
-            }
         return
     if settings.UPLOAD_QUEUE_ENABLED:
         from backend.app.services.ingestion import upload_queue
