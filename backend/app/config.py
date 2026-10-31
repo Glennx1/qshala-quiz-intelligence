@@ -223,6 +223,17 @@ class Settings(BaseSettings):
     # is never called, zero overhead/behavior change). Free tier is plenty for this project's volume.
     SENTRY_DSN: Optional[str] = None
 
+    # Where deck ingestion actually runs. "in_process" (default) is today's behavior -- the API
+    # process runs the pipeline itself via a FastAPI BackgroundTask, zero change from before this
+    # was added. "cloud_run_job" offloads it to a separate Cloud Run Job execution (worker.py),
+    # so a heavy deck can't starve the API's own request handling or exhaust its memory. Requires
+    # GCP_PROJECT_ID, GCP_REGION and INGESTION_JOB_NAME to also be set, and the API service's
+    # service account needs run.jobs.run on that job (see deployment docs).
+    INGESTION_MODE: str = "in_process"
+    GCP_PROJECT_ID: Optional[str] = None
+    GCP_REGION: Optional[str] = None
+    INGESTION_JOB_NAME: Optional[str] = None
+
     @field_validator("UPLOAD_QUEUE_ENABLED", mode="before")
     @classmethod
     def _parse_upload_queue_enabled(cls, v, info):
@@ -261,6 +272,16 @@ class Settings(BaseSettings):
         if v == "" or v is None:
             return "gemini-3.5-flash-lite"
         return str(v)
+
+    @field_validator("INGESTION_MODE", mode="before")
+    @classmethod
+    def parse_ingestion_mode(cls, v):
+        if v == "" or v is None:
+            return "in_process"
+        v = str(v).strip().lower()
+        if v not in ("in_process", "cloud_run_job"):
+            raise ValueError(f"INGESTION_MODE must be 'in_process' or 'cloud_run_job', got {v!r}")
+        return v
 
     @field_validator("QSHALA_TAGGER_MODEL", mode="before")
     @classmethod
@@ -323,7 +344,8 @@ class Settings(BaseSettings):
                      "AZURE_CLIENT_SECRET", "SHAREPOINT_SITE_ID", "SHAREPOINT_DRIVE_ID",
                      "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY",
                      "R2_BUCKET_NAME", "R2_PUBLIC_BASE_URL", "API_KEY_SECRET",
-                     "CORS_ORIGINS", "SENTRY_DSN",
+                     "CORS_ORIGINS", "SENTRY_DSN", "GCP_PROJECT_ID", "GCP_REGION",
+                     "INGESTION_JOB_NAME",
                      mode="before")
     @classmethod
     def parse_empty_keys(cls, v):

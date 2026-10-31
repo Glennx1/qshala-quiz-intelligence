@@ -26,10 +26,38 @@ logger = logging.getLogger(__name__)
 def _schedule_ingestion(doc, db: Session, background_tasks: BackgroundTasks) -> None:
     """Start ingestion for an uploaded deck.
 
-    With the upload queue on (default), enqueue a job and let the single serial worker process it
-    over time — several uploads then ingest one-at-a-time instead of all at once (which OOMs a small
-    host). With the queue off, fall back to the old immediate per-upload background task.
+    Three modes, in priority order:
+      1. INGESTION_MODE=cloud_run_job -- offload to a separate Cloud Run Job execution (worker.py)
+         so a heavy deck can't starve the API process's own request handling or memory. See
+         job_trigger.py. Opt-in; default is unchanged (in_process below).
+      2. UPLOAD_QUEUE_ENABLED (default on) -- enqueue a job and let the single serial worker
+         process it over time — several uploads then ingest one-at-a-time instead of all at once
+         (which OOMs a small host).
+      3. Neither -- the old immediate per-upload background task, in-process.
     """
+    if settings.INGESTION_MODE == "cloud_run_job":
+        from backend.app.services.ingestion.job_trigger import trigger_ingestion_job, IngestionJobTriggerError
+        INGESTION_STATUS_REGISTRY[doc.id] = {
+            "document_id": doc.id, "status": "PROCESSING", "progress_percentage": 5,
+            "current_step": "Starting ingestion worker", "slides_processed": 0,
+            "questions_extracted": 0, "error": None,
+        }
+        try:
+            trigger_ingestion_job(doc.id)
+            logger.info("[UPLOAD] Cloud Run Job triggered for doc_id=%s", doc.id)
+        except IngestionJobTriggerError as e:
+            # Fail loudly and visibly rather than leaving the deck stuck at PENDING with no
+            # indication why -- same philosophy as the rest of this priority plan's fixes.
+            logger.error("[UPLOAD] failed to start ingestion job for doc_id=%s: %s", doc.id, e)
+            doc.processing_status = "FAILED"
+            doc.processing_error = str(e)
+            db.commit()
+            INGESTION_STATUS_REGISTRY[doc.id] = {
+                "document_id": doc.id, "status": "FAILED", "progress_percentage": 0,
+                "current_step": "Failed to start", "slides_processed": 0,
+                "questions_extracted": 0, "error": str(e),
+            }
+        return
     if settings.UPLOAD_QUEUE_ENABLED:
         from backend.app.services.ingestion import upload_queue
         job = upload_queue.enqueue_upload(db, document_id=doc.id, filename=doc.filename)
@@ -321,6 +349,11 @@ def cancel_ingestion(document_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="Ingestion already completed; delete the document instead.")
 
     request_doc_cancel(document_id)
+    # Also set the DB flag: if ingestion is running in a separate worker process (Cloud Run Job
+    # mode), the in-memory CANCELLED_DOCS set above is invisible to it -- the worker's cancel
+    # poller picks this up instead. Harmless no-op for the in-process path.
+    doc.cancel_requested = True
+    db.commit()
     reg = INGESTION_STATUS_REGISTRY.get(document_id)
     if reg and reg.get("status") == "PROCESSING":
         reg["current_step"] = "Cancelling..."

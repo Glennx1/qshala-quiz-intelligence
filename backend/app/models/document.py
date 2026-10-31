@@ -26,6 +26,11 @@ class Document(Base):
     question_count = Column(Integer, default=0)
     processing_status = Column(String(50), default="PENDING")  # PENDING, PROCESSING, COMPLETED, FAILED
     processing_error = Column(Text, nullable=True)
+    # Cross-process cancellation flag. In-process ingestion (default) uses the in-memory
+    # CANCELLED_DOCS set in cancellation.py and never touches this column. The Cloud Run Job
+    # worker (INGESTION_MODE=cloud_run_job) runs in a separate process/container that can't see
+    # that in-memory set, so it polls this column instead -- see worker.py's cancel poller.
+    cancel_requested = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

@@ -294,7 +294,8 @@ def ensure_schema_columns():
                 new_doc_cols = [
                     ("blob_url", "TEXT"),
                     ("source", "VARCHAR(50) DEFAULT 'MANUAL'"),
-                    ("sharepoint_file_id", "VARCHAR(255)")
+                    ("sharepoint_file_id", "VARCHAR(255)"),
+                    ("cancel_requested", "BOOLEAN DEFAULT FALSE"),
                 ]
                 for col_name, col_type in new_doc_cols:
                     try:
