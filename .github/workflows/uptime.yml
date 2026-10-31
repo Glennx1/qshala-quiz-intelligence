@@ -1,0 +1,42 @@
+name: Uptime Check
+
+# Pings the deployed backend's /health every 15 minutes and fails the run if it's down.
+# /health (see backend/app/main.py) already does the real work -- pings the DB, checks the
+# Gemini key, checks R2 creds -- and returns HTTP 503 (not 200) on any failure, so a non-200
+# here means something is actually wrong, not just a flaky network blip on our end.
+#
+# One-time setup (can't be done from a commit): add a repository secret named
+# BACKEND_HEALTH_URL pointing at the deployed backend's health endpoint, e.g.
+# https://qshala-quiz-intelligence-xxxxxxxxxx-de.a.run.app/health
+# (Settings -> Secrets and variables -> Actions -> New repository secret). Until that secret
+# exists, every run fails immediately with a clear message instead of silently doing nothing.
+#
+# Alerting: GitHub emails the account that last pushed this workflow file when a *scheduled*
+# run fails (this is a GitHub default, not something configured here) -- that's the actual
+# "something alerts you" half of this. No external uptime service to sign up for.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping-health:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping backend /health
+        env:
+          BACKEND_HEALTH_URL: ${{ secrets.BACKEND_HEALTH_URL }}
+        run: |
+          set -e
+          if [ -z "$BACKEND_HEALTH_URL" ]; then
+            echo "::error::BACKEND_HEALTH_URL repository secret is not set. Add it under Settings -> Secrets and variables -> Actions, pointing at the deployed backend's /health URL."
+            exit 1
+          fi
+          STATUS=$(curl -s -o /tmp/health.json -w '%{http_code}' --max-time 15 "$BACKEND_HEALTH_URL" || echo "000")
+          echo "HTTP $STATUS"
+          cat /tmp/health.json 2>/dev/null || true
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Health check failed with HTTP $STATUS -- see response body above."
+            exit 1
+          fi

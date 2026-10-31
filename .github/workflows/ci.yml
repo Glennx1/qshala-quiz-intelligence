@@ -1,8 +1,16 @@
 name: CI
 
+# Runs on every push, main included. Cloud Build's auto-deploy trigger fires on push to main
+# with no dependency on this workflow at all -- a push straight to main (today's actual
+# workflow here, no PRs in the loop) used to skip CI entirely (branches-ignore: [main] below),
+# so tests never ran on the exact commits that got deployed to production. This doesn't make
+# Cloud Build *wait* for CI (that would need moving the deploy into this workflow, or a Cloud
+# Build trigger condition pointed at this run's status -- a bigger change, left for later if
+# worth it) -- it just means a broken push to main now actually shows red instead of silently
+# shipping untested.
 on:
   push:
-    branches-ignore: [main]
+    branches: ['**']
   pull_request:
     branches: [main]
 
