@@ -41,6 +41,22 @@ from backend.app.models.question_meta import (  # noqa: F401
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+# Error tracking (QShala priority plan P2-1). Optional and off by default -- sentry_sdk.init is
+# only called when SENTRY_DSN is set, so this is a no-op until that env var is added.
+if settings.SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        sentry_sdk.init(
+            dsn=settings.SENTRY_DSN,
+            integrations=[FastApiIntegration()],
+            traces_sample_rate=0.1,
+            send_default_pii=False,
+        )
+        logger.info("Sentry error tracking enabled")
+    except Exception as e:
+        logger.warning(f"Sentry init failed (continuing without it): {e}")
+
 # Initialize DB tables
 try:
     Base.metadata.create_all(bind=engine)

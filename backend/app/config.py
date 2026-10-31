@@ -219,6 +219,10 @@ class Settings(BaseSettings):
     # let any website relay authenticated requests once a key is in use.
     CORS_ORIGINS: Optional[str] = None
 
+    # Sentry DSN for backend error tracking. Optional and off by default (unset = sentry_sdk.init
+    # is never called, zero overhead/behavior change). Free tier is plenty for this project's volume.
+    SENTRY_DSN: Optional[str] = None
+
     @field_validator("UPLOAD_QUEUE_ENABLED", mode="before")
     @classmethod
     def _parse_upload_queue_enabled(cls, v, info):
@@ -319,7 +323,7 @@ class Settings(BaseSettings):
                      "AZURE_CLIENT_SECRET", "SHAREPOINT_SITE_ID", "SHAREPOINT_DRIVE_ID",
                      "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY",
                      "R2_BUCKET_NAME", "R2_PUBLIC_BASE_URL", "API_KEY_SECRET",
-                     "CORS_ORIGINS",
+                     "CORS_ORIGINS", "SENTRY_DSN",
                      mode="before")
     @classmethod
     def parse_empty_keys(cls, v):
