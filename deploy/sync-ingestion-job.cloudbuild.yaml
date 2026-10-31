@@ -1,0 +1,47 @@
+# Keeps the qshala-ingestion-worker Cloud Run Job's image in sync with the
+# qshala-quiz-intelligence Service's image after every deploy.
+#
+# Why this exists: the existing Cloud Build trigger (GCP Console's "Continuously deploy from
+# source repository") only redeploys the Service. Cloud Run Jobs have no equivalent auto-deploy,
+# so the Job silently kept running whatever image it was last pointed at by hand -- it fell one
+# commit behind the Service after the very first fix that needed this wiring, and every upload
+# failed with a stale-code bug until someone noticed and ran `gcloud run jobs update` manually.
+#
+# Wired as a SEPARATE trigger (same repo, same branch, same push event) rather than editing the
+# existing auto-deploy trigger, so this can't break that already-working pipeline. It polls the
+# Service's live image until it reflects THIS commit, then copies that exact image onto the Job
+# -- rather than reconstructing the Artifact Registry path/tag itself -- so it can't race ahead
+# of or fall behind the other trigger's build, whichever finishes first.
+
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: sync-ingestion-job
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        SERVICE="qshala-quiz-intelligence"
+        JOB="qshala-ingestion-worker"
+        REGION="asia-south1"
+
+        echo "Waiting for $$SERVICE to redeploy with commit $COMMIT_SHA ..."
+        for i in $(seq 1 60); do
+          IMAGE=$$(gcloud run services describe "$$SERVICE" --region="$$REGION" \
+            --format='value(spec.template.spec.containers[0].image)')
+          if [[ "$$IMAGE" == *"$COMMIT_SHA"* ]]; then
+            echo "Service is live on $$IMAGE"
+            echo "Pointing $$JOB at the same image..."
+            gcloud run jobs update "$$JOB" --region="$$REGION" --image="$$IMAGE"
+            echo "Done. Verifying:"
+            gcloud run jobs describe "$$JOB" --region="$$REGION" \
+              --format='value(spec.template.spec.template.spec.containers[0].image)'
+            exit 0
+          fi
+          echo "  not yet (attempt $$i/60, current service image: $$IMAGE) -- waiting 10s"
+          sleep 10
+        done
+        echo "Timed out after 10 minutes waiting for $$SERVICE to redeploy with commit $COMMIT_SHA" >&2
+        exit 1
+
+timeout: 1200s
