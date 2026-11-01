@@ -57,6 +57,7 @@ class Brief:
     cross_topic_padding: bool = False
     topics_l1: List[str] = field(default_factory=list)
     subtopics_l2: List[str] = field(default_factory=list)
+    search_terms: List[str] = field(default_factory=list)
 
     def public(self) -> Dict[str, Any]:
         return asdict(self)
@@ -120,6 +121,10 @@ def _brief_from_gemini(prompt: str, gem: Dict[str, Any], count: Optional[int],
     framing = (gem.get("framing") or "").strip() or (previous_brief or {}).get("framing") or None
     fmt = gem.get("format_filter") or (previous_brief or {}).get("format_filter")
 
+    raw_terms = gem.get("search_terms") or (previous_brief or {}).get("search_terms") or []
+    search_terms = [str(t).strip() for t in raw_terms
+                    if isinstance(t, str) and t.strip() and len(t.strip()) < 60][:8]
+
     locality = gem.get("locality") or (previous_brief or {}).get("locality")
     venue_type = gem.get("venue_type") or (previous_brief or {}).get("venue_type")
     tone = list(gem.get("tone") or (previous_brief or {}).get("tone") or [])
@@ -140,6 +145,7 @@ def _brief_from_gemini(prompt: str, gem: Dict[str, Any], count: Optional[int],
         cross_topic_padding=cross_topic_padding,
         topics_l1=topics_l1,
         subtopics_l2=subtopics_l2,
+        search_terms=search_terms,
     )
 
 
@@ -213,6 +219,7 @@ def _brief_from_regex(prompt: str, count: Optional[int],
     subtopics_l2 = list((previous_brief or {}).get("subtopics_l2") or [])
 
     framing = (previous_brief or {}).get("framing")
+    search_terms = list((previous_brief or {}).get("search_terms") or [])
 
     return Brief(
         prompt=prompt,
@@ -229,6 +236,7 @@ def _brief_from_regex(prompt: str, count: Optional[int],
         cross_topic_padding=cross_topic_padding,
         topics_l1=topics_l1,
         subtopics_l2=subtopics_l2,
+        search_terms=search_terms,
     )
 
 
@@ -349,7 +357,11 @@ def librarian(bank: List[Dict[str, Any]], brief: Brief, pool: int = 80) -> List[
     if brief.format_filter:
         bank = [q for q in bank if q.get("question_format") == brief.format_filter]
     idx = Index(bank)
-    hits = idx.search(brief.query, brief.filters, top_k=pool)
+    # Gemini search_terms broaden retrieval without changing the Brief the user sees
+    search_query = brief.query
+    if brief.search_terms:
+        search_query = brief.query + " " + " ".join(brief.search_terms)
+    hits = idx.search(search_query, brief.filters, top_k=pool)
     if len(hits) < brief.count:  # query too narrow: relax hard filters other than safety
         relaxed = {k: v for k, v in brief.filters.items() if k in ("school_safe", "no_images")}
         seen = {h["id"] for h in hits}
@@ -445,7 +457,10 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
 
     # 3. Librarian: search broadly with filters=None, top_k=300
     idx = Index(bank)
-    hits = idx.search(brief.query, filters=None, top_k=300)
+    search_query = brief.query
+    if brief.search_terms:
+        search_query = brief.query + " " + " ".join(brief.search_terms)
+    hits = idx.search(search_query, filters=None, top_k=300)
     if len(hits) < 300:
         seen = {h["id"] for h in hits}
         broad = idx.search("", filters=None, top_k=300)
@@ -525,7 +540,10 @@ def swap_one(db: Session, prompt: str, question_id: str, keep_ids: List[str],
     if target and target.get("subtopic_l2"):  # prefer a neighbour of the swapped question
         brief.query = f"{brief.query} {target['subtopic_l2']}"
     idx = Index(bank)
-    hits = idx.search(brief.query, filters=None, top_k=300)
+    search_query = brief.query
+    if brief.search_terms:
+        search_query = brief.query + " " + " ".join(brief.search_terms)
+    hits = idx.search(search_query, filters=None, top_k=300)
     seen = {h["id"] for h in hits}
     broad = idx.search("", filters=None, top_k=300)
     hits += [h for h in broad if h["id"] not in seen]

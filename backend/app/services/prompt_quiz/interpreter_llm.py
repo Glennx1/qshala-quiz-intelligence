@@ -57,6 +57,15 @@ BRIEF_SCHEMA: Dict[str, Any] = {
         "tone": {"type": "ARRAY", "items": {"type": "STRING"}},
         "school_safe": {"type": "BOOLEAN", "nullable": True},
         "cross_topic_padding": {"type": "BOOLEAN", "nullable": True},
+        "search_terms": {
+            "type": "ARRAY",
+            "items": {"type": "STRING"},
+            "description": "5-8 related search keywords/phrases a BM25 engine "
+                           "should use to find questions on this topic. Include "
+                           "synonyms, abbreviations, proper nouns, league/event "
+                           "names. Do NOT include generic words like 'question' "
+                           "or 'quiz'."
+        },
     },
     "required": ["count", "query", "topics_l1", "framing"],
 }
@@ -79,6 +88,11 @@ _SYSTEM = (
     "like 'give me', 'questions', 'round', counts, and difficulty/audience words.\n"
     f"- topics_l1: zero or more themes drawn ONLY from this list: {', '.join(V6_THEMES)}. Must be copied from this list, never invented.\n"
     + _L2_RULE +
+    "- search_terms: 5-8 extra search keywords a text-match engine should "
+    "use to find questions on this topic. Think synonyms, abbreviations, "
+    "proper nouns (league names, event names, famous people). "
+    "Example: query='cricket IPL' -> search_terms=['Indian Premier League', "
+    "'T20', 'franchise cricket', 'BCCI', 'Mumbai Indians', 'CSK'].\n"
     "- hard_bias / audience: null unless the prompt clearly implies one.\n"
     "- school, kids, class 8, assembly -> audience=school, school_safe=true, evergreen=true, hard_bias=easy.\n"
     "- college, fest, hostel -> audience=college, hard_bias=medium.\n"
@@ -104,7 +118,7 @@ def _build_prompt(prompt: str, previous_brief: Optional[Dict[str, Any]]) -> str:
                 ("count", "query", "topics_l1", "subtopics_l2", "hard_bias",
                  "audience", "india_focused", "evergreen", "no_images",
                  "locality", "venue_type", "tone", "school_safe",
-                 "cross_topic_padding", "format_filter")
+                 "cross_topic_padding", "format_filter", "search_terms")
                 if previous_brief.get(k) not in (None, [], "")}
         parts.append("PREVIOUS BRIEF:\n" + json.dumps(slim, ensure_ascii=False))
         parts.append("FOLLOW-UP REQUEST:\n" + (prompt or ""))
