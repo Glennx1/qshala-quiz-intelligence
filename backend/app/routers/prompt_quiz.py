@@ -27,6 +27,7 @@ class DraftReq(BaseModel):
     # Refinement: pass the `brief` from a prior /draft response alongside a follow-up prompt
     # ("make it harder", "swap cricket for tech", "give me 5 more") to refine instead of restart.
     previous_brief: Optional[Dict[str, Any]] = None
+    keep_ids: List[str] = []
 
 
 class SwapReq(BaseModel):
@@ -40,6 +41,7 @@ class SaveReq(BaseModel):
     title: Optional[str] = None
     prompt: str
     question_ids: List[str] = Field(..., min_length=1, max_length=50)
+    brief: Optional[Dict[str, Any]] = None
 
 
 @router.get("/starters")
@@ -49,7 +51,23 @@ def starters():
 
 @router.post("/draft")
 def draft(req: DraftReq, db: Session = Depends(get_db)):
-    return engine.build_draft(db, req.prompt, req.count, req.options, req.previous_brief)
+    res = engine.build_draft(
+        db, req.prompt, req.count, req.options, req.previous_brief,
+        exclude_ids=set(req.keep_ids) if req.keep_ids else None
+    )
+    if req.keep_ids:
+        bank = engine._load_bank(db)
+        bank_by_id = {b["id"]: engine._view(b) for b in bank}
+        kept = [bank_by_id[qid] for qid in req.keep_ids if qid in bank_by_id]
+        kept_ids = {q["id"] for q in kept}
+        remaining = [q for q in res["questions"] if q["id"] not in kept_ids]
+        target_count = res["brief"]["count"]
+        combined = (kept + remaining)[:target_count]
+        res["questions"] = combined
+        if "fulfillment" in res:
+            res["fulfillment"]["delivered"] = len(combined)
+            res["fulfillment"]["short"] = len(combined) < target_count
+    return res
 
 
 @router.post("/swap")

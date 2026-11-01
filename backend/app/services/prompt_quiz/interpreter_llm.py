@@ -15,13 +15,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# Keep the timeout tight: the Interpreter is on the request's critical path and we
-# fall back to regex instantly if Gemini is slow.
-INTERPRETER_TIMEOUT_S = 5.0
+# Keep the timeout configurable; defaults to 8.0s per Prompt Engine v2.1 spec.
+INTERPRETER_TIMEOUT_S = float(os.getenv("INTERPRETER_TIMEOUT_S", "8.0"))
 
 # v6 L1 themes, surfaced to the model so topics_l1 comes back in our vocabulary.
 V6_THEMES = [
@@ -46,6 +46,11 @@ BRIEF_SCHEMA: Dict[str, Any] = {
         "no_images": {"type": "BOOLEAN", "nullable": True},
         "format_filter": {"type": "STRING", "enum": ["CONNECT_4", "STEPPED_CLUE", "ARRANGE_ORDER", "STANDARD_QA"], "nullable": True},
         "framing": {"type": "STRING"},
+        "locality": {"type": "STRING", "nullable": True},
+        "venue_type": {"type": "STRING", "nullable": True},
+        "tone": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "school_safe": {"type": "BOOLEAN", "nullable": True},
+        "cross_topic_padding": {"type": "BOOLEAN", "nullable": True},
     },
     "required": ["count", "query", "topics_l1", "framing"],
 }
@@ -60,11 +65,17 @@ _SYSTEM = (
     "- format_filter: 'CONNECT_4' if the user asks for connect 4 / common link questions, 'STEPPED_CLUE' if stepped clues / portfolio builder, 'ARRANGE_ORDER' if arrange / chronological order; otherwise null.\n"
     "- query: a short, clean semantic topic phrase for keyword search — strip filler "
     "like 'give me', 'questions', 'round', counts, and difficulty/audience words.\n"
-    f"- topics_l1: zero or more themes drawn ONLY from this list: {', '.join(V6_THEMES)}.\n"
+    f"- topics_l1: zero or more themes drawn ONLY from this list: {', '.join(V6_THEMES)}. Must be copied from this list, never invented.\n"
     "- subtopics_l2: candidate finer subtopics in plain words (free text is fine).\n"
     "- hard_bias / audience: null unless the prompt clearly implies one.\n"
+    "- school, kids, class 8, assembly -> audience=school, school_safe=true, evergreen=true, hard_bias=easy.\n"
+    "- college, fest, hostel -> audience=college, hard_bias=medium.\n"
+    "- corporate, offsite -> audience=corporate, hard_bias=medium.\n"
+    "- a city or state -> locality set to it (the exact name, e.g. 'Bengaluru'); india_focused=true when clearly Indian.\n"
+    "- cross_topic_padding=true only for phrases like 'or related', 'whatever you have', 'fill the rest'.\n"
     "- india_focused / evergreen / no_images: true/false only if clearly implied, else null.\n"
-    "- framing: one witty, high-taste sentence describing the round to the host.\n"
+    "- framing: one witty, high-taste sentence describing the round to the host (the one-sentence read-back shown to the quizmaster).\n"
+    "Never override anything explicit in the sentence.\n"
     "When a PREVIOUS BRIEF is given, apply the follow-up as an edit to it (e.g. 'make it "
     "harder' changes only hard_bias; 'give me 5 more' raises count; 'swap cricket for tech' "
     "changes query/topics) and return the full updated brief."
@@ -76,7 +87,9 @@ def _build_prompt(prompt: str, previous_brief: Optional[Dict[str, Any]]) -> str:
     if previous_brief:
         slim = {k: previous_brief.get(k) for k in
                 ("count", "query", "topics_l1", "subtopics_l2", "hard_bias",
-                 "audience", "india_focused", "evergreen", "no_images")
+                 "audience", "india_focused", "evergreen", "no_images",
+                 "locality", "venue_type", "tone", "school_safe",
+                 "cross_topic_padding", "format_filter")
                 if previous_brief.get(k) not in (None, [], "")}
         parts.append("PREVIOUS BRIEF:\n" + json.dumps(slim, ensure_ascii=False))
         parts.append("FOLLOW-UP REQUEST:\n" + (prompt or ""))
@@ -151,5 +164,5 @@ def interpret_with_gemini(
         parsed = json.loads(clean.strip())
         return parsed if isinstance(parsed, dict) else None
     except Exception as e:
-        logger.info("Gemini interpreter unavailable, falling back to regex parse_prompt: %s", e)
+        logger.info("Gemini interpreter unavailable, falling back to regex parse_prompt: %s", type(e).__name__)
         return None

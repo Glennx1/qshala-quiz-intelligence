@@ -17,7 +17,49 @@ type DraftQ = {
   answer_images?: string[];
   image_refs?: string[];
 };
-type Draft = { message: string; questions: DraftQ[]; bank_size: number; brief: { count: number } };
+
+type FulfillmentSuggestion = {
+  action: 'add_adjacent' | 'relax';
+  count: number;
+  flag?: string;
+};
+
+type Fulfillment = {
+  requested: number;
+  delivered: number;
+  short: boolean;
+  padded: number;
+  off_difficulty: number;
+  suggestions: FulfillmentSuggestion[];
+  note: string;
+};
+
+type BriefData = {
+  prompt: string;
+  query: string;
+  count: number;
+  filters: Record<string, unknown>;
+  ramp?: boolean;
+  hard_bias?: string | null;
+  framing?: string | null;
+  source?: string;
+  format_filter?: string | null;
+  locality?: string | null;
+  venue_type?: string | null;
+  tone?: string[];
+  cross_topic_padding?: boolean;
+  topics_l1?: string[];
+  subtopics_l2?: string[];
+};
+
+type Draft = {
+  message: string;
+  questions: DraftQ[];
+  bank_size: number;
+  brief: BriefData;
+  fulfillment?: Fulfillment;
+  stages?: string[];
+};
 
 const GREETINGS = [
   'Who are we stumping today?',
@@ -67,9 +109,22 @@ export default function QuizzerHome() {
   const [error, setError] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [qs, setQs] = useState<DraftQ[]>([]);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
   const [locked, setLocked] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [lastPrompt, setLastPrompt] = useState('');
+
+  // Brief chips state
+  const [editCount, setEditCount] = useState<number>(10);
+  const [editDifficulty, setEditDifficulty] = useState<string>('balanced');
+  const [editAudience, setEditAudience] = useState<string>('general');
+  const [editLocality, setEditLocality] = useState<string>('');
+  const [editFormat, setEditFormat] = useState<string>('');
+  const [isEditingChips, setIsEditingChips] = useState<boolean>(false);
+
+  // Refine box state
+  const [refineText, setRefineText] = useState('');
+
   const area = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -90,30 +145,78 @@ export default function QuizzerHome() {
     if (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 220) + 'px'; }
   }, [prompt]);
 
-  async function run(text = prompt) {
+  function syncChipsFromBrief(b: BriefData) {
+    setEditCount(b.count || 10);
+    setEditDifficulty(b.hard_bias || 'balanced');
+    setEditAudience((b.filters?.audience as string) || 'general');
+    setEditLocality(b.locality || '');
+    setEditFormat(b.format_filter || '');
+    setIsEditingChips(false);
+  }
+
+  async function run(text = prompt, extraPayload?: { previous_brief?: unknown; keep_ids?: string[] }) {
     const p = text.trim();
     if (p.length < 2 || loading) return;
-    setError(''); setStage(0); setLoading(true); setDraft(null);
+    setError(''); setStage(0); setLoading(true);
     try {
-      const d = await api<Draft>('/prompt-quiz/draft', { prompt: p });
-      setDraft(d); setQs(d.questions); setLocked(new Set()); setLastPrompt(p);
-    } catch (e) { setError(e instanceof Error ? e.message : 'Something went wrong'); }
-    finally { setLoading(false); }
+      const payload: Record<string, unknown> = { prompt: p, ...extraPayload };
+      const d = await api<Draft>('/prompt-quiz/draft', payload);
+      setDraft(d);
+      setQs(d.questions);
+      setChecked(new Set(d.questions.map((q) => q.id)));
+      setLocked(new Set());
+      setLastPrompt(p);
+      syncChipsFromBrief(d.brief);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Something went wrong');
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function swap(id: string) {
     try {
-      const nq = await api<DraftQ>('/prompt-quiz/swap', { prompt: lastPrompt, question_id: id, keep_ids: qs.map((q) => q.id) });
+      const nq = await api<DraftQ>('/prompt-quiz/swap', {
+        prompt: lastPrompt,
+        question_id: id,
+        keep_ids: qs.map((q) => q.id),
+      });
       setQs((cur) => cur.map((q) => (q.id === id ? nq : q)));
-    } catch { setError('No other matching question found for that slot.'); }
+      setChecked((cur) => {
+        const next = new Set(cur);
+        next.delete(id);
+        next.add(nq.id);
+        return next;
+      });
+    } catch {
+      setError('No other matching question found for that slot.');
+    }
+  }
+
+  function removeQuestion(id: string) {
+    setQs((c) => c.filter((x) => x.id !== id));
+    setChecked((cur) => {
+      const next = new Set(cur);
+      next.delete(id);
+      return next;
+    });
   }
 
   async function save() {
+    const selectedIds = qs.filter((q) => checked.has(q.id)).map((q) => q.id);
+    if (selectedIds.length === 0) return;
     setSaving(true);
     try {
-      const r = await api<{ quiz_id: string }>('/prompt-quiz/save', { prompt: lastPrompt, question_ids: qs.map((q) => q.id) });
+      const r = await api<{ quiz_id: string }>('/prompt-quiz/save', {
+        prompt: lastPrompt,
+        question_ids: selectedIds,
+        brief: draft?.brief,
+      });
       router.push(`/quizzes/${r.quiz_id}`);
-    } catch (e) { setError(e instanceof Error ? e.message : 'Save failed'); setSaving(false); }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed');
+      setSaving(false);
+    }
   }
 
   const toggle = (set: Set<string>, id: string, fn: (s: Set<string>) => void) => {
@@ -121,6 +224,67 @@ export default function QuizzerHome() {
     if (n.has(id)) n.delete(id); else n.add(id);
     fn(n);
   };
+
+  async function handleRefine() {
+    if (!refineText.trim() || loading || !draft) return;
+    const p = refineText.trim();
+    const keptIds = qs.filter((q) => checked.has(q.id)).map((q) => q.id);
+    setError(''); setLoading(true); setStage(0);
+    try {
+      const d = await api<Draft>('/prompt-quiz/draft', {
+        prompt: p,
+        previous_brief: draft.brief,
+        keep_ids: keptIds,
+      });
+      setDraft(d);
+      setQs(d.questions);
+      setChecked(new Set(d.questions.map((q) => q.id)));
+      setRefineText('');
+      setLastPrompt(p);
+      syncChipsFromBrief(d.brief);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Refinement failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRedoChips() {
+    if (!draft || loading) return;
+    const updatedBrief: Record<string, unknown> = {
+      ...draft.brief,
+      count: editCount,
+      hard_bias: editDifficulty === 'balanced' ? null : editDifficulty,
+      filters: {
+        ...(draft.brief.filters || {}),
+        audience: editAudience === 'general' ? null : editAudience,
+      },
+      locality: editLocality.trim() || null,
+      format_filter: editFormat || null,
+    };
+    await run(lastPrompt, { previous_brief: updatedBrief });
+  }
+
+  async function handleSuggestion(s: FulfillmentSuggestion) {
+    if (!draft || loading) return;
+    if (s.action === 'add_adjacent') {
+      const nextBrief = { ...draft.brief, cross_topic_padding: true };
+      await run(lastPrompt, { previous_brief: nextBrief });
+    } else if (s.action === 'relax') {
+      if (s.flag === 'format') {
+        const nextBrief = { ...draft.brief, format_filter: null };
+        await run(lastPrompt, { previous_brief: nextBrief });
+      } else if (s.flag === 'no_images') {
+        const nextFilters = { ...(draft.brief.filters || {}), no_images: false, exclude_image: false };
+        const nextBrief = { ...draft.brief, filters: nextFilters };
+        await run(lastPrompt, { previous_brief: nextBrief });
+      } else if (s.flag === 'evergreen') {
+        const nextFilters = { ...(draft.brief.filters || {}), evergreen: false, evergreen_only: false };
+        const nextBrief = { ...draft.brief, filters: nextFilters };
+        await run(lastPrompt, { previous_brief: nextBrief });
+      }
+    }
+  }
 
   return (
     <div className="min-h-[calc(100vh-4rem)] px-5 pb-24">
@@ -166,15 +330,204 @@ export default function QuizzerHome() {
           </div>
         )}
         {error && <p className="mt-6 text-center text-[14px] text-red-600" role="alert">{error}</p>}
+
+        {/* Brief chips + Framing sentence */}
+        {draft && (
+          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            {draft.brief.framing && (
+              <p className="text-center text-[14px] font-medium text-slate-700">
+                “{draft.brief.framing}”
+              </p>
+            )}
+            
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[12px]">
+              {!isEditingChips ? (
+                <>
+                  <span className="rounded-full bg-white px-3 py-1 font-medium text-slate-700 border border-slate-200">
+                    {draft.brief.count} questions
+                  </span>
+                  <span className="rounded-full bg-white px-3 py-1 font-medium text-slate-700 border border-slate-200">
+                    Difficulty: {draft.brief.hard_bias || 'Balanced'}
+                  </span>
+                  <span className="rounded-full bg-white px-3 py-1 font-medium text-slate-700 border border-slate-200">
+                    Audience: {((draft.brief.filters?.audience as string) || 'General')}
+                  </span>
+                  {draft.brief.locality && (
+                    <span className="rounded-full bg-white px-3 py-1 font-medium text-slate-700 border border-slate-200">
+                      City: {draft.brief.locality}
+                    </span>
+                  )}
+                  {draft.brief.format_filter && (
+                    <span className="rounded-full bg-white px-3 py-1 font-medium text-slate-700 border border-slate-200">
+                      Format: {draft.brief.format_filter}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => setIsEditingChips(true)}
+                    className="ml-1 text-[12px] text-slate-500 hover:text-slate-900 underline underline-offset-2"
+                  >
+                    Edit
+                  </button>
+                </>
+              ) : (
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <label className="flex items-center gap-1 text-slate-600">
+                    Count:
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={editCount}
+                      onChange={(e) => setEditCount(Math.max(1, Math.min(50, Number(e.target.value) || 10)))}
+                      className="w-14 rounded border border-slate-300 bg-white px-2 py-0.5 text-[12px] text-slate-900"
+                    />
+                  </label>
+                  <label className="flex items-center gap-1 text-slate-600">
+                    Difficulty:
+                    <select
+                      value={editDifficulty}
+                      onChange={(e) => setEditDifficulty(e.target.value)}
+                      className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[12px] text-slate-900"
+                    >
+                      <option value="balanced">Balanced</option>
+                      <option value="easy">Easy</option>
+                      <option value="medium">Medium</option>
+                      <option value="hard">Hard</option>
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-1 text-slate-600">
+                    Audience:
+                    <select
+                      value={editAudience}
+                      onChange={(e) => setEditAudience(e.target.value)}
+                      className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[12px] text-slate-900"
+                    >
+                      <option value="general">General</option>
+                      <option value="school">School</option>
+                      <option value="college">College</option>
+                      <option value="corporate">Corporate</option>
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-1 text-slate-600">
+                    City:
+                    <input
+                      type="text"
+                      placeholder="e.g. Bengaluru"
+                      value={editLocality}
+                      onChange={(e) => setEditLocality(e.target.value)}
+                      className="w-24 rounded border border-slate-300 bg-white px-2 py-0.5 text-[12px] text-slate-900"
+                    />
+                  </label>
+                  <label className="flex items-center gap-1 text-slate-600">
+                    Format:
+                    <select
+                      value={editFormat}
+                      onChange={(e) => setEditFormat(e.target.value)}
+                      className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[12px] text-slate-900"
+                    >
+                      <option value="">Any</option>
+                      <option value="CONNECT_4">Connect 4</option>
+                      <option value="STEPPED_CLUE">Stepped Clue</option>
+                      <option value="ARRANGE_ORDER">Arrange Order</option>
+                      <option value="STANDARD_QA">Standard QA</option>
+                    </select>
+                  </label>
+                  <button
+                    onClick={handleRedoChips}
+                    disabled={loading}
+                    className="rounded-full bg-slate-900 px-3 py-1 text-[12px] font-medium text-white transition hover:bg-slate-700 disabled:opacity-40"
+                  >
+                    Redo
+                  </button>
+                  <button
+                    onClick={() => setIsEditingChips(false)}
+                    className="text-[12px] text-slate-500 hover:text-slate-900"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {draft && (
         <section className="mx-auto mt-10 max-w-2xl">
+          {/* Fulfillment Banner */}
+          {draft.fulfillment?.short && (
+            <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-[14px] text-slate-700">{draft.fulfillment.note}</p>
+              {draft.fulfillment.suggestions && draft.fulfillment.suggestions.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {draft.fulfillment.suggestions
+                    .filter((s) => s.flag !== 'school_safe')
+                    .map((s, idx) => {
+                      let label = '';
+                      if (s.action === 'add_adjacent') {
+                        label = `Add adjacent questions (+${s.count})`;
+                      } else if (s.flag === 'format') {
+                        label = `Allow any format (+${s.count})`;
+                      } else if (s.flag === 'no_images') {
+                        label = `Allow images (+${s.count})`;
+                      } else if (s.flag === 'evergreen') {
+                        label = `Allow time-sensitive (+${s.count})`;
+                      } else {
+                        label = `Relax ${s.flag} (+${s.count})`;
+                      }
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => handleSuggestion(s)}
+                          disabled={loading}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[13px] font-medium text-slate-700 transition hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40"
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+          )}
+
           <p className="text-[15px] text-slate-600">{draft.message}</p>
-          <ol className="mt-4 divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white">
+
+          {/* Selection header */}
+          <div className="mt-4 flex items-center justify-between border-b border-slate-200 pb-2 text-[13px] text-slate-600">
+            <span>{checked.size} of {qs.length} selected</span>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setChecked(new Set(qs.map((q) => q.id)))}
+                className="text-slate-600 hover:text-slate-900 underline-offset-2 hover:underline"
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={() => setChecked(new Set())}
+                className="text-slate-600 hover:text-slate-900 underline-offset-2 hover:underline"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+
+          <ol className="mt-2 divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white">
             {qs.map((q, i) => (
               <li key={q.id} className="group px-5 py-4">
                 <div className="flex gap-4">
+                  <label className="mt-1 flex shrink-0 cursor-pointer items-start">
+                    <input
+                      type="checkbox"
+                      checked={checked.has(q.id)}
+                      onChange={() => toggle(checked, q.id, setChecked)}
+                      aria-label={`Include question ${i + 1}`}
+                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+                    />
+                  </label>
                   <span className="mt-0.5 w-6 shrink-0 text-right text-[13px] tabular-nums text-slate-400">{i + 1}</span>
                   <div className="min-w-0 flex-1">
                     <p className="whitespace-pre-line text-[15px] leading-relaxed text-slate-900">{q.question_text}</p>
@@ -218,17 +571,37 @@ export default function QuizzerHome() {
                   <div className="flex shrink-0 items-start gap-1 text-slate-400 opacity-60 transition group-hover:opacity-100 focus-within:opacity-100">
                     <button aria-label={locked.has(q.id) ? 'Unlock' : 'Lock'} onClick={() => toggle(locked, q.id, setLocked)} className="p-1.5 hover:text-slate-900" title={locked.has(q.id) ? 'Unlock' : 'Lock'}>{locked.has(q.id) ? <Lock size={16} /> : <Unlock size={16} />}</button>
                     <button aria-label="Swap for another" disabled={locked.has(q.id)} onClick={() => swap(q.id)} className="p-1.5 hover:text-slate-900 disabled:opacity-30"><RefreshCw size={16} /></button>
-                    <button aria-label="Remove" disabled={locked.has(q.id)} onClick={() => setQs((c) => c.filter((x) => x.id !== q.id))} className="p-1.5 hover:text-red-600 disabled:opacity-30"><Trash2 size={16} /></button>
+                    <button aria-label="Remove" disabled={locked.has(q.id)} onClick={() => removeQuestion(q.id)} className="p-1.5 hover:text-red-600 disabled:opacity-30"><Trash2 size={16} /></button>
                   </div>
                 </div>
               </li>
             ))}
           </ol>
           {qs.length === 0 && <p className="mt-4 text-[14px] text-slate-500">Nothing left. Try a broader prompt.</p>}
-          <div className="mt-5 flex items-center gap-4">
-            <button onClick={save} disabled={saving || qs.length === 0}
+
+          {/* Refine Box */}
+          <div className="mt-6 flex gap-2">
+            <input
+              type="text"
+              value={refineText}
+              onChange={(e) => setRefineText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleRefine(); }}
+              placeholder="Adjust this quiz… (e.g. make it harder, replace sports with tech)"
+              className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-[14px] text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none"
+            />
+            <button
+              onClick={handleRefine}
+              disabled={loading || !refineText.trim()}
+              className="rounded-xl bg-slate-900 px-5 py-2.5 text-[14px] font-medium text-white transition hover:bg-slate-700 disabled:opacity-40"
+            >
+              Refine
+            </button>
+          </div>
+
+          <div className="mt-6 flex items-center gap-4">
+            <button onClick={save} disabled={saving || checked.size === 0}
               className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-5 py-2.5 text-[14px] font-medium text-white transition hover:bg-slate-700 disabled:opacity-40">
-              <Check size={16} /> {saving ? 'Saving…' : `Save ${qs.length} questions`}
+              <Check size={16} /> {saving ? 'Saving…' : `Save ${checked.size} questions`}
             </button>
             <button onClick={() => run(lastPrompt)} className="text-[14px] text-slate-500 hover:text-slate-900">Start over</button>
           </div>
