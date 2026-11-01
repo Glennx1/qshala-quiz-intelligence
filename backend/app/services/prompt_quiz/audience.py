@@ -30,7 +30,9 @@ def passes_hard(c: Candidate, filters: Dict[str, Any], format_filter: Optional[s
     if skip != "school_safe" and f.get("school_safe"):
         if not c.get("tagged"):
             return False                      # unknown sensitivity: stay conservative for school audiences
-        if (c.get("sensitivity") or "NONE").upper() != "NONE":
+        # NULL sensitivity means "never assessed" (rule-seeded rows, parked/failed rows), NOT "safe".
+        sens = c.get("sensitivity")
+        if not isinstance(sens, str) or sens.strip().upper() != "NONE":
             return False
     if skip != "evergreen" and f.get("evergreen"):
         if (c.get("shelf_life") or "").upper() == "TIME_SENSITIVE":

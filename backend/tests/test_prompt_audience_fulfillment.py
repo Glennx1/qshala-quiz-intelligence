@@ -36,6 +36,15 @@ def test_school_safe_blocks_sensitive_and_untagged():
     assert not passes_hard(q(1, tagged=False), f)
 
 
+def test_school_safe_blocks_unassessed_sensitivity():
+    """sensitivity=None (never assessed) must not pass a school audience, even if a tag row exists."""
+    f = {"school_safe": True}
+    assert not passes_hard(q(1, sensitivity=None), f)
+    assert not passes_hard(q(1, sensitivity=""), f)
+    assert passes_hard(q(1, sensitivity="NONE"), f)
+    assert passes_hard(q(1, sensitivity=None), {})            # no school filter -> unaffected
+
+
 def test_evergreen_blocks_time_sensitive_only():
     f = {"evergreen": True}
     assert not passes_hard(q(1, shelf_life="TIME_SENSITIVE"), f)
