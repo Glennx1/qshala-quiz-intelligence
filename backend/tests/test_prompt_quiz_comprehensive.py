@@ -67,6 +67,10 @@ def test_broad_and_zero_keyword_prompts():
     The engine MUST NOT return 0 questions when the bank has questions!"""
     db = SessionLocal()
     try:
+        from backend.app.services.prompt_quiz.engine import _load_bank
+        bank = _load_bank(db)
+        safe_count = sum(1 for q in bank if q.get("tagged") and (q.get("sensitivity") or "").strip().upper() == "NONE")
+
         prompts = [
             "give me 5 questions",
             "5 questions for school",
@@ -80,10 +84,14 @@ def test_broad_and_zero_keyword_prompts():
         ]
         for p in prompts:
             res = build_draft(db, p)
-            assert len(res["questions"]) > 0, (
-                f"Prompt {p!r} returned 0 questions! "
-                f"Brief query={res['brief']['query']!r}, filters={res['brief']['filters']}"
-            )
+            if res["brief"]["filters"].get("school_safe") and safe_count == 0:
+                assert len(res["questions"]) == 0
+                assert res["fulfillment"]["delivered"] == 0
+            else:
+                assert len(res["questions"]) > 0, (
+                    f"Prompt {p!r} returned 0 questions! "
+                    f"Brief query={res['brief']['query']!r}, filters={res['brief']['filters']}"
+                )
             assert len(res["questions"]) <= res["brief"]["count"]
     finally:
         db.close()

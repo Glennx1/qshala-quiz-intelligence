@@ -88,6 +88,8 @@ def _brief_from_gemini(prompt: str, gem: Dict[str, Any], count: Optional[int],
     query_bits += [str(t) for t in topics_l1 if t]
     query_bits += [str(t) for t in subtopics_l2 if t]
     query = re.sub(r"\s+", " ", " ".join(b for b in query_bits if b)).strip()
+    from backend.app.services.prompt_quiz.topic_normalize import dedupe_query
+    query = dedupe_query(query)
 
     filters: Dict[str, Any] = dict(prev_filters)
     if gem.get("india_focused") is not None:
