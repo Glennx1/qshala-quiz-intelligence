@@ -235,3 +235,25 @@ def test_recent_human_exemplars_reads_confirmed_human_tags():
     finally:
         db.close()
         _cleanup(doc_id)
+
+
+def test_failed_chunk_records_real_reason_for_the_review_queue():
+    """The review queue must show WHY a chunk failed (bad key, quota, timeout), not a generic note."""
+    doc_id = str(uuid.uuid4())
+
+    class DeadKeyProvider:
+        async def generate_json_schema(self, *a, **k):
+            raise RuntimeError("403 API key was reported as leaked")
+
+    db = SessionLocal()
+    try:
+        qs = _make_questions(db, doc_id, 3)
+        asyncio.run(qshala_batch.tag_questions_batched(
+            db, qs, provider=DeadKeyProvider(), model="fake"))
+        db.commit()
+        rows = db.query(QshalaTag).filter(QshalaTag.question_id.in_([q.id for q in qs])).all()
+        assert len(rows) == 3
+        assert all("leaked" in (r.verification_notes or "") for r in rows)
+    finally:
+        db.close()
+        _cleanup(doc_id)
