@@ -1731,7 +1731,7 @@ class QuizExporter:
                     pa_head.font.name = FONT_HEAD
                     pa_head.font.size = Pt(34) if len(ans_val) < 40 else (Pt(28) if len(ans_val) < 80 else Pt(22))
                     pa_head.font.bold = True
-                    pa_head.font.color.rgb = C_ACCENT_GREEN
+                    pa_head.font.color.rgb = C_TEXT_DARK
 
                     pa_exp = tf_a.add_paragraph()
                     pa_exp.space_before = Pt(16)
@@ -1753,7 +1753,7 @@ class QuizExporter:
                     pa_head.font.name = FONT_HEAD
                     pa_head.font.size = Pt(36) if len(ans_val) < 40 else (Pt(30) if len(ans_val) < 80 else Pt(24))
                     pa_head.font.bold = True
-                    pa_head.font.color.rgb = C_ACCENT_GREEN
+                    pa_head.font.color.rgb = C_TEXT_DARK
 
                     _add_scaled_picture(sa, ans_img_path, Inches(3.00), Inches(2.55), Inches(7.333), Inches(4.20))
 
@@ -1779,7 +1779,7 @@ class QuizExporter:
                     pa_head.font.name = FONT_HEAD
                     pa_head.font.size = Pt(42) if len(ans_val) < 40 else (Pt(34) if len(ans_val) < 80 else Pt(26))
                     pa_head.font.bold = True
-                    pa_head.font.color.rgb = C_ACCENT_GREEN
+                    pa_head.font.color.rgb = C_TEXT_DARK
 
                     tb_exp = sa.shapes.add_textbox(Inches(1.50), Inches(3.20), Inches(10.333), Inches(3.20))
                     tf_exp = tb_exp.text_frame
@@ -1803,7 +1803,7 @@ class QuizExporter:
                     pa_head.font.name = FONT_HEAD
                     pa_head.font.size = Pt(48) if len(ans_val) < 40 else (Pt(38) if len(ans_val) < 80 else Pt(28))
                     pa_head.font.bold = True
-                    pa_head.font.color.rgb = C_ACCENT_GREEN
+                    pa_head.font.color.rgb = C_TEXT_DARK
 
             # Speaker Notes for Answer Slide
             sa.notes_slide.notes_text_frame.text = (
