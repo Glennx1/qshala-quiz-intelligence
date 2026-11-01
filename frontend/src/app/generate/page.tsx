@@ -517,20 +517,27 @@ export default function QuizzerHome() {
             </div>
           </div>
 
-          <ol className="mt-2 divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white">
+          <ol className="mt-2 divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-xs">
             {qs.map((q, i) => (
-              <li key={q.id} className="group px-5 py-4">
-                <div className="flex gap-4">
-                  <label className="mt-1 flex shrink-0 cursor-pointer items-start">
+              <li
+                key={q.id}
+                className={`group px-5 py-4 transition-all duration-150 ${
+                  checked.has(q.id) ? 'bg-white' : 'bg-slate-50/70 opacity-45'
+                }`}
+              >
+                <div className="flex gap-3.5 items-start">
+                  <label className="flex shrink-0 cursor-pointer items-center gap-2 pt-0.5 select-none" title={checked.has(q.id) ? "Click to exclude" : "Click to include"}>
                     <input
                       type="checkbox"
                       checked={checked.has(q.id)}
                       onChange={() => toggle(checked, q.id, setChecked)}
                       aria-label={`Include question ${i + 1}`}
-                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500 accent-slate-900 cursor-pointer"
                     />
+                    <span className="w-5 text-right text-[13px] font-medium tabular-nums text-slate-400 group-hover:text-slate-600 transition">
+                      {i + 1}
+                    </span>
                   </label>
-                  <span className="mt-0.5 w-6 shrink-0 text-right text-[13px] tabular-nums text-slate-400">{i + 1}</span>
                   <div className="min-w-0 flex-1">
                     <p className="whitespace-pre-line text-[15px] leading-relaxed text-slate-900">{q.question_text}</p>
                     
