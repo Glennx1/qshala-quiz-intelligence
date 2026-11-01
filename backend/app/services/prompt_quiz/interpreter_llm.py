@@ -29,6 +29,12 @@ V6_THEMES = [
     "History", "Geography", "Politics", "Sports", "Entertainment", "Culture",
 ]
 
+from backend.app.services.tagging.qshala_tagger import _load_taxonomy as _tax
+try:
+    _V6_L2 = _tax()["l2"]
+except Exception:
+    _V6_L2 = []
+
 # OpenAPI-style schema (upper-case types) matching GeminiLLMProvider.generate_json_schema.
 BRIEF_SCHEMA: Dict[str, Any] = {
     "type": "OBJECT",
@@ -55,6 +61,12 @@ BRIEF_SCHEMA: Dict[str, Any] = {
     "required": ["count", "query", "topics_l1", "framing"],
 }
 
+_L2_RULE = (
+    f"- subtopics_l2: finer subtopics drawn ONLY from this list (return [] if none fit): {', '.join(_V6_L2)}.\n"
+    if _V6_L2 else
+    "- subtopics_l2: candidate finer subtopics in plain words (free text is fine).\n"
+)
+
 _SYSTEM = (
     "You are the Interpreter for a quiz-building tool. You translate a quiz master's "
     "natural-language request into a structured brief. You do NOT write, choose, or "
@@ -66,7 +78,7 @@ _SYSTEM = (
     "- query: a short, clean semantic topic phrase for keyword search — strip filler "
     "like 'give me', 'questions', 'round', counts, and difficulty/audience words.\n"
     f"- topics_l1: zero or more themes drawn ONLY from this list: {', '.join(V6_THEMES)}. Must be copied from this list, never invented.\n"
-    "- subtopics_l2: candidate finer subtopics in plain words (free text is fine).\n"
+    + _L2_RULE +
     "- hard_bias / audience: null unless the prompt clearly implies one.\n"
     "- school, kids, class 8, assembly -> audience=school, school_safe=true, evergreen=true, hard_bias=easy.\n"
     "- college, fest, hostel -> audience=college, hard_bias=medium.\n"
@@ -74,7 +86,10 @@ _SYSTEM = (
     "- a city or state -> locality set to it (the exact name, e.g. 'Bengaluru'); india_focused=true when clearly Indian.\n"
     "- cross_topic_padding=true only for phrases like 'or related', 'whatever you have', 'fill the rest'.\n"
     "- india_focused / evergreen / no_images: true/false only if clearly implied, else null.\n"
-    "- framing: one witty, high-taste sentence describing the round to the host (the one-sentence read-back shown to the quizmaster).\n"
+    "- framing: a plain one-sentence read-back of the request (no question counts, "
+    "no 'twenty athletic challenges'). Include the venue_type in the user's own words "
+    "if they gave one. Example: 'A sports round for the engineering college fest in "
+    "Bangalore, medium difficulty.' Never embellish or invent context.\n"
     "Never override anything explicit in the sentence.\n"
     "When a PREVIOUS BRIEF is given, apply the follow-up as an edit to it (e.g. 'make it "
     "harder' changes only hard_bias; 'give me 5 more' raises count; 'swap cricket for tech' "
@@ -162,7 +177,27 @@ def interpret_with_gemini(
         if clean.endswith("```"):
             clean = clean[:-3]
         parsed = json.loads(clean.strip())
-        return parsed if isinstance(parsed, dict) else None
+        if isinstance(parsed, dict):
+            # Snap invented topic names to the real v6 taxonomy
+            try:
+                from backend.app.services.prompt_quiz.topic_normalize import normalize_topics, dedupe_query
+                from backend.app.services.tagging.qshala_tagger import _load_taxonomy
+                tax = _load_taxonomy()
+                valid_l1, valid_l2, dropped = normalize_topics(
+                    parsed.get("topics_l1") or [],
+                    parsed.get("subtopics_l2") or [],
+                    l1_names=tax["l1"],
+                    l2_names=tax["l2"],
+                    l2_to_l1=tax["l2_to_l1"],
+                )
+                parsed["topics_l1"] = valid_l1
+                parsed["subtopics_l2"] = valid_l2
+                if parsed.get("query"):
+                    parsed["query"] = dedupe_query(parsed["query"])
+            except Exception:
+                pass  # normalization is best-effort
+            return parsed
+        return None
     except Exception as e:
         logger.info("Gemini interpreter unavailable, falling back to regex parse_prompt: %s", type(e).__name__)
         return None
