@@ -221,7 +221,8 @@ class Index:
                 s = self._bm25(i, qbag)
                 # small boost if the query words appear in the chosen topic/subtopic
                 tl = ((item.get("topic_l1") or "") + " " + (item.get("subtopic_l2") or "")).lower()
-                if any(t in tl for t in qbag):
+                tl_tokens = set(tokenize(tl))
+                if any(t in tl_tokens for t in qbag):
                     s += 0.5
                 if item.get("image_dependent") and not filters.get("exclude_image"):
                     s += 0.35

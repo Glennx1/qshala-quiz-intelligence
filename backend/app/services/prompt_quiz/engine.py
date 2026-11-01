@@ -117,6 +117,8 @@ def _brief_from_gemini(prompt: str, gem: Dict[str, Any], count: Optional[int],
     raw_bias = gem.get("hard_bias")
     if raw_bias is None and previous_brief:
         raw_bias = previous_brief.get("hard_bias")
+    if not raw_bias:
+        raw_bias = _bias_from_text(prompt)
     raw_bias = (raw_bias or "").lower()
     bias = "hard" if raw_bias in ("hard", "spicy") else "easy" if raw_bias == "easy" else ("medium" if raw_bias == "medium" else None)
 
@@ -355,23 +357,41 @@ def _load_bank(db: Session) -> List[Dict[str, Any]]:
     return bank
 
 
+# Minimum BM25 score to be considered relevant. Questions below this
+# matched the query only by accident (a stray word overlap).
+MIN_RELEVANCE_SCORE = 0.3
+
+
 def librarian(bank: List[Dict[str, Any]], brief: Brief, pool: int = 80) -> List[Dict[str, Any]]:
     if brief.format_filter:
         bank = [q for q in bank if q.get("question_format") == brief.format_filter]
     idx = Index(bank)
+
     # Gemini search_terms broaden retrieval without changing the Brief the user sees
     search_query = brief.query
-    if brief.search_terms:
+    if getattr(brief, 'search_terms', None):
         search_query = brief.query + " " + " ".join(brief.search_terms)
+
     hits = idx.search(search_query, brief.filters, top_k=pool)
-    if len(hits) < brief.count:  # query too narrow: relax hard filters other than safety
-        relaxed = {k: v for k, v in brief.filters.items() if k in ("school_safe", "no_images")}
+
+    # Stage 2: relax non-safety filters but KEEP the query.
+    # This finds on-topic questions that were blocked by geography/audience filters.
+    if len(hits) < brief.count:
+        relaxed = {k: v for k, v in brief.filters.items() if k in (
+            "school_safe", "exclude_image", "no_images", "evergreen_only", "evergreen", "india_international"
+        )}
         seen = {h["id"] for h in hits}
-        hits += [h for h in idx.search(brief.query, relaxed, top_k=pool) if h["id"] not in seen]
-    if len(hits) < brief.count and brief.query:  # keyword not in bank: pull broad candidates matching safety
-        relaxed = {k: v for k, v in brief.filters.items() if k in ("school_safe", "no_images")}
-        seen = {h["id"] for h in hits}
-        hits += [h for h in idx.search("", relaxed, top_k=pool) if h["id"] not in seen]
+        hits += [h for h in idx.search(search_query, relaxed, top_k=pool) if h["id"] not in seen]
+
+    # NO stage 3. We do NOT search with an empty query.
+    # If the bank doesn't have enough on-topic questions, we deliver fewer
+    # and fulfillment.note tells the user honestly.
+
+    # Drop hits below the relevance floor
+    if brief.query:
+        threshold = 0.2 if len(bank) == 1 else MIN_RELEVANCE_SCORE
+        hits = [h for h in hits if h.get("score", 0) >= threshold]
+
     return hits
 
 
@@ -402,13 +422,25 @@ def editor(cands: List[Dict[str, Any]], brief: Brief) -> List[Dict[str, Any]]:
     elif brief.hard_bias == "easy":
         ordered_cands.sort(key=lambda c: (c.get("difficulty_score") or 0.5))
 
+    # Detect if user specifically targeted certain subtopics
+    target_subs = set(brief.subtopics_l2)
+    if not target_subs and brief.query:
+        q_words = set(brief.query.lower().split())
+        for c in cands:
+            sub = c.get("subtopic_l2")
+            if sub and set(sub.lower().split()) & q_words:
+                target_subs.add(sub)
+
+    if target_subs and not brief.cross_topic_padding:
+        ordered_cands = [c for c in ordered_cands if c.get("subtopic_l2") in target_subs or not c.get("subtopic_l2")]
+
     chosen: List[Dict[str, Any]] = []
     per_sub: Dict[str, int] = {}
     cap = max(2, -(-n // 3))  # no subtopic takes more than ~a third
     leftovers = []
     for c in ordered_cands:
         sub = c.get("subtopic_l2") or c.get("topic_l1") or "?"
-        if per_sub.get(sub, 0) >= cap:
+        if sub not in target_subs and per_sub.get(sub, 0) >= cap:
             leftovers.append(c)
             continue
         per_sub[sub] = per_sub.get(sub, 0) + 1
@@ -460,13 +492,23 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
     # 3. Librarian: search broadly with filters=None, top_k=300
     idx = Index(bank)
     search_query = brief.query
-    if brief.search_terms:
+    if getattr(brief, 'search_terms', None):
         search_query = brief.query + " " + " ".join(brief.search_terms)
     hits = idx.search(search_query, filters=None, top_k=300)
+
+    # Drop hits below the relevance floor from on-topic retrieval
+    if brief.query:
+        hits = [h for h in hits if float(h.get("score") or 0.0) >= MIN_RELEVANCE_SCORE]
+
+    # Broad hits for adjacent pool only (tagged with score 0 so is_on_topic never picks them)
     if len(hits) < 300:
         seen = {h["id"] for h in hits}
         broad = idx.search("", filters=None, top_k=300)
-        hits += [h for h in broad if h["id"] not in seen]
+        for b in broad:
+            if b["id"] not in seen:
+                b_adj = dict(b)
+                b_adj["score"] = 0.1
+                hits.append(b_adj)
 
     # Split into on-topic vs adjacent
     on_ok, adjacent, on_all, _ = split_pools(
@@ -543,12 +585,11 @@ def swap_one(db: Session, prompt: str, question_id: str, keep_ids: List[str],
         brief.query = f"{brief.query} {target['subtopic_l2']}"
     idx = Index(bank)
     search_query = brief.query
-    if brief.search_terms:
+    if getattr(brief, 'search_terms', None):
         search_query = brief.query + " " + " ".join(brief.search_terms)
     hits = idx.search(search_query, filters=None, top_k=300)
-    seen = {h["id"] for h in hits}
-    broad = idx.search("", filters=None, top_k=300)
-    hits += [h for h in broad if h["id"] not in seen]
+    if brief.query:
+        hits = [h for h in hits if float(h.get("score") or 0.0) >= MIN_RELEVANCE_SCORE]
 
     exclude_ids = set(keep_ids) | {question_id}
     ok_hits = [c for c in hits if c["id"] not in exclude_ids and passes_hard(c, brief.filters, brief.format_filter)]
