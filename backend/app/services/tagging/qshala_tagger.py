@@ -122,7 +122,7 @@ shelf_life: EVERGREEN = true in any year; REVIEW_YEARLY = facts or figures that 
 sensitivity: POLITICAL if it touches contested politics or geopolitics; MATURE_REFERENCE if it mentions crime, drugs, violence or similar; otherwise NONE.
 fit: good = a subtopic fits well; weak = the best available fit is imperfect; none = nothing fits.
 search_summary: one sentence of at most 25 words saying what the question is about, naming the key entities and the answer.
-If the question refers to an image or video you cannot see, tag from the text you have and set fit to weak.
+If the question refers to an image, video or audio clip you cannot see, tag from the question text and the ANSWER, which are always given. Set fit to weak only when the text and answer together still leave the subject unclear; a media clue with an identifiable answer (a company, person, product, place) is a normal good fit.
 
 Subtopics, grouped by topic:
 """
@@ -137,7 +137,7 @@ india_international: IN if the subject is India-centred, INTL if it is outside I
 relevant_year: the year the question is about or tied to (2016 for demonetisation, 1947 for Independence). Use 0 if it is not tied to a particular year.
 fit: good = a subtopic fits well; weak = the best available fit is imperfect; none = nothing fits.
 search_summary: one sentence of at most 25 words saying what the question is about, naming the key entities and the answer.
-If the question refers to an image or video you cannot see, tag from the text you have and set fit to weak.
+If the question refers to an image, video or audio clip you cannot see, tag from the question text and the ANSWER, which are always given. Set fit to weak only when the text and answer together still leave the subject unclear; a media clue with an identifiable answer (a company, person, product, place) is a normal good fit.
 
 Subtopics, grouped by theme:
 """

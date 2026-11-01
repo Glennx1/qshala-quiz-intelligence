@@ -111,7 +111,9 @@ def _batch_user_prompt(items: List[Dict[str, Any]], exemplars: List[Dict[str, st
         if rules.brand_hints_l1:
             block.append(f"Rule hint: likely theme(s) {', '.join(rules.brand_hints_l1)}.")
         if rules.image_dependent:
-            block.append("Rule hint: may depend on an unseen image; tag from text, set fit=weak if unsure.")
+            block.append("Rule hint: may refer to an image or video you cannot see. The ANSWER is given, so tag by "
+                         "the question's subject and answer; use fit=weak only if the text and answer together "
+                         "still do not identify the subject.")
         parts.append("\n".join(block))
     return "\n\n".join(parts)
 
@@ -224,9 +226,12 @@ async def tag_questions_batched(db: Session, questions: List[Question], *, provi
     chunks = [items[i:i + CHUNK_SIZE] for i in range(0, len(items), CHUNK_SIZE)]
     schema, system = _batch_schema(), _system_prompt()
     sem = asyncio.Semaphore(CHUNK_CONCURRENCY)
+    fail_reason: Dict[int, str] = {}
     stats = {"confirmed": 0, "draft": 0, "chunks": len(chunks), "failed_chunks": 0}
 
     async def run_chunk(chunk: List[Dict[str, Any]]) -> Dict[int, Any]:
+        """Returns {n: (result, latency)}. On total failure returns {} and records WHY in `fail_reason`
+        (keyed by the chunk's first n) so the review queue shows the real cause, not a generic note."""
         prompt = _batch_user_prompt(chunk, exemplars)
         async with sem:
             for attempt in range(MAX_CHUNK_RETRIES):
@@ -246,6 +251,7 @@ async def tag_questions_batched(db: Session, questions: List[Question], *, provi
                     if attempt == MAX_CHUNK_RETRIES - 1:
                         logger.error("batch chunk failed after %d attempts: %s",
                                      MAX_CHUNK_RETRIES, safe_error(e))
+                        fail_reason[chunk[0]["n"]] = safe_error(e)[:160]
                         return {}
                     # Match the per-question tagger's proven 429 backoff: 6s, 12s, 24s (honour
                     # Retry-After when Google sends it). Non-rate-limit errors retry faster.
@@ -262,7 +268,8 @@ async def tag_questions_batched(db: Session, questions: List[Question], *, provi
             res = got.get(q["n"])
             try:
                 if res is None:
-                    _write_to_review(db, q, model, "batch chunk failed; parked for review")
+                    why = fail_reason.get(chunk[0]["n"]) or "model response omitted this question"
+                    _write_to_review(db, q, model, f"batch chunk failed: {why}")
                     stats["draft"] += 1
                 else:
                     llm_out, latency = res

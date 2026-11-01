@@ -586,6 +586,10 @@ class IngestionPipeline:
                         model=self.qshala_tagger.model,
                         actor="deck_upload",
                     )
+                    # Commit the tags NOW. Otherwise a later failure (e.g. in the metadata mirror below)
+                    # hits the rollback in the except-branch and silently discards every tag in the deck,
+                    # leaving the legacy rule labels and a full review queue.
+                    db.commit()
                     # Mirror each question's resulting tag onto its metadata row (geography, year, ...).
                     for q_m in question_models:
                         latest = (db.query(QshalaTag)
