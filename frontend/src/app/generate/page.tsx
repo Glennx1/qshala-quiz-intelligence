@@ -331,7 +331,9 @@ export default function QuizzerHome() {
         )}
         {error && <p className="mt-6 text-center text-[14px] text-red-600" role="alert">{error}</p>}
 
-            {/* Brief chips + Framing sentence / Short note */}
+        {/* Brief chips + Framing sentence / Short note */}
+        {draft && (
+          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
             {(draft.fulfillment?.short ? draft.fulfillment.note : draft.brief.framing) && (
               <p className="text-center text-[14px] font-medium text-slate-700">
                 {draft.fulfillment?.short
