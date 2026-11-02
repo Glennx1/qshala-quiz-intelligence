@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import random
 import httpx
 from typing import List, Dict, Any, Optional
 from backend.app.services.ai.base import LLMProvider, EmbeddingProvider
@@ -16,9 +17,9 @@ async def _post_with_retry(
     for attempt in range(max_retries + 1):
         resp = await client.post(url, json=payload, headers=headers)
         if resp.status_code in (429, 503) and attempt < max_retries:
-            wait_sec = (attempt + 1) * 2.0
+            wait_sec = (attempt + 1) * 2.0 + random.uniform(0.1, 0.9)
             logger.warning(
-                f"[GeminiProvider] Rate limit or busy ({resp.status_code}). Backing off {wait_sec}s (attempt {attempt+1}/{max_retries})..."
+                f"[GeminiProvider] Rate limit or busy ({resp.status_code}). Backing off {wait_sec:.2f}s (attempt {attempt+1}/{max_retries})..."
             )
             await asyncio.sleep(wait_sec)
             continue

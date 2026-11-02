@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 import uuid
@@ -222,6 +223,7 @@ class JobQueueService:
         transcripts = dict(step_data.get("media_transcripts", {}))
         llm = get_llm_provider()
 
+        batch_concurrency = 5
         while cursor < len(manifest):
             # Time-budget execution guard
             if (time.time() - start_time) > self.TIME_BUDGET_SECONDS:
@@ -234,29 +236,36 @@ class JobQueueService:
                 db.commit()
                 return
 
-            item = manifest[cursor]
-            m_id = item["media_id"]
-            m_type = item["media_type"]
-            blob_url = item["blob_url"]
-            mime = item.get("mime_type", "application/octet-stream")
+            batch_slice = manifest[cursor : cursor + batch_concurrency]
 
-            if m_id not in transcripts:
+            async def _transcribe_media_item(item):
+                m_id = item["media_id"]
+                m_type = item["media_type"]
+                blob_url = item["blob_url"]
+                mime = item.get("mime_type", "application/octet-stream")
+
+                if m_id in transcripts:
+                    return m_id, transcripts[m_id]
+
                 try:
-                    # Download media bytes
                     media_bytes = await self.blob_service.download(blob_url)
                     if m_type == "image":
                         desc = await llm.describe_image(media_bytes, mime)
-                        transcripts[m_id] = desc or f"[Visual clue: {item['filename']}]"
+                        return m_id, desc or f"[Visual clue: {item['filename']}]"
                     elif m_type in ["audio", "video"]:
                         transcript = await llm.transcribe_audio(media_bytes, mime)
-                        transcripts[m_id] = transcript or f"[{m_type.capitalize()} clue: {item['filename']}]"
+                        return m_id, transcript or f"[{m_type.capitalize()} clue: {item['filename']}]"
                     else:
-                        transcripts[m_id] = ""
+                        return m_id, ""
                 except Exception as e:
                     logger.warning(f"Failed to transcribe media item {item['filename']}: {e}")
-                    transcripts[m_id] = ""
+                    return m_id, ""
 
-            cursor += 1
+            results = await asyncio.gather(*[_transcribe_media_item(it) for it in batch_slice])
+            for m_id, val in results:
+                transcripts[m_id] = val
+
+            cursor += len(batch_slice)
 
         step_data["media_cursor"] = len(manifest)
         step_data["media_transcripts"] = transcripts

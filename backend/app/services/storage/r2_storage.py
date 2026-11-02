@@ -45,7 +45,11 @@ class CloudflareR2Service:
                     endpoint_url=f"https://{self.account_id}.r2.cloudflarestorage.com",
                     aws_access_key_id=self.access_key_id,
                     aws_secret_access_key=self.secret_access_key,
-                    config=BotoConfig(signature_version="s3v4"),
+                    config=BotoConfig(
+                        signature_version="s3v4",
+                        max_pool_connections=32,
+                        retries={"max_attempts": 5, "mode": "adaptive"},
+                    ),
                     region_name="auto",
                 )
             except Exception as e:
