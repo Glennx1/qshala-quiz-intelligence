@@ -638,10 +638,16 @@ export default function UploadPage() {
                   <FileText className="h-4 w-4" />
                 </div>
                 <div className="min-w-0">
-                  <h4 className="truncate text-[14px] font-medium text-slate-900">{doc.title}</h4>
+                  <h4
+                    className="truncate text-[14px] font-medium text-slate-900"
+                    title={doc.filename}
+                  >
+                    {doc.filename}
+                  </h4>
                   <p className="text-[12px] text-slate-400 font-normal">
                     {doc.slide_count} slides · {doc.question_count} questions extracted · Year:{' '}
                     {doc.year || '2024'}
+                    {doc.title && doc.title !== doc.filename ? ` · ${doc.title}` : ''}
                   </p>
                 </div>
               </div>
