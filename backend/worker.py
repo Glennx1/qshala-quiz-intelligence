@@ -138,6 +138,12 @@ def _fetch_raw_deck(document_id: str) -> None:
     worker runs in its own container with an empty filesystem -- doc.storage_path is only a
     meaningful local path again once this runs. A no-op for every other ingestion mode, and for
     local/manual testing where the file is already sitting on disk.
+
+    Verifies the result explicitly and raises a diagnostic error on any failure, rather than
+    letting a missing/empty file surface two layers down as a bare FileNotFoundError inside the
+    pptx/pdf parser (which is what happened in production Nov 2 2026 -- the underlying cause that
+    time was dispatch_available running this deck's pipeline in-process instead of ever calling
+    this function at all; this is the safety net for that bug and any future one like it).
     """
     from backend.app.database import SessionLocal
     from backend.app.models.document import Document
@@ -148,18 +154,36 @@ def _fetch_raw_deck(document_id: str) -> None:
         doc = db.query(Document).filter(Document.id == document_id).first()
         if doc is None:
             raise RuntimeError(f"Document {document_id} not found")
-        if doc.storage_path and os.path.exists(doc.storage_path):
+        if doc.storage_path and os.path.exists(doc.storage_path) and os.path.getsize(doc.storage_path) > 0:
+            logger.info("[WORKER] raw deck already on local disk: doc_id=%s path=%s", document_id, doc.storage_path)
             return
         r2 = get_r2_service()
         if not r2.is_configured:
             raise RuntimeError(
-                "R2 is not configured, but the raw deck isn't on local disk -- nothing to process"
+                f"R2 is not configured in this worker container, but the raw deck for doc_id="
+                f"{document_id} isn't on local disk ({doc.storage_path}) -- nothing to process. "
+                f"Check R2_ACCOUNT_ID/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_BUCKET_NAME/"
+                f"R2_PUBLIC_BASE_URL are set on the Cloud Run JOB resource, not just the Service."
             )
         raw_key = f"raw-uploads/{doc.id}{os.path.splitext(doc.storage_path)[1]}"
         dest = Path(doc.storage_path)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        r2.download_to_file(raw_key, dest)
-        logger.info("[WORKER] fetched raw deck from R2: doc_id=%s key=%s", document_id, raw_key)
+        try:
+            r2.download_to_file(raw_key, dest)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to download raw deck from R2 for doc_id={document_id} "
+                f"(bucket={r2.bucket_name!r} key={raw_key!r}): {e}"
+            ) from e
+        if not dest.exists() or dest.stat().st_size == 0:
+            raise RuntimeError(
+                f"R2 download for doc_id={document_id} (key={raw_key!r}) reported success but "
+                f"left no file (or an empty file) at {dest} -- treating as a failed fetch."
+            )
+        logger.info(
+            "[WORKER] fetched raw deck from R2: doc_id=%s key=%s bytes=%d",
+            document_id, raw_key, dest.stat().st_size,
+        )
     finally:
         db.close()
 
@@ -211,7 +235,12 @@ def _best_effort_dispatch_next() -> None:
         from backend.app.services.ingestion.upload_queue import dispatch_available
         loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(dispatch_available())
+            # force_cloud_run_job=True: this call only ever runs from inside a Cloud Run Job
+            # worker container (this file). Never let it fall back to running the next deck's
+            # pipeline in-process here just because this container's own INGESTION_MODE wasn't
+            # explicitly set -- that path skips _fetch_raw_deck() and crashes with
+            # FileNotFoundError on the next deck (see dispatch_available's docstring).
+            loop.run_until_complete(dispatch_available(force_cloud_run_job=True))
         finally:
             loop.close()
     except Exception as e:

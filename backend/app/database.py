@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from typing import List, Optional
 from sqlalchemy import create_engine, TypeDecorator, Text
 from sqlalchemy.orm import sessionmaker, declarative_base
@@ -152,7 +153,6 @@ if engine is None:
             "back to SQLite on an ephemeral disk and LOSE all data on the next restart. "
             "Set DATABASE_URL to your Neon connection string (…?sslmode=require) and redeploy."
         )
-    import os
     from backend.app.config import default_db_url
     connect_args = {"check_same_thread": False}
     engine = create_engine(default_db_url, connect_args=connect_args, echo=False)

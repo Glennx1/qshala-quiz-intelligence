@@ -261,6 +261,34 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
             return values
         return [v / norm for v in values]
 
+    @classmethod
+    def _coerce_dim(cls, values: List[float], text: str) -> List[float]:
+        """Confirmed in production (Nov 2 2026): batchEmbedContents returned the native 3072-dim
+        output even though every request item carried embedContentConfig.outputDimensionality=768
+        -- a psycopg.errors.DataException ("expected 768 dimensions, not 3072") crashed the
+        questions INSERT and failed the whole deck. Google's docs don't fully specify whether
+        batchEmbedContents honors the same per-item embedContentConfig nesting as the single
+        embedContent endpoint, so rather than guess at an undocumented request shape, this
+        enforces the output shape instead: gemini-embedding-001 is trained with Matryoshka
+        Representation Learning, meaning a prefix of the native 3072-dim vector is itself a valid
+        lower-dimensional embedding -- Google's own outputDimensionality truncates this way, so
+        doing it client-side when the server didn't is mathematically the same operation, just
+        performed locally. Returns an un-normalized dim-length vector for _normalize() to
+        L2-normalize as usual (the slice is not normalized, matching every other truncated path).
+        Raises ValueError if the vector is shorter than the target dim -- that can't be coerced,
+        only reported, so the caller's except block falls back to the local deterministic
+        embedding instead of ever inserting a wrong-shaped vector."""
+        dim = settings.EMBEDDING_DIM
+        if len(values) == dim:
+            return values
+        if len(values) > dim:
+            logger.warning(
+                "[GeminiEmbeddingProvider] got %d-dim embedding, expected %d -- truncating "
+                "client-side (text=%r)", len(values), dim, text[:80],
+            )
+            return values[:dim]
+        raise ValueError(f"embedding shorter than EMBEDDING_DIM ({len(values)} < {dim})")
+
     async def get_embedding(self, text: str) -> List[float]:
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is not configured")
@@ -282,7 +310,8 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
                     logger.error(f"[GeminiEmbeddingProvider] API error ({resp.status_code}): {resp.text}")
                 resp.raise_for_status()
                 data = resp.json()
-                return self._normalize(data["embedding"]["values"])
+                values = self._coerce_dim(data["embedding"]["values"], text)
+                return self._normalize(values)
         except Exception as e:
             logger.warning(f"[GeminiEmbeddingProvider] API call failed ({e}), falling back to local deterministic embedding.")
             from backend.app.services.ai.local_provider import LocalEmbeddingProvider
@@ -323,11 +352,31 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
                         logger.warning(f"[GeminiEmbeddingProvider] batchEmbedContents error ({resp.status_code}), falling back to serial")
                         for t in chunk:
                             results.append(await self.get_embedding(t))
+                    elif len(data := resp.json().get("embeddings", [])) != len(chunk):
+                        # batchEmbedContents returned a different count than requested -- can't
+                        # safely zip results back to texts by position, so re-fetch this whole
+                        # chunk serially rather than risk silently mismatching embeddings to texts.
+                        logger.warning(
+                            "[GeminiEmbeddingProvider] batchEmbedContents returned %d embeddings "
+                            "for %d texts, falling back to serial for this chunk", len(data), len(chunk),
+                        )
+                        for t in chunk:
+                            results.append(await self.get_embedding(t))
                     else:
-                        data = resp.json()
-                        embs = data.get("embeddings", [])
-                        for e in embs:
-                            results.append(self._normalize(e["values"]))
+                        for t, e in zip(chunk, data):
+                            try:
+                                values = self._coerce_dim(e["values"], t)
+                                results.append(self._normalize(values))
+                            except ValueError:
+                                # Too short to coerce (see _coerce_dim) -- fall back to a single
+                                # get_embedding() call for just this text, which has its own
+                                # fallback to the local deterministic embedding on failure. Never
+                                # let a wrong-length vector reach the questions.embedding INSERT.
+                                logger.warning(
+                                    "[GeminiEmbeddingProvider] batch item too short to coerce, "
+                                    "refetching serially (text=%r)", t[:80],
+                                )
+                                results.append(await self.get_embedding(t))
             except Exception as batch_err:
                 logger.warning(f"[GeminiEmbeddingProvider] batchEmbedContents failed ({batch_err}), falling back to serial")
                 for t in chunk:

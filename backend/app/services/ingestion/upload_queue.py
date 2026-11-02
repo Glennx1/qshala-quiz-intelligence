@@ -213,12 +213,25 @@ async def _run_job(job_id: str, document_id: str) -> None:
         db.close()
 
 
-async def dispatch_available(max_decks: int = 200) -> int:
+async def dispatch_available(max_decks: int = 200, force_cloud_run_job: bool = False) -> int:
     """Loop claiming jobs while capacity remains.
-    - If INGESTION_MODE == "cloud_run_job": triggers a Cloud Run Job execution (worker.py)
-      for each claimed job. The job stays PROCESSING until the worker closes it. On
-      trigger failure, marks job and document FAILED immediately and continues.
-    - If INGESTION_MODE == "in_process": runs IngestionPipeline().run() for each claimed job.
+    - If INGESTION_MODE == "cloud_run_job" (or force_cloud_run_job=True): triggers a Cloud Run
+      Job execution (worker.py) for each claimed job. The job stays PROCESSING until the worker
+      closes it. On trigger failure, marks job and document FAILED immediately and continues.
+    - Otherwise: runs IngestionPipeline().run() in-process for each claimed job.
+
+    `force_cloud_run_job` exists for exactly one caller: worker.py's own self-dispatch after it
+    finishes a deck. The worker's container may not have INGESTION_MODE set in its own env (it
+    was only ever wired onto the API Service's env, never the Job resource's) -- if that read
+    defaulted to "in_process", this function would run the NEXT queued deck's pipeline directly
+    inside the current worker container instead of triggering a separate Job execution. That
+    in-process path never calls worker.py's _fetch_raw_deck(), so the next deck's raw file --
+    staged only in R2 by the API service -- is never pulled down, and parsing crashes with
+    FileNotFoundError. (This happened in production, Nov 2 2026: two decks uploaded in one
+    batch, the second one crashed exactly this way, same Cloud Run execution ID as the first.)
+    A worker calling this to dispatch its successor is BY DEFINITION only ever reachable when
+    cloud_run_job mode is active -- worker.py itself only runs as a Cloud Run Job execution -- so
+    it forces that branch rather than trusting its own process's possibly-unset config.
     Returns the number of jobs dispatched in this invocation.
     """
     dispatched = 0
@@ -233,7 +246,7 @@ async def dispatch_available(max_decks: int = 200) -> int:
             db.close()
 
         dispatched += 1
-        if settings.INGESTION_MODE == "cloud_run_job":
+        if force_cloud_run_job or settings.INGESTION_MODE == "cloud_run_job":
             from backend.app.services.ingestion.job_trigger import (
                 trigger_ingestion_job,
                 IngestionJobTriggerError,
