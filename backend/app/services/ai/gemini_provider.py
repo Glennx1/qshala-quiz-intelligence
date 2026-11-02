@@ -9,6 +9,22 @@ from backend.app.config import settings
 
 logger = logging.getLogger(__name__)
 
+async def _post_with_retry(
+    client: httpx.AsyncClient, url: str, payload: Dict[str, Any], api_key: str, max_retries: int = 3
+) -> httpx.Response:
+    headers = {"x-goog-api-key": api_key} if api_key else {}
+    for attempt in range(max_retries + 1):
+        resp = await client.post(url, json=payload, headers=headers)
+        if resp.status_code in (429, 503) and attempt < max_retries:
+            wait_sec = (attempt + 1) * 2.0
+            logger.warning(
+                f"[GeminiProvider] Rate limit or busy ({resp.status_code}). Backing off {wait_sec}s (attempt {attempt+1}/{max_retries})..."
+            )
+            await asyncio.sleep(wait_sec)
+            continue
+        return resp
+    return resp
+
 class GeminiLLMProvider(LLMProvider):
     def __init__(self, api_key: Optional[str] = None):
         key = api_key or settings.GEMINI_API_KEY or ""
@@ -48,26 +64,13 @@ class GeminiLLMProvider(LLMProvider):
 
         raise ValueError(f"No text part found in Gemini candidate parts: {parts}")
 
-    async def _post_with_retry(
-        self, client: httpx.AsyncClient, url: str, payload: Dict[str, Any], max_retries: int = 3
-    ) -> httpx.Response:
-        for attempt in range(max_retries + 1):
-            resp = await client.post(url, json=payload)
-            if resp.status_code in (429, 503) and attempt < max_retries:
-                wait_sec = (attempt + 1) * 2.0
-                logger.warning(
-                    f"[GeminiLLMProvider] Rate limit or busy ({resp.status_code}). Backing off {wait_sec}s (attempt {attempt+1}/{max_retries})..."
-                )
-                await asyncio.sleep(wait_sec)
-                continue
-            return resp
-        return resp
+
 
     async def generate_text(self, prompt: str, system_instruction: Optional[str] = None) -> str:
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is not configured")
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}]
         }
@@ -75,7 +78,7 @@ class GeminiLLMProvider(LLMProvider):
             payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
 
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await self._post_with_retry(client, url, payload)
+            resp = await _post_with_retry(client, url, payload, self.api_key)
             if resp.is_error:
                 logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
             resp.raise_for_status()
@@ -86,7 +89,7 @@ class GeminiLLMProvider(LLMProvider):
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is not configured")
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -98,7 +101,7 @@ class GeminiLLMProvider(LLMProvider):
 
         logger.info(f"[GeminiLLMProvider] Sending generate_json request to model '{self.model}'")
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await self._post_with_retry(client, url, payload)
+            resp = await _post_with_retry(client, url, payload, self.api_key)
             if resp.is_error:
                 logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
             resp.raise_for_status()
@@ -134,7 +137,7 @@ class GeminiLLMProvider(LLMProvider):
             raise ValueError("GEMINI_API_KEY is not configured")
 
         chosen_model = model or self.model
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{chosen_model}:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{chosen_model}:generateContent"
         gen_cfg: Dict[str, Any] = {
             "response_mime_type": "application/json",
             "response_schema": schema,
@@ -157,12 +160,12 @@ class GeminiLLMProvider(LLMProvider):
 
         logger.info(f"[GeminiLLMProvider] generate_json_schema → {chosen_model}")
         async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await self._post_with_retry(client, url, payload)
+            resp = await _post_with_retry(client, url, payload, self.api_key)
             if resp.is_error:
                 # If the model rejects thinking_config (older SDK/model), retry once without it.
                 if "thinking" in resp.text.lower() and "thinking_config" in gen_cfg:
                     gen_cfg.pop("thinking_config", None)
-                    resp = await self._post_with_retry(client, url, payload)
+                    resp = await _post_with_retry(client, url, payload, self.api_key)
                 if resp.is_error:
                     logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
             resp.raise_for_status()
@@ -196,7 +199,7 @@ class GeminiLLMProvider(LLMProvider):
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is not configured")
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
         parts = []
         for media in media_parts:
             parts.append({
@@ -212,7 +215,7 @@ class GeminiLLMProvider(LLMProvider):
             payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
 
         async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await self._post_with_retry(client, url, payload)
+            resp = await _post_with_retry(client, url, payload, self.api_key)
             if resp.is_error:
                 logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
             resp.raise_for_status()
@@ -310,7 +313,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is not configured")
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:embedContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:embedContent"
         payload = {
             "model": f"models/{self.model}",
             "content": {"parts": [{"text": text}]},
@@ -322,7 +325,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await self._post_with_retry(client, url, payload)
+                resp = await _post_with_retry(client, url, payload, self.api_key)
                 if resp.is_error:
                     logger.error(f"[GeminiEmbeddingProvider] API error ({resp.status_code}): {resp.text}")
                 resp.raise_for_status()
@@ -345,7 +348,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         # Use batchEmbedContents endpoint in chunks of up to 96
         chunk_size = 96
         results: List[List[float]] = []
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:batchEmbedContents?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:batchEmbedContents"
 
         for i in range(0, len(texts), chunk_size):
             chunk = texts[i:i + chunk_size]
@@ -364,7 +367,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
             }
             try:
                 async with httpx.AsyncClient(timeout=45.0) as client:
-                    resp = await self._post_with_retry(client, url, payload)
+                    resp = await _post_with_retry(client, url, payload, self.api_key)
                     if resp.is_error:
                         logger.warning(f"[GeminiEmbeddingProvider] batchEmbedContents error ({resp.status_code}), falling back to serial")
                         for t in chunk:

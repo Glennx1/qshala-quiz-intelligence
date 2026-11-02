@@ -37,6 +37,7 @@ if "backend" not in sys.modules:
     sys.modules["backend"] = backend_pkg
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger("qshala.worker")
 
 CANCEL_POLL_INTERVAL_S = 5.0

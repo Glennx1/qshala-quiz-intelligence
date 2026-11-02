@@ -41,6 +41,7 @@ from backend.app.models.question_meta import (  # noqa: F401
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # Error tracking (QShala priority plan P2-1). Optional and off by default -- sentry_sdk.init is

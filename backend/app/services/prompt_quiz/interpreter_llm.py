@@ -168,7 +168,7 @@ def interpret_with_gemini(
 
     model = getattr(settings, "GEMINI_MODEL", None) or "gemini-3.5-flash-lite"
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{model}:generateContent?key={key}")
+           f"{model}:generateContent")
     payload = {
         "contents": [{"parts": [{"text": _build_prompt(prompt, previous_brief, current_questions)}]}],
         "system_instruction": {"parts": [{"text": _SYSTEM}]},
@@ -182,7 +182,8 @@ def interpret_with_gemini(
     try:
         import httpx
         with httpx.Client(timeout=timeout_s) as client:
-            resp = client.post(url, json=payload)
+            headers = {"x-goog-api-key": key} if key else {}
+            resp = client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
         cands = data.get("candidates") or []

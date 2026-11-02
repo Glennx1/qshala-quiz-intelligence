@@ -154,14 +154,15 @@ if engine is None:
             "Set DATABASE_URL to your Neon connection string (…?sslmode=require) and redeploy."
         )
     from backend.app.config import default_db_url
+    sqlite_url = raw_db_url if (raw_db_url and raw_db_url.startswith("sqlite")) else default_db_url
     connect_args = {"check_same_thread": False}
-    engine = create_engine(default_db_url, connect_args=connect_args, echo=False)
+    engine = create_engine(sqlite_url, connect_args=connect_args, echo=False)
     logger.warning(
         "=" * 78 + "\n"
         "  DATA IS NOT PERSISTENT: running on SQLite (%s).\n"
         "  On Google Cloud Run/Render this file is deleted on restart or sleep — uploads will vanish.\n"
         "  Set DATABASE_URL (Neon) and REQUIRE_POSTGRES=1 for a persistent database.\n"
-        + "=" * 78, default_db_url)
+        + "=" * 78, sqlite_url)
 
 # What database are we actually on? Read by the /health endpoint so the operator can verify
 # persistence without guessing.
