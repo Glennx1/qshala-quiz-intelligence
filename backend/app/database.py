@@ -116,7 +116,7 @@ if is_postgres:
     # to fail sequentially across all resolved IPv6 and IPv4 addresses (6+ attempts), taking 5-15s
     # and causing Cloud Run startup TCP probes to fail with DEADLINE_EXCEEDED.
     # Therefore, skip startup options if connecting through a pooler.
-    is_pooled = "-pooler" in raw_db_url
+    is_pooled = "-pooler" in raw_db_url or "neon.tech" in raw_db_url
     _pg_base = dict(echo=False, pool_pre_ping=True, pool_recycle=280)
     _pg_connect_args = None if is_pooled else {"options": "-c idle_in_transaction_session_timeout=0"}
     _attempts = (_pg_connect_args, None) if _pg_connect_args else (None,)
@@ -205,6 +205,11 @@ def ensure_schema_columns():
         _ensure_vector_index(engine)
 
         with engine.connect() as conn:
+            if is_postgres:
+                try:
+                    conn.exec_driver_sql("SET lock_timeout = '2s';")
+                except Exception:
+                    pass
             # Check if questions table exists
             table_check = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='questions';").fetchone() if not is_postgres else True
             if table_check:
@@ -392,15 +397,16 @@ def ensure_schema_columns():
     except Exception as e:
         logger.debug(f"Schema auto-check notice: {e}")
 
-try:
-    ensure_schema_columns()
-except Exception:
-    pass
+# ensure_schema_columns() is executed in app lifespan, not at module import time
 
 def get_db():
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

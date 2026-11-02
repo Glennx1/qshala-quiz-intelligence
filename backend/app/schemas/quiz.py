@@ -44,11 +44,11 @@ class GeneratedQuestionResponse(BaseModel):
     options: Optional[List[str]] = None
     answer: str
     explanation: Optional[str] = None
-    difficulty: str
+    difficulty: Optional[str] = "Balanced"
     grade_min: Optional[int] = None
     grade_max: Optional[int] = None
     topic: Optional[str] = None
-    question_type: str
+    question_type: Optional[str] = "MULTIPLE_CHOICE"
     image_refs: List[str] = []
     question_images: List[str] = []
     answer_images: List[str] = []
@@ -59,9 +59,9 @@ class GeneratedQuestionResponse(BaseModel):
     question_video: List[str] = []
     raw_media_refs: List[str] = []
     visual_clues: Optional[str] = None
-    validation_status: str
+    validation_status: Optional[str] = "APPROVED"
     validation_details: Optional[Dict[str, Any]] = None
-    duplicate_score: float = 0.0
+    duplicate_score: Optional[float] = 0.0
     is_approved: bool = True
     created_at: datetime
     retrieval_sources: List[RetrievalSourceResponse] = []
@@ -103,13 +103,13 @@ class QuizResponse(BaseModel):
     difficulty: Optional[str] = "Balanced"
     difficulty_distribution: Optional[Dict[str, int]] = None
     question_count: int
-    question_types: List[str]
-    generation_mode: str
+    question_types: Optional[List[str]] = []
+    generation_mode: Optional[str] = "NEW"
     tags: Optional[List[str]] = []
     personality: Optional[str] = None
-    style: str
+    style: Optional[str] = "QSHALA_HISTORICAL"
     raw_prompt: Optional[str] = None
-    status: str
+    status: Optional[str] = "COMPLETED"
     created_at: datetime
     updated_at: datetime
     questions: List[GeneratedQuestionResponse] = []
