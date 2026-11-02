@@ -244,6 +244,22 @@ def ensure_schema_columns():
                     except Exception:
                         pass # Column already exists
 
+            # Check if ingestion_jobs table exists
+            job_table_check = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='ingestion_jobs';").fetchone() if not is_postgres else True
+            if job_table_check:
+                job_cols = [
+                    ("batch_id", "VARCHAR(36)"),
+                    ("client_item_id", "VARCHAR(64)")
+                ]
+                for col_name, col_type in job_cols:
+                    try:
+                        if is_postgres:
+                            conn.exec_driver_sql(f"ALTER TABLE ingestion_jobs ADD COLUMN IF NOT EXISTS {col_name} {col_type};")
+                        else:
+                            conn.exec_driver_sql(f"ALTER TABLE ingestion_jobs ADD COLUMN {col_name} {col_type};")
+                    except Exception:
+                        pass
+
             # Check if generated_questions table exists
             gen_q_table_check = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='generated_questions';").fetchone() if not is_postgres else True
             if gen_q_table_check:

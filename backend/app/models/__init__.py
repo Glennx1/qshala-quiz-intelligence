@@ -3,6 +3,7 @@ from backend.app.models.question import Question
 from backend.app.models.quiz import Quiz, GeneratedQuestion, RetrievalSource
 from backend.app.models.sharepoint import SharePointSyncState, SharePointFile
 from backend.app.models.job import IngestionJob
+from backend.app.models.upload_batch import UploadBatch
 from backend.app.models.qshala_tag import QshalaQuestionMetadata, QshalaTag, QshalaTagChange
 from backend.app.models.question_meta import DeckMetadata, QuestionTopicPath, QuestionRepeat, QuestionEditHistory
 
@@ -16,6 +17,7 @@ __all__ = [
     "SharePointSyncState",
     "SharePointFile",
     "IngestionJob",
+    "UploadBatch",
     "QshalaQuestionMetadata",
     "QshalaTag",
     "QshalaTagChange",

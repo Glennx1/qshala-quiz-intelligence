@@ -1,9 +1,14 @@
 import logging
+import os
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from backend.app.database import get_db
+from backend.app.models.document import Document
 from backend.app.models.job import IngestionJob
+from backend.app.models.upload_batch import UploadBatch
 from backend.app.services.jobs.job_queue import get_job_queue_service
 
 logger = logging.getLogger(__name__)
@@ -40,6 +45,243 @@ def upload_queue_status(db: Session = Depends(get_db)):
                   "document_id": j.document_id,
                   "updated_at": j.updated_at.isoformat() if j.updated_at else None} for j in rows],
     }
+
+
+# --------------------------------------------------------------------- Multi-deck upload batches (Phase M2)
+
+class BatchFileItem(BaseModel):
+    client_item_id: str
+    filename: str
+    size_bytes: int = 0
+
+
+class CreateBatchRequest(BaseModel):
+    files: List[BatchFileItem]
+
+
+@router.post("/upload-batch")
+def create_upload_batch(payload: CreateBatchRequest, db: Session = Depends(get_db)):
+    """Register a new multi-deck upload batch of up to 25 PPTX/PDF files."""
+    if not payload.files or len(payload.files) > 25:
+        raise HTTPException(status_code=400, detail="Batch must contain between 1 and 25 files.")
+
+    for f in payload.files:
+        ext = os.path.splitext(f.filename)[1].lower()
+        if ext not in [".pptx", ".ppt", ".pdf"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file format '{ext}' for file '{f.filename}'. Only PPTX, PPT, and PDF are allowed."
+            )
+        if not f.client_item_id or not f.client_item_id.strip():
+            raise HTTPException(status_code=400, detail="Each file must have a non-empty client_item_id.")
+
+    items_data = [f.model_dump() for f in payload.files]
+    batch = UploadBatch(total_expected=len(payload.files), items=items_data)
+    db.add(batch)
+    db.commit()
+    db.refresh(batch)
+    return {"batch_id": batch.id}
+
+
+@router.get("/upload-batches/active")
+def get_active_upload_batch(db: Session = Depends(get_db)):
+    """Return the most recent batch that still has any WAITING, QUEUED, or PROCESSING item, else {batch_id: null}."""
+    batches = db.query(UploadBatch).order_by(UploadBatch.created_at.desc()).limit(20).all()
+    for batch in batches:
+        jobs = db.query(IngestionJob).filter(IngestionJob.batch_id == batch.id).all()
+        jobs_by_cid = {j.client_item_id: j for j in jobs if j.client_item_id}
+        registered_items = batch.items or []
+        is_active = False
+        for item in registered_items:
+            cid = item.get("client_item_id")
+            if cid not in jobs_by_cid:
+                # Registered but bytes not yet received (WAITING)
+                is_active = True
+                break
+            j = jobs_by_cid[cid]
+            if j.status in ("PENDING", "PROCESSING"):
+                is_active = True
+                break
+        if is_active:
+            return {"batch_id": batch.id}
+
+    return {"batch_id": None}
+
+
+@router.get("/upload-batch/{batch_id}")
+async def get_upload_batch_status(batch_id: str, db: Session = Depends(get_db)):
+    """Get merged status and totals for an upload batch, calling dispatch_available() opportunistically."""
+    from backend.app.services.ingestion import upload_queue
+    try:
+        await upload_queue.dispatch_available()
+    except Exception as e:
+        logger.warning("[BATCH] opportunistic dispatch_available failed: %s", e)
+
+    batch = db.query(UploadBatch).filter(UploadBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Upload batch not found")
+
+    job_docs = (
+        db.query(IngestionJob, Document)
+        .outerjoin(Document, IngestionJob.document_id == Document.id)
+        .filter(IngestionJob.batch_id == batch_id)
+        .all()
+    )
+
+    pending_job_ids = [
+        row[0] for row in db.query(IngestionJob.id)
+        .filter(IngestionJob.source_type == "MANUAL_UPLOAD", IngestionJob.status == "PENDING")
+        .order_by(IngestionJob.created_at)
+        .all()
+    ]
+
+    jobs_by_cid = {}
+    for j, d in job_docs:
+        if j.client_item_id:
+            jobs_by_cid[j.client_item_id] = (j, d)
+
+    registered_items = batch.items or []
+    items_out = []
+    totals = {
+        "total": len(registered_items),
+        "completed": 0,
+        "processing": 0,
+        "queued": 0,
+        "waiting": 0,
+        "failed": 0,
+        "cancelled": 0,
+    }
+
+    for item in registered_items:
+        cid = item.get("client_item_id")
+        fname = item.get("filename")
+        if cid in jobs_by_cid:
+            job, doc = jobs_by_cid[cid]
+            if job.status == "PENDING":
+                st = "QUEUED"
+            elif job.status == "PROCESSING":
+                st = "PROCESSING"
+            elif job.status == "COMPLETED":
+                st = "COMPLETED"
+            elif job.status == "CANCELLED":
+                st = "CANCELLED"
+            else:
+                st = "FAILED"
+
+            if doc:
+                if doc.processing_status == "CANCELLED":
+                    st = "CANCELLED"
+                elif doc.processing_status == "FAILED":
+                    st = "FAILED"
+
+            q_pos = pending_job_ids.index(job.id) if (job.id in pending_job_ids and st == "QUEUED") else None
+
+            pct = 0
+            step_text = job.current_step
+            if st == "PROCESSING":
+                if doc and doc.progress_detail:
+                    pct = doc.progress_detail.get("progress_percentage", 0)
+                    step_text = (
+                        doc.progress_detail.get("current_stage")
+                        or doc.progress_detail.get("step")
+                        or job.current_step
+                    )
+            elif st == "COMPLETED":
+                pct = 100
+
+            err = job.error_message or (doc.processing_error if doc else None)
+
+            items_out.append({
+                "client_item_id": cid,
+                "filename": fname or job.filename,
+                "status": st,
+                "document_id": job.document_id,
+                "job_id": job.id,
+                "queue_position": q_pos,
+                "slides": doc.slide_count if (doc and doc.slide_count is not None) else 0,
+                "questions": doc.question_count if (doc and doc.question_count is not None) else 0,
+                "step": step_text,
+                "percentage": pct,
+                "error": err,
+            })
+            totals[st.lower()] = totals.get(st.lower(), 0) + 1
+        else:
+            items_out.append({
+                "client_item_id": cid,
+                "filename": fname,
+                "status": "WAITING",
+                "document_id": None,
+                "job_id": None,
+                "queue_position": None,
+                "slides": 0,
+                "questions": 0,
+                "step": None,
+                "percentage": 0,
+                "error": None,
+            })
+            totals["waiting"] += 1
+
+    return {
+        "batch_id": batch.id,
+        "created_at": batch.created_at.isoformat() if batch.created_at else None,
+        "totals": totals,
+        "items": items_out,
+    }
+
+
+@router.post("/upload-batch/{batch_id}/cancel-pending")
+def cancel_pending_batch_items(batch_id: str, db: Session = Depends(get_db)):
+    """Cancels all QUEUED (PENDING) jobs of that batch. Must NOT touch the PROCESSING job."""
+    from backend.app.services.ingestion import upload_queue as uq
+    from backend.app.services.ingestion.cancellation import request_doc_cancel
+    from backend.app.services.storage.r2_storage import get_r2_service
+
+    now = datetime.now(timezone.utc)
+    queued_jobs = (
+        db.query(IngestionJob)
+        .filter(IngestionJob.batch_id == batch_id, IngestionJob.status == "PENDING")
+        .all()
+    )
+
+    r2 = get_r2_service()
+    cancelled_count = 0
+
+    for job in queued_jobs:
+        job.status = "CANCELLED"
+        job.current_step = "CANCELLED"
+        job.completed_at = now
+        job.updated_at = now
+        job.error_message = "Cancelled by user"
+
+        if job.document_id:
+            request_doc_cancel(job.document_id)
+            doc = db.query(Document).filter(Document.id == job.document_id).first()
+            if doc:
+                doc.processing_status = "CANCELLED"
+                doc.cancel_requested = True
+                if r2.is_configured:
+                    ext = os.path.splitext(doc.storage_path or doc.filename or "")[1]
+                    raw_key = f"raw-uploads/{doc.id}{ext}"
+                    try:
+                        r2.delete_object(raw_key)
+                        logger.info("[BATCH-CANCEL] removed raw R2 key %s for doc %s", raw_key, doc.id)
+                    except Exception as e:
+                        logger.warning("[BATCH-CANCEL] failed to delete R2 object %s: %s", raw_key, e)
+                if doc.storage_path and os.path.exists(doc.storage_path):
+                    try:
+                        os.remove(doc.storage_path)
+                    except Exception:
+                        pass
+                try:
+                    uq.purge_artifacts(db, doc.id)
+                except Exception as e:
+                    logger.warning("[BATCH-CANCEL] purge_artifacts failed for doc %s: %s", doc.id, e)
+
+        cancelled_count += 1
+
+    db.commit()
+    logger.info("[BATCH-CANCEL] cancelled %d pending job(s) for batch %s", cancelled_count, batch_id)
+    return {"batch_id": batch_id, "cancelled_count": cancelled_count}
 
 def to_job_dict(job: IngestionJob) -> Dict[str, Any]:
     step_data = job.step_data or {}

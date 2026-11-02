@@ -45,18 +45,35 @@ def _now():
 
 # --------------------------------------------------------------------- enqueue / status
 
-def enqueue_upload(db: Session, *, document_id: str, filename: str) -> IngestionJob:
+def enqueue_upload(
+    db: Session,
+    *,
+    document_id: str,
+    filename: str,
+    batch_id: "str | None" = None,
+    client_item_id: "str | None" = None,
+) -> IngestionJob:
     """Create a PENDING ingestion job for an uploaded deck and mark the document QUEUED."""
-    job = IngestionJob(source_type=SOURCE, filename=filename, document_id=document_id,
-                       status="PENDING", current_step="QUEUED",
-                       max_retries=settings.UPLOAD_QUEUE_MAX_RETRIES)
+    job = IngestionJob(
+        source_type=SOURCE,
+        filename=filename,
+        document_id=document_id,
+        batch_id=batch_id,
+        client_item_id=client_item_id,
+        status="PENDING",
+        current_step="QUEUED",
+        max_retries=settings.UPLOAD_QUEUE_MAX_RETRIES,
+    )
     db.add(job)
     doc = db.query(Document).filter(Document.id == document_id).first()
     if doc is not None:
         doc.processing_status = "QUEUED"
     db.commit()
     db.refresh(job)
-    logger.info("[QUEUE] enqueued %s (doc=%s), position=%d", job.id, document_id, queue_position(db, job))
+    logger.info(
+        "[QUEUE] enqueued %s (doc=%s batch=%s item=%s), position=%d",
+        job.id, document_id, batch_id, client_item_id, queue_position(db, job)
+    )
     return job
 
 

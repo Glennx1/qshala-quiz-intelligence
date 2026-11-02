@@ -24,7 +24,14 @@ from backend.app.services.ingestion.cancellation import (
 logger = logging.getLogger(__name__)
 
 
-def _schedule_ingestion(doc, db: Session, background_tasks: BackgroundTasks, raw_already_in_r2: bool = False) -> None:
+def _schedule_ingestion(
+    doc,
+    db: Session,
+    background_tasks: BackgroundTasks,
+    raw_already_in_r2: bool = False,
+    batch_id: Optional[str] = None,
+    client_item_id: Optional[str] = None,
+) -> None:
     """Start ingestion for an uploaded deck.
 
     Three modes, in priority order:
@@ -91,7 +98,10 @@ def _schedule_ingestion(doc, db: Session, background_tasks: BackgroundTasks, raw
 
         if settings.UPLOAD_QUEUE_ENABLED:
             from backend.app.services.ingestion import upload_queue
-            job = upload_queue.enqueue_upload(db, document_id=doc.id, filename=doc.filename)
+            job = upload_queue.enqueue_upload(
+                db, document_id=doc.id, filename=doc.filename,
+                batch_id=batch_id, client_item_id=client_item_id
+            )
             background_tasks.add_task(upload_queue.dispatch_available)
             logger.info("[UPLOAD] queued for cloud_run_job doc_id=%s (job=%s)", doc.id, job.id)
             return
@@ -109,7 +119,10 @@ def _schedule_ingestion(doc, db: Session, background_tasks: BackgroundTasks, raw
         return
     if settings.UPLOAD_QUEUE_ENABLED:
         from backend.app.services.ingestion import upload_queue
-        job = upload_queue.enqueue_upload(db, document_id=doc.id, filename=doc.filename)
+        job = upload_queue.enqueue_upload(
+            db, document_id=doc.id, filename=doc.filename,
+            batch_id=batch_id, client_item_id=client_item_id
+        )
         pos = upload_queue.queue_position(db, job)
         INGESTION_STATUS_REGISTRY[doc.id] = {
             "document_id": doc.id, "status": "QUEUED", "progress_percentage": 0,
@@ -157,6 +170,8 @@ async def upload_document(
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
     year: Optional[int] = Form(None),
+    batch_id: Optional[str] = Form(None),
+    client_item_id: Optional[str] = Form(None),
     db: Session = Depends(get_db)
 ):
     logger.info(f"[UPLOAD] request received: filename={file.filename}, content_type={file.content_type}")
@@ -236,7 +251,7 @@ async def upload_document(
 
     logger.info(f"[UPLOAD] document record created: id={doc_id}, status=PROCESSING")
 
-    _schedule_ingestion(doc, db, background_tasks)
+    _schedule_ingestion(doc, db, background_tasks, batch_id=batch_id, client_item_id=client_item_id)
     return doc
 
 _MULTIPART_STATE_FILE = "r2_multipart_state.json"
@@ -246,6 +261,7 @@ async def _upload_chunk_direct_to_r2(
     chunk_dir, chunk: UploadFile, upload_id: str, chunk_index: int, total_chunks: int,
     ext: str, filename: str, title: Optional[str], year: Optional[int],
     r2, db: Session, background_tasks: BackgroundTasks,
+    batch_id: Optional[str] = None, client_item_id: Optional[str] = None,
 ):
     """The cloud_run_job+R2 path for /upload-chunk: every slice goes straight into an R2
     multipart upload (one part per slice -- the frontend's 24 MB slices are already well above
@@ -280,6 +296,7 @@ async def _upload_chunk_direct_to_r2(
         state = {
             "doc_id": doc_id, "raw_key": raw_key, "r2_upload_id": r2_upload_id,
             "filename": filename, "title": title, "year": year,
+            "batch_id": batch_id, "client_item_id": client_item_id,
             "parts": {}, "total_bytes": 0,
         }
     else:
@@ -358,7 +375,10 @@ async def _upload_chunk_direct_to_r2(
 
     logger.info(f"[UPLOAD-CHUNK] file streamed directly to R2: doc_id={doc_id} key={state['raw_key']}")
 
-    _schedule_ingestion(doc, db, background_tasks, raw_already_in_r2=True)
+    _schedule_ingestion(
+        doc, db, background_tasks, raw_already_in_r2=True,
+        batch_id=state.get("batch_id"), client_item_id=state.get("client_item_id")
+    )
 
     return {
         "status": "COMPLETED",
@@ -389,6 +409,8 @@ async def upload_document_chunk(
     filename: str = Form(...),
     title: Optional[str] = Form(None),
     year: Optional[int] = Form(None),
+    batch_id: Optional[str] = Form(None),
+    client_item_id: Optional[str] = Form(None),
     db: Session = Depends(get_db)
 ):
     """
@@ -427,7 +449,15 @@ async def upload_document_chunk(
             chunk_index=chunk_index, total_chunks=total_chunks,
             ext=ext, filename=filename, title=title, year=year,
             r2=r2, db=db, background_tasks=background_tasks,
+            batch_id=batch_id, client_item_id=client_item_id,
         )
+
+    if chunk_index == 0:
+        meta_path = chunk_dir / "meta.json"
+        try:
+            meta_path.write_text(json.dumps({"batch_id": batch_id, "client_item_id": client_item_id}))
+        except Exception:
+            pass
 
     chunk_path = chunk_dir / f"chunk_{chunk_index:05d}.part"
 
@@ -482,6 +512,17 @@ async def upload_document_chunk(
                     f"upload size ({MAX_FILE_SIZE_MB:.0f} MB). Raise MAX_UPLOAD_MB on the backend.")
         )
 
+    saved_batch_id = None
+    saved_client_item_id = None
+    meta_path = chunk_dir / "meta.json"
+    if meta_path.exists():
+        try:
+            m = json.loads(meta_path.read_text())
+            saved_batch_id = m.get("batch_id")
+            saved_client_item_id = m.get("client_item_id")
+        except Exception:
+            pass
+
     # Clean up chunk directory
     try:
         shutil.rmtree(chunk_dir)
@@ -511,7 +552,10 @@ async def upload_document_chunk(
 
     logger.info(f"[UPLOAD-CHUNK] file reassembled successfully: doc_id={doc_id}, size={file_size} bytes")
 
-    _schedule_ingestion(doc, db, background_tasks)
+    _schedule_ingestion(
+        doc, db, background_tasks,
+        batch_id=saved_batch_id, client_item_id=saved_client_item_id
+    )
 
     return {
         "status": "COMPLETED",

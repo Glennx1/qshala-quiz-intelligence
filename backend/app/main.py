@@ -31,6 +31,7 @@ from backend.app.routers import documents, questions, quizzes, stats, jobs, shar
 # the first create_all call below. Importing the module is enough; the class
 # definitions attach themselves to Base.metadata.
 from backend.app.models.question import Question  # noqa: F401
+from backend.app.models.upload_batch import UploadBatch  # noqa: F401
 from backend.app.models.qshala_tag import (  # noqa: F401
     QshalaQuestionMetadata, QshalaTag, QshalaTagChange,
 )
