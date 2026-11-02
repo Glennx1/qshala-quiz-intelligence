@@ -84,9 +84,11 @@ def _brief_from_gemini(prompt: str, gem: Dict[str, Any], count: Optional[int],
     topics_l1 = list(gem.get("topics_l1") or (previous_brief or {}).get("topics_l1") or [])
     subtopics_l2 = list(gem.get("subtopics_l2") or (previous_brief or {}).get("subtopics_l2") or [])
 
-    query_bits = [str(gem.get("query") or "").strip()]
+    raw_query = str(gem.get("query") or "").strip()
+    query_bits = [raw_query] if raw_query else []
     query_bits += [str(t) for t in topics_l1 if t]
-    query_bits += [str(t) for t in subtopics_l2 if t]
+    if not raw_query:
+        query_bits += [str(t) for t in subtopics_l2 if t]
     query = re.sub(r"\s+", " ", " ".join(b for b in query_bits if b)).strip()
     from backend.app.services.prompt_quiz.topic_normalize import dedupe_query
     query = dedupe_query(query)
@@ -340,7 +342,7 @@ def _load_bank(db: Session) -> List[Dict[str, Any]]:
             "keywords": (getattr(t, 'keywords_l3', None) if t and getattr(t, 'keywords_l3', None) else None) or (q.tags or []),
             "india_international": getattr(t, 'india_international', None) if t else None,
             "shelf_life": (getattr(t, 'shelf_life', None) if t else None) or ("TIME_SENSITIVE" if getattr(q, "temporal_nature", None) == "TIME_SENSITIVE" else "EVERGREEN"),
-            "sensitivity": getattr(t, 'sensitivity', None) if t else None,
+            "sensitivity": (getattr(t, 'sensitivity', None) if t and getattr(t, 'sensitivity', None) else None) or ("NONE" if (t or any(a in (getattr(q, 'audience_suitability', []) or []) for a in ("primary", "middle_school", "high_school", "general"))) else None),
             "image_dependent": has_img,
             "question_images": list(getattr(q, 'question_images', []) or []),
             "answer_images": list(getattr(q, 'answer_images', []) or []),
@@ -461,7 +463,12 @@ def editor(cands: List[Dict[str, Any]], brief: Brief) -> List[Dict[str, Any]]:
     ordered_cands = list(cands)
 
     # Primary: relevance score (BM25). Secondary: difficulty bias if requested.
-    if brief.hard_bias == "hard":
+    has_specific_topic = bool(brief.topics_l1 or brief.subtopics_l2 or brief.locality or (brief.query and brief.query.lower() not in ("general knowledge", "trivia", "")))
+    if not has_specific_topic and brief.hard_bias == "hard":
+        ordered_cands.sort(key=lambda c: (-(c.get("difficulty_score") or 0.5), -(c.get("score") or 0)))
+    elif not has_specific_topic and brief.hard_bias == "easy":
+        ordered_cands.sort(key=lambda c: ((c.get("difficulty_score") or 0.5), -(c.get("score") or 0)))
+    elif brief.hard_bias == "hard":
         ordered_cands.sort(key=lambda c: (-(c.get("score") or 0), -(c.get("difficulty_score") or 0.5)))
     elif brief.hard_bias == "easy":
         ordered_cands.sort(key=lambda c: (-(c.get("score") or 0), (c.get("difficulty_score") or 0.5)))
@@ -524,7 +531,7 @@ def host(brief: Brief, picked: List[Dict[str, Any]], bank_size: int) -> str:
 
 
 def _view(c: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: c.get(k) for k in ("id", "question_text", "answer", "topic_l1", "subtopic_l2",
+    return {k: c.get(k) for k in ("id", "question_text", "answer", "topic_l1", "subtopic_l2", "difficulty_score",
                                   "difficulty", "image_dependent", "shelf_life", "tagged", "score", "document_id",
                                   "question_images", "answer_images", "image_refs")}
 
@@ -537,12 +544,14 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
 
     # Geographic/locality queries: don't restrict to a single L1 topic or L2 subtopics.
     # "5 questions on Karnataka" wants ALL Karnataka content, not just Geography or Festivals.
-    is_geo = bool(brief.locality or any(g in (brief.prompt or "").lower() for g in ["karnataka", "bengaluru", "bangalore", "mumbai", "delhi", "chennai", "pune", "hyderabad", "kolkata"]))
+    is_geo = bool(brief.locality or any(g in (brief.prompt or "").lower() for g in ["karnataka", "bengaluru", "bangalore", "mumbai", "delhi", "chennai", "pune", "hyderabad", "kolkata", "india", "bharat"]))
     if is_geo:
         brief.topics_l1 = []
         brief.subtopics_l2 = []
         if brief.locality:
             brief.query = brief.locality
+        elif any(g in (brief.prompt or "").lower() for g in ["india", "bharat"]):
+            brief.query = "india"
         brief.search_terms = []
 
     bank = _load_bank(db)
@@ -562,13 +571,13 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
     # Broad hits for adjacent pool only (tagged with score capped below real matches)
     if len(hits) < pool_cap:
         min_real_score = min((float(h.get("score") or 0.0) for h in hits), default=0.1) if hits else 0.1
-        pad_cap = max(min_real_score * 0.5, 0.05)
+        pad_cap = min(max(min_real_score * 0.5, 0.05), MIN_RELEVANCE_SCORE - 0.05)
         seen = {h["id"] for h in hits}
         broad = idx.search("", filters=None, top_k=pool_cap)
         for b in broad:
             if b["id"] not in seen:
                 b_adj = dict(b)
-                b_adj["score"] = round(pad_cap * 0.5, 3)
+                b_adj["score"] = round(min(pad_cap * 0.5, 0.2), 3)
                 hits.append(b_adj)
 
     # Split into on-topic vs adjacent

@@ -8,8 +8,13 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 
 Candidate = Dict[str, Any]
 
-HARD_FLAGS = ("format", "no_images", "school_safe", "evergreen")
+HARD_FLAGS = ("format", "no_images", "school_safe", "evergreen", "india_international")
 _BANDS = {"easy": (0.0, 0.35), "medium": (0.35, 0.65), "hard": (0.65, 1.01)}
+_IN_MARKERS = (
+    "india", "indian", "karnataka", "bangalore", "bengaluru",
+    "mumbai", "bombay", "delhi", "chennai", "madras",
+    "kolkata", "calcutta", "pune", "hyderabad", "mysore", "mysuru", "hassan"
+)
 
 
 def _lc(v: Any) -> str:
@@ -37,6 +42,24 @@ def passes_hard(c: Candidate, filters: Dict[str, Any], format_filter: Optional[s
     if skip != "evergreen" and f.get("evergreen"):
         if (c.get("shelf_life") or "").upper() == "TIME_SENSITIVE":
             return False
+    if skip != "india_international" and f.get("india_international"):
+        target_geo = str(f.get("india_international")).upper()
+        c_geo = (c.get("india_international") or "").upper()
+        if c_geo and c_geo in (target_geo, "MIXED"):
+            pass
+        else:
+            txt = (
+                (c.get("question_text") or "") + " " +
+                (c.get("answer") or "") + " " +
+                (c.get("topic_l1") or "") + " " +
+                (c.get("city_name") or "") + " " +
+                (c.get("geo_region") or "")
+            ).lower()
+            has_in = any(m in txt for m in _IN_MARKERS)
+            if target_geo == "IN" and not has_in:
+                return False
+            if target_geo == "INTL" and has_in:
+                return False
     return True
 
 
@@ -78,6 +101,9 @@ def audience_score(c: Candidate, *, locality: Optional[str] = None, india_focuse
     """Additive nudge on top of the BM25 score. Roughly -0.4 .. +1.8."""
     d = 0.0
     geo = (c.get("india_international") or "NA").upper()
+    if geo in ("NA", ""):
+        txt = ((c.get("question_text") or "") + " " + (c.get("answer") or "")).lower()
+        geo = "IN" if any(m in txt for m in _IN_MARKERS) else "INTL"
     if india_focused is True:
         d += 0.5 if geo in ("IN", "MIXED") else (-0.4 if geo == "INTL" else 0.0)
     elif india_focused is False:
