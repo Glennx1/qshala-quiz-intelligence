@@ -339,3 +339,38 @@ def test_pptx_export_regression_test_pptx_fixes():
     # Slide 5: Question 2 - MUST NOT have empty text!
     s5_texts = [p.text.strip() for s in prs.slides[4].shapes if s.has_text_frame for p in s.text_frame.paragraphs if p.text.strip()]
     assert any("fuel policy connect" in t.lower() for t in s5_texts), f"Expected fallback clue text, got: {s5_texts}"
+
+
+
+def test_pptx_export_with_video_ref_and_kwargs():
+    """
+    Test export for questions with video media references and no video keywords,
+    ensuring q_format resolution and kwargs acceptance without crashing.
+    """
+    sample_quiz = {
+        "id": "quiz-video-test",
+        "title": "Karnataka Quiz",
+        "topic": "Karnataka",
+        "questions": [
+            {
+                "id": "q-vid-1",
+                "question_text": "Orkla India, the subsidiary of Norwegian investment company Orkla ASA, owns which heritage brand?",
+                "answer": "MTR",
+                "explanation": "MTR Foods is based in Bengaluru, Karnataka.",
+                "raw_media_refs": ["https://example.com/slides/media10.mp4"],
+                "video_refs": ["https://example.com/slides/media10.mp4"],
+                "question_format": "QA",
+                "is_approved": True,
+            }
+        ]
+    }
+    pptx_bytes = QuizExporter.to_pptx(
+        sample_quiz,
+        quiz_type="school",
+        custom_subtitle="Test Subtitle",
+        show_answer_divider=True,
+    )
+    assert isinstance(pptx_bytes, bytes)
+    assert len(pptx_bytes) > 1000
+    prs = Presentation(io.BytesIO(pptx_bytes))
+    assert len(prs.slides) >= 3

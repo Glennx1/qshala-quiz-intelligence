@@ -356,7 +356,7 @@ export default function QuizzerHome() {
                   </span>
                   {draft.brief.locality && (
                     <span className="rounded-full bg-white px-3 py-1 font-medium text-slate-700 border border-slate-200">
-                      City: {draft.brief.locality}
+                      Location: {draft.brief.locality}
                     </span>
                   )}
                   {draft.brief.format_filter && (
@@ -411,7 +411,7 @@ export default function QuizzerHome() {
                     </select>
                   </label>
                   <label className="flex items-center gap-1 text-slate-600">
-                    City:
+                    Location:
                     <input
                       type="text"
                       placeholder="e.g. Bengaluru"
