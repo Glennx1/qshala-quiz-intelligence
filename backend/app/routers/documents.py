@@ -3,7 +3,7 @@ import logging
 import os
 import shutil
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, UploadFile, File, Form, BackgroundTasks, HTTPException
 from sqlalchemy.orm import Session
@@ -465,7 +465,7 @@ async def upload_document_chunk(
         raise HTTPException(status_code=400, detail="Invalid upload_id.")
     if upload_cancel_requested(upload_id):
         remove_chunk_dir(upload_id)
-        raise HTTPException(status_code=409, detail="Upload was cancelled.")
+        raise HTTPException(status_code=409, detail={"code": "upload_cancelled", "detail": "Upload was cancelled."})
 
     ext = os.path.splitext(filename)[1].lower()
     if ext not in [".pptx", ".ppt", ".pdf"]:
@@ -512,7 +512,7 @@ async def upload_document_chunk(
     # A cancel may have landed while this slice was still streaming in: drop everything.
     if upload_cancel_requested(upload_id):
         remove_chunk_dir(upload_id)
-        raise HTTPException(status_code=409, detail="Upload was cancelled.")
+        raise HTTPException(status_code=409, detail={"code": "upload_cancelled", "detail": "Upload was cancelled."})
 
     parts = list(chunk_dir.glob("chunk_*.part"))
     if len(parts) < total_chunks:

@@ -525,6 +525,8 @@ def cancel_job(job_id: str, db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
 
     if job.status == "PROCESSING":
+        job.status = "CANCELLING"
+        job.cancel_requested = True
         job.current_step = "CANCELLING"
         job.error_message = "Cancelled by user"
         job.updated_at = now

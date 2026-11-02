@@ -186,7 +186,7 @@ def _reclaim_stale(db: Session) -> None:
     from datetime import timedelta
     cutoff = _now() - timedelta(minutes=STALE_PROCESSING_MINUTES)
     processing_jobs = (db.query(IngestionJob)
-             .filter(IngestionJob.source_type == SOURCE, IngestionJob.status == "PROCESSING")
+             .filter(IngestionJob.source_type == SOURCE, IngestionJob.status.in_(["PROCESSING", "CANCELLING"]))
              .all())
 
     reclaimed = 0
@@ -246,6 +246,10 @@ def _reclaim_stale(db: Session) -> None:
     if reclaimed:
         db.commit()
         logger.warning("[QUEUE] reclaimed %d stale/terminated PROCESSING job(s)", reclaimed)
+    return reclaimed
+
+
+reap_dead_workers = _reclaim_stale
 
 
 def claim_next(db: Session) -> "IngestionJob | None":
@@ -262,7 +266,7 @@ def claim_next(db: Session) -> "IngestionJob | None":
     _reclaim_stale(db)   # a dead PROCESSING job must not block the queue forever
 
     busy = (db.query(IngestionJob)
-            .filter(IngestionJob.source_type == SOURCE, IngestionJob.status == "PROCESSING")
+            .filter(IngestionJob.source_type == SOURCE, IngestionJob.status.in_(["PROCESSING", "CANCELLING"]))
             .count())
     max_concurrency = max(1, getattr(settings, "INGESTION_MAX_CONCURRENCY", 1))
     if busy >= max_concurrency:
@@ -491,7 +495,7 @@ def reconcile_on_startup(db: Session) -> None:
     """A job left PROCESSING means the process died mid-run. Don't silently re-run (would duplicate
     slides); mark it FAILED with a clear message so the user can retry it deliberately."""
     stuck = (db.query(IngestionJob)
-             .filter(IngestionJob.source_type == SOURCE, IngestionJob.status == "PROCESSING")
+             .filter(IngestionJob.source_type == SOURCE, IngestionJob.status.in_(["PROCESSING", "CANCELLING"]))
              .all())
     for job in stuck:
         job.status = "FAILED"

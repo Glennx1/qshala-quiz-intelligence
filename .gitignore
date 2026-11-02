@@ -36,6 +36,7 @@ backend/storage/slides/*
 !backend/storage/slides/668b4c1f-ca4e-483b-8fe4-cacd4cb82f75/
 !backend/storage/slides/668b4c1f-ca4e-483b-8fe4-cacd4cb82f75/**
 backend/storage/chroma/
+backend/storage/tmp_chunks/
 scratch/
 Quizzards*.pptx
 *optimized*.pptx
