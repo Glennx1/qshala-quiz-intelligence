@@ -360,7 +360,7 @@ def _load_bank(db: Session) -> List[Dict[str, Any]]:
 
 # Minimum BM25 score to be considered relevant. Questions below this
 # matched the query only by accident (a stray word overlap).
-MIN_RELEVANCE_SCORE = 0.3
+MIN_RELEVANCE_SCORE = 0.4
 
 
 def librarian(bank: List[Dict[str, Any]], brief: Brief, pool: int = 80) -> List[Dict[str, Any]]:
@@ -375,23 +375,64 @@ def librarian(bank: List[Dict[str, Any]], brief: Brief, pool: int = 80) -> List[
 
     hits = idx.search(search_query, brief.filters, top_k=pool)
 
-    # Stage 2: relax non-safety filters but KEEP the query.
-    # This finds on-topic questions that were blocked by geography/audience filters.
-    if len(hits) < brief.count:
+    # ── relevance floor: drop questions with no real term match ──
+    if brief.query:
+        threshold = 0.2 if len(bank) == 1 else MIN_RELEVANCE_SCORE
+        real = [h for h in hits if h.get("score", 0) >= threshold]
+        if len(real) >= brief.count:
+            hits = real  # enough strong matches — use only those
+        elif real:
+            hits = real  # some strong matches — use them (may be < count, pad later)
+        # else: zero real matches — keep original hits so stage-2/3 fallback can pad
+
+    if len(hits) < brief.count:  # Stage 2: relax hard filters other than safety
         relaxed = {k: v for k, v in brief.filters.items() if k in (
             "school_safe", "exclude_image", "no_images", "evergreen_only", "evergreen", "india_international"
         )}
         seen = {h["id"] for h in hits}
-        hits += [h for h in idx.search(search_query, relaxed, top_k=pool) if h["id"] not in seen]
+        extra = [h for h in idx.search(search_query, relaxed, top_k=pool) if h["id"] not in seen]
+        if brief.query:
+            threshold = 0.2 if len(bank) == 1 else MIN_RELEVANCE_SCORE
+            extra = [h for h in extra if h.get("score", 0) >= threshold]
+        hits += extra
 
-    # NO stage 3. We do NOT search with an empty query.
-    # If the bank doesn't have enough on-topic questions, we deliver fewer
-    # and fulfillment.note tells the user honestly.
+    if len(hits) < brief.count and brief.query and getattr(brief, "cross_topic_padding", False):
+        # Stage 3: Not enough matches — pad with RELATED questions, not random ones.
+        # Use topic/subtopic from whatever DID match to find neighbours.
+        # IMPORTANT: padding scores must be CAPPED below the lowest real match score,
+        # so the editor always ranks real matches above padding.
+        min_real_score = min((h.get("score", 0) for h in hits), default=0.1) if hits else 0.1
+        pad_cap = max(min_real_score * 0.5, 0.05)  # padding scores stay below real matches
 
-    # Drop hits below the relevance floor
-    if brief.query:
-        threshold = 0.2 if len(bank) == 1 else MIN_RELEVANCE_SCORE
-        hits = [h for h in hits if h.get("score", 0) >= threshold]
+        seen = {h["id"] for h in hits}
+        relaxed = {k: v for k, v in brief.filters.items() if k in (
+            "school_safe", "exclude_image", "no_images", "evergreen_only", "evergreen", "india_international"
+        )}
+
+        # 3a: Try searching by the topics of matched questions (contextual padding)
+        if hits:
+            neighbour_topics = set()
+            for h in hits:
+                if h.get("topic_l1"):
+                    neighbour_topics.add(h["topic_l1"].lower())
+                if h.get("subtopic_l2"):
+                    neighbour_topics.add(h["subtopic_l2"].lower())
+            if neighbour_topics:
+                topic_query = " ".join(list(neighbour_topics)[:5])
+                topic_hits = idx.search(topic_query, relaxed, top_k=pool)
+                threshold = 0.2 if len(bank) == 1 else MIN_RELEVANCE_SCORE
+                topic_hits = [h for h in topic_hits if h["id"] not in seen and h.get("score", 0) >= threshold]
+                for h in topic_hits:
+                    h["score"] = pad_cap  # cap so padding never outranks real matches
+                hits += topic_hits
+                seen.update(h["id"] for h in topic_hits)
+
+        # 3b: Still short — fill with shuffled broad pool (diverse, not same every time)
+        if len(hits) < brief.count:
+            broad = [h for h in idx.search("", relaxed, top_k=pool) if h["id"] not in seen]
+            for h in broad:
+                h["score"] = pad_cap * 0.5  # broad padding ranks below contextual padding
+            hits += broad
 
     return hits
 
@@ -418,10 +459,14 @@ def guardian(hits: List[Dict[str, Any]], brief: Brief, exclude_ids: Optional[Set
 def editor(cands: List[Dict[str, Any]], brief: Brief) -> List[Dict[str, Any]]:
     n = brief.count
     ordered_cands = list(cands)
+
+    # Primary: relevance score (BM25). Secondary: difficulty bias if requested.
     if brief.hard_bias == "hard":
-        ordered_cands.sort(key=lambda c: -(c.get("difficulty_score") or 0.5))
+        ordered_cands.sort(key=lambda c: (-(c.get("score") or 0), -(c.get("difficulty_score") or 0.5)))
     elif brief.hard_bias == "easy":
-        ordered_cands.sort(key=lambda c: (c.get("difficulty_score") or 0.5))
+        ordered_cands.sort(key=lambda c: (-(c.get("score") or 0), (c.get("difficulty_score") or 0.5)))
+    else:
+        ordered_cands.sort(key=lambda c: -(c.get("score") or 0))
 
     # Only filter by subtopics when the brief carries bank-validated L2 names,
     # or when a non-geographic query explicitly names a full subtopic (e.g. query 'cricket' -> subtopic 'Cricket').
@@ -498,6 +543,7 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
         brief.subtopics_l2 = []
         if brief.locality:
             brief.query = brief.locality
+        brief.search_terms = []
 
     bank = _load_bank(db)
 
@@ -513,14 +559,16 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
     if brief.query:
         hits = [h for h in hits if float(h.get("score") or 0.0) >= MIN_RELEVANCE_SCORE]
 
-    # Broad hits for adjacent pool only (tagged with score 0 so is_on_topic never picks them)
+    # Broad hits for adjacent pool only (tagged with score capped below real matches)
     if len(hits) < pool_cap:
+        min_real_score = min((float(h.get("score") or 0.0) for h in hits), default=0.1) if hits else 0.1
+        pad_cap = max(min_real_score * 0.5, 0.05)
         seen = {h["id"] for h in hits}
         broad = idx.search("", filters=None, top_k=pool_cap)
         for b in broad:
             if b["id"] not in seen:
                 b_adj = dict(b)
-                b_adj["score"] = 0.1
+                b_adj["score"] = round(pad_cap * 0.5, 3)
                 hits.append(b_adj)
 
     # Split into on-topic vs adjacent

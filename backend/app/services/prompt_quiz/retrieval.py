@@ -16,7 +16,7 @@ Question dict shape (use your qshala_tags field names):
 """
 from __future__ import annotations
 import difflib
-import math, re
+import math, random as _rnd, re
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional
 
@@ -40,8 +40,8 @@ SYNONYMS: Dict[str, List[str]] = {
     "ipo": ["ipo", "listing", "public offering", "prospectus"],
     "stock": ["stock", "share", "nse", "bse", "sensex", "nifty", "exchange", "equity"],
     "market": ["market", "stock", "sensex", "nifty", "index"],
-    "cricket": ["cricket", "ipl", "bcci", "wicket", "test match", "world cup"],
-    "sports": ["sports", "league", "football", "olympics", "tournament", "player"],
+    "cricket": ["cricket", "ipl", "bcci", "wicket", "test match", "world cup", "icc"],  # added "icc"
+    "sports": ["sports", "league", "football", "olympics", "tournament", "player", "cricket", "ipl", "athlete"],  # added cricket, ipl, athlete
     "logo": ["logo", "brand", "identity", "mascot", "typeface", "symbol"],
     "brand": ["brand", "logo", "fmcg", "consumer", "marketing"],
     "ad": ["ad", "advertisement", "campaign", "advertising", "jingle", "tagline"],
@@ -71,7 +71,29 @@ SYNONYMS: Dict[str, List[str]] = {
     "bangalore": ["bangalore", "bengaluru", "karnataka"],
     "bengaluru": ["bengaluru", "bangalore", "karnataka"],
     "mumbai": ["mumbai", "bombay", "maharashtra"],
-    "bombay": ["bombay", "mumbai", "maharashtra"],
+    "bombay": ["bombay", "mumbai"],
+    # Geography — city name synonyms
+    "delhi": ["delhi", "new delhi", "ncr"],
+    "chennai": ["chennai", "madras", "tamil nadu"],
+    "kolkata": ["kolkata", "calcutta"],
+    "hyderabad": ["hyderabad", "telangana"],
+    # Entertainment and media
+    "entertainment": ["entertainment", "movie", "film", "bollywood", "music", "actor", "cinema", "show"],
+    "movie": ["movie", "film", "bollywood", "cinema", "actor", "director"],
+    "bollywood": ["bollywood", "movie", "film", "actor", "hindi cinema"],
+    # Education
+    "college": ["college", "university", "campus", "student", "education", "institute"],
+    "engineering": ["engineering", "engineer", "iit", "nit", "technology", "tech"],
+    "school": ["school", "student", "education", "class", "kids"],
+    # Finance extensions
+    "rbi": ["rbi", "reserve bank", "central bank", "monetary policy"],
+    "reit": ["reit", "real estate", "investment trust", "property"],
+    "npa": ["npa", "bad loan", "non performing", "default"],
+    # Misc
+    "politics": ["politics", "political", "government", "minister", "parliament", "election"],
+    "culture": ["culture", "cultural", "heritage", "tradition", "art", "festival"],
+    "quiz": ["quiz", "trivia", "question"],
+    "world cup": ["world cup", "icc", "fifa", "cricket", "tournament"],
 }
 
 WORD_NUMS: Dict[str, int] = {
@@ -151,10 +173,12 @@ class Index:
         for item in questions:
             parts = [item.get("question_text", ""), item.get("answer", ""),
                      " ".join(_kw(item)), item.get("subtopic_l2") or "",
-                     " ".join(item.get("secondary_l2") or []), item.get("search_summary") or ""]
-            # keywords/answer/subtopic repeated so they weigh more than body prose
+                     " ".join(item.get("secondary_l2") or []), item.get("search_summary") or "",
+                     item.get("topic_l1") or ""]  # topic_l1 added to index
+            # keywords/answer/subtopic/topic repeated so they weigh more than body prose
             toks = tokenize(" ".join(parts)) + tokenize(" ".join(_kw(item))) \
-                   + tokenize(item.get("answer", "")) + tokenize(item.get("subtopic_l2") or "")
+                   + tokenize(item.get("answer", "")) + tokenize(item.get("subtopic_l2") or "") \
+                   + tokenize(item.get("topic_l1") or "")
             c = Counter(toks)
             self.docs.append(c)
             self.len.append(sum(c.values()))
@@ -236,7 +260,9 @@ class Index:
             if not passes(i, item):
                 continue
             if is_broad:
-                s = 1.0 + (0.5 if item.get("tagged") else 0.0) + (0.4 if item.get("image_dependent") and not filters.get("exclude_image") else 0.0)
+                # Broad/empty query: all questions are equally valid,
+                # so add randomness to get variety instead of same order every time
+                s = 1.0 + (0.5 if item.get("tagged") else 0.0) + _rnd.random() * 0.3
             else:
                 s = self._bm25(i, qbag)
                 # small boost if the query words appear in the chosen topic/subtopic
@@ -245,7 +271,7 @@ class Index:
                 if any(t in tl_tokens for t in qbag):
                     s += 0.5
                 if item.get("image_dependent") and not filters.get("exclude_image"):
-                    s += 0.35
+                    s *= 1.15  # multiplicative: won't create a false floor for zero-match questions
             if s > 0:
                 scored.append((s, i, item))
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -301,9 +327,10 @@ def parse_prompt(prompt: str):
     final_count = count if count is not None else 20
     # strip filter words so they don't dominate the text match
     word_num_pattern = "|".join(WORD_NUMS.keys())
-    q = re.sub(r"\b(\d{1,3}|" + word_num_pattern + r"|questions?|quiz|round|evergreen|international|global|"
+    q = re.sub(r"\b(\d{1,3}|" + word_num_pattern + r"|questions?|quiz|round|rounds?|evergreen|international|global|"
                r"school|safe|family|kids|children|without images?|without image|no images?|no image|text only|non-?image|"
                r"easy|warm-?ups?|beginner|gentle|hard|tough|difficult|finals?|"
+               r"standard|qa|trivia|night|tonight|quick|surprise|some|good|best|great|nice|cool|fun|"
                r"on|about|a|an|the|of|for|with|give me|pull|me|show me|create|generate|want)\b",
                " ", p)
     q = re.sub(r"[^a-z0-9 ]", " ", q)

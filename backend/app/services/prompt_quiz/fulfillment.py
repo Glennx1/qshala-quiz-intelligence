@@ -10,6 +10,10 @@ from backend.app.services.prompt_quiz.audience import HARD_FLAGS, difficulty_pen
 Candidate = Dict[str, Any]
 _NEVER_OFFER_RELAX = {"school_safe"}        # a safety rule is never offered as a "relax this" suggestion
 
+# Minimum BM25 score to be considered relevant. Questions below this
+# matched the query only by accident (a stray word overlap).
+MIN_RELEVANCE_SCORE = 0.4
+
 
 def _l2_names(c: Candidate) -> set:
     names = {(c.get("subtopic_l2") or "").lower()} | {(x or "").lower() for x in (c.get("secondary_l2") or [])}
@@ -18,7 +22,7 @@ def _l2_names(c: Candidate) -> set:
 
 
 def is_on_topic(c: Candidate, l1s: Sequence[str], l2s: Sequence[str]) -> bool:
-    if float(c.get("score") or 0.0) < 0.3:
+    if float(c.get("score") or 0.0) < MIN_RELEVANCE_SCORE:
         return False
     l1set = {x.lower() for x in l1s or []}
     l2set = {x.lower() for x in l2s or []}
