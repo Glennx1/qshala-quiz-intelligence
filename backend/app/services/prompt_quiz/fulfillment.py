@@ -18,13 +18,15 @@ def _l2_names(c: Candidate) -> set:
 
 
 def is_on_topic(c: Candidate, l1s: Sequence[str], l2s: Sequence[str]) -> bool:
+    if float(c.get("score") or 0.0) < 0.3:
+        return False
     l1set = {x.lower() for x in l1s or []}
     l2set = {x.lower() for x in l2s or []}
     if l2set:
         return bool(_l2_names(c) & l2set)
     if l1set:
         return (c.get("topic_l1") or "").lower() in l1set
-    return float(c.get("score") or 0.0) >= 0.3
+    return True
 
 
 def split_pools(pool: List[Candidate], *, l1s: Sequence[str], l2s: Sequence[str], filters: Dict[str, Any],

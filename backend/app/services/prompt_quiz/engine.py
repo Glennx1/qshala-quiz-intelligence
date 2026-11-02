@@ -490,10 +490,14 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
                 exclude_ids: Optional[Set[str]] = None) -> Dict[str, Any]:
     brief = interpret(prompt, count, options, previous_brief)
 
-    # Geographic/locality queries: don't restrict to a single L1 topic.
-    # "5 questions on Karnataka" wants ALL Karnataka content, not just Geography.
-    if (brief.locality or any(g in (brief.prompt or "").lower() for g in ["karnataka", "bengaluru", "bangalore"])) and brief.topics_l1:
+    # Geographic/locality queries: don't restrict to a single L1 topic or L2 subtopics.
+    # "5 questions on Karnataka" wants ALL Karnataka content, not just Geography or Festivals.
+    is_geo = bool(brief.locality or any(g in (brief.prompt or "").lower() for g in ["karnataka", "bengaluru", "bangalore", "mumbai", "delhi", "chennai", "pune", "hyderabad", "kolkata"]))
+    if is_geo:
         brief.topics_l1 = []
+        brief.subtopics_l2 = []
+        if brief.locality:
+            brief.query = brief.locality
 
     bank = _load_bank(db)
 
