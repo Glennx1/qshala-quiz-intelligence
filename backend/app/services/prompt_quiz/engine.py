@@ -546,12 +546,26 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
     # "5 questions on Karnataka" wants ALL Karnataka content, not just Geography or Festivals.
     is_geo = bool(brief.locality or any(g in (brief.prompt or "").lower() for g in ["karnataka", "bengaluru", "bangalore", "mumbai", "delhi", "chennai", "pune", "hyderabad", "kolkata", "india", "bharat"]))
     if is_geo:
-        brief.topics_l1 = []
-        brief.subtopics_l2 = []
-        if brief.locality:
-            brief.query = brief.locality
-        elif any(g in (brief.prompt or "").lower() for g in ["india", "bharat"]):
-            brief.query = "india"
+        has_subject = any(t in (brief.prompt or "").lower() for t in ("brand", "finance", "bank", "food", "start", "tech", "sport", "cricket", "market", "music", "movie"))
+        if not has_subject:
+            brief.topics_l1 = []
+            brief.subtopics_l2 = []
+            if brief.locality:
+                brief.query = brief.locality
+            elif any(g in (brief.prompt or "").lower() for g in ["india", "bharat"]):
+                brief.query = "india"
+            brief.search_terms = []
+
+    # Broad / vague prompts: "10 questions", "give me 5 questions", "quiz for tonight", "surprise me with 5 questions"
+    # When no topic, locality, or subtopic was requested, do a broad randomized search so every run gives a fresh, varied quiz.
+    p_lower = (brief.prompt or "").lower().strip()
+    is_vague = not (brief.topics_l1 or brief.subtopics_l2 or brief.locality) and (
+        bool(re.search(r"^(?:give\s+me\s+)?(?:\d+|[a-z]+)?\s*questions?$", p_lower))
+        or bool(re.search(r"\b(surprise(?:\s+me)?|tonight|random|quick|standard)\b", p_lower))
+        or (brief.query or "").lower() in ("general knowledge", "trivia", "general", "surprise", "tonight", "", "evergreen", "evergreen only")
+    ) and not any(k in p_lower for k in ("on ", "about ", "finance", "bank", "sport", "cricket", "tech", "food", "ai", "brand", "startup", "delhi", "mumbai", "karnataka", "india", "tata", "paytm", "jalebi"))
+    if is_vague:
+        brief.query = ""
         brief.search_terms = []
 
     bank = _load_bank(db)
