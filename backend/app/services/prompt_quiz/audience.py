@@ -86,12 +86,29 @@ def audience_score(c: Candidate, *, locality: Optional[str] = None, india_focuse
     loc = _lc(locality)
     if loc and loc not in ("global", "international", "world"):
         city, region = _lc(c.get("city_name")), _lc(c.get("geo_region"))
-        if city and loc == city:
+        loc_aliases = {loc}
+        if loc in ("bengaluru", "bangalore"):
+            loc_aliases = {"bengaluru", "bangalore"}
+        elif loc in ("mumbai", "bombay"):
+            loc_aliases = {"mumbai", "bombay"}
+        elif loc in ("chennai", "madras"):
+            loc_aliases = {"chennai", "madras"}
+        elif loc in ("kolkata", "calcutta"):
+            loc_aliases = {"kolkata", "calcutta"}
+        elif loc in ("delhi", "new delhi"):
+            loc_aliases = {"delhi", "new delhi"}
+        elif loc == "karnataka":
+            loc_aliases = {"karnataka", "bengaluru", "bangalore", "mysore", "mysuru"}
+
+        q_blob = (_lc(c.get("question_text")) + " " + _lc(c.get("answer")) + " " +
+                  " ".join(str(kw).lower() for kw in c.get("keywords") or []) + " " + _lc(c.get("search_summary")))
+
+        if city and any(a == city for a in loc_aliases):
             d += 0.9
-        elif (region and (loc == region or loc in region)) or (city and loc in city):
+        elif (region and any(a == region or a in region for a in loc_aliases)) or (city and any(a in city for a in loc_aliases)):
             d += 0.6
-        elif loc in _lc(c.get("question_text")):
-            d += 0.3
+        elif any(a in q_blob for a in loc_aliases):
+            d += 0.5
 
     aud = _lc(audience)
     if aud and aud != "general" and _lc(c.get("primary_audience")) == aud:

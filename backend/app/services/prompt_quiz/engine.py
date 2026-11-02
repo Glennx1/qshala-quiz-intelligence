@@ -196,10 +196,11 @@ def _brief_from_regex(prompt: str, count: Optional[int],
 
     # Locality detection
     locality = (previous_brief or {}).get("locality")
-    city_m = re.search(r"\b(bangalore|bengaluru|mumbai|bombay|delhi|new delhi|pune|chennai|madras|kolkata|calcutta|hyderabad)\b", p)
+    city_m = re.search(r"\b(karnataka|bangalore|bengaluru|mumbai|bombay|delhi|new delhi|pune|chennai|madras|kolkata|calcutta|hyderabad)\b", p)
     if city_m:
         raw_city = city_m.group(1).lower()
         city_map = {
+            "karnataka": "Karnataka",
             "bangalore": "Bengaluru", "bengaluru": "Bengaluru",
             "mumbai": "Mumbai", "bombay": "Mumbai",
             "delhi": "Delhi", "new delhi": "Delhi",
@@ -422,13 +423,14 @@ def editor(cands: List[Dict[str, Any]], brief: Brief) -> List[Dict[str, Any]]:
     elif brief.hard_bias == "easy":
         ordered_cands.sort(key=lambda c: (c.get("difficulty_score") or 0.5))
 
-    # Detect if user specifically targeted certain subtopics
+    # Only filter by subtopics when the brief carries bank-validated L2 names,
+    # or when a non-geographic query explicitly names a full subtopic (e.g. query 'cricket' -> subtopic 'Cricket').
     target_subs = set(brief.subtopics_l2)
-    if not target_subs and brief.query:
-        q_words = set(brief.query.lower().split())
+    if not target_subs and brief.query and not brief.locality:
+        q_tokens = {w for w in brief.query.lower().split() if len(w) > 3}
         for c in cands:
             sub = c.get("subtopic_l2")
-            if sub and set(sub.lower().split()) & q_words:
+            if sub and sub.lower() in q_tokens:
                 target_subs.add(sub)
 
     if target_subs and not brief.cross_topic_padding:
@@ -487,6 +489,12 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
                 previous_brief: Optional[Dict[str, Any]] = None,
                 exclude_ids: Optional[Set[str]] = None) -> Dict[str, Any]:
     brief = interpret(prompt, count, options, previous_brief)
+
+    # Geographic/locality queries: don't restrict to a single L1 topic.
+    # "5 questions on Karnataka" wants ALL Karnataka content, not just Geography.
+    if (brief.locality or any(g in (brief.prompt or "").lower() for g in ["karnataka", "bengaluru", "bangalore"])) and brief.topics_l1:
+        brief.topics_l1 = []
+
     bank = _load_bank(db)
 
     # 3. Librarian: search broadly with filters=None, top_k=300
@@ -511,13 +519,16 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
                 hits.append(b_adj)
 
     # Split into on-topic vs adjacent
-    on_ok, adjacent, on_all, _ = split_pools(
+    on_ok, adjacent, on_all, effective_l2s = split_pools(
         hits,
         l1s=brief.topics_l1,
         l2s=brief.subtopics_l2,
         filters=brief.filters,
         format_filter=brief.format_filter,
     )
+    # Use bank-validated subtopics so the editor never filters by
+    # Gemini-invented names that don't exist in the bank
+    brief.subtopics_l2 = effective_l2s
 
     # 4. Score each pool item
     def _rank_cand(c: Dict[str, Any]) -> float:

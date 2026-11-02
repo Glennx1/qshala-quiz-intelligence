@@ -67,6 +67,11 @@ SYNONYMS: Dict[str, List[str]] = {
     "corporate": ["company", "business", "brand", "ceo", "industry", "merger", "corporate", "acquisition", "firm", "leader"],
     "business": ["company", "brand", "startup", "market", "industry", "business", "corporate"],
     "company": ["company", "brand", "corporate", "business", "founder", "ceo"],
+    "karnataka": ["karnataka", "bangalore", "bengaluru", "mysore", "mysuru", "kannada"],
+    "bangalore": ["bangalore", "bengaluru", "karnataka"],
+    "bengaluru": ["bengaluru", "bangalore", "karnataka"],
+    "mumbai": ["mumbai", "bombay", "maharashtra"],
+    "bombay": ["bombay", "mumbai", "maharashtra"],
 }
 
 WORD_NUMS: Dict[str, int] = {
