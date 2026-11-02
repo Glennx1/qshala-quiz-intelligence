@@ -36,8 +36,8 @@ from backend.app.services.tagging.difficulty_engine import DifficultyEngine
 
 # Feature toggle: set to False to revert to legacy AutoTagger writing topic tags on upload
 USE_QSHALA_TAGGER: bool = True
-VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "12"))   # parallel image-description calls (scaled for 2048 MB Google Cloud Run budget)
-TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "8"))   # parallel Gemini tagging calls per deck
+VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "24"))   # parallel image-description calls (scaled for 2048 MB Google Cloud Run budget)
+TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "16"))   # parallel Gemini tagging calls per deck
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
 
@@ -124,7 +124,7 @@ class IngestionPipeline:
             db.commit()
 
             file_ext = os.path.splitext(doc.filename)[1].lower()
-            
+
             # Step 1 & 2: Extracting and Processing Slides
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "progress_percentage": 20,
@@ -185,7 +185,7 @@ class IngestionPipeline:
                            f"Sorted slides: {_kinds.get('QUESTION', 0)} question, {_kinds.get('ANSWER', 0)} answer, "
                            f"{_other} other (titles, rounds, scoreboards: not sent to the AI)")
             doc.slide_count = len(slide_models)
-            
+
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "progress_percentage": 45,
                 "slides_processed": len(slide_models),

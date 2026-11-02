@@ -12,6 +12,11 @@ if str(backend_dir) not in sys.path:
 
 import pytest
 
+@pytest.fixture(scope="session", autouse=True)
+def setup_test_schema():
+    from backend.app.database import ensure_schema_columns
+    ensure_schema_columns()
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"

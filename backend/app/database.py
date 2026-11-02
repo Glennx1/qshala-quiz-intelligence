@@ -397,7 +397,13 @@ def ensure_schema_columns():
     except Exception as e:
         logger.debug(f"Schema auto-check notice: {e}")
 
-# ensure_schema_columns() is executed in app lifespan, not at module import time
+# In SQLite mode, ensure schema columns are initialized immediately so local workers,
+# test suites, and scripts never fail on missing columns. (PostgreSQL continues via lifespan).
+if not is_postgres:
+    try:
+        ensure_schema_columns()
+    except Exception as e:
+        logger.debug(f"SQLite auto-migration notice: {e}")
 
 def get_db():
     db = SessionLocal()

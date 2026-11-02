@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import logging
@@ -15,7 +16,7 @@ class GeminiLLMProvider(LLMProvider):
         if (key.startswith('"') and key.endswith('"')) or (key.startswith("'") and key.endswith("'")):
             key = key[1:-1].strip()
         self.api_key = key
-        self.model = settings.GEMINI_MODEL or "gemini-2.5-flash"
+        self.model = settings.GEMINI_MODEL or "gemini-3.5-flash-lite"
 
     def _extract_text(self, data: Dict[str, Any]) -> str:
         candidates = data.get("candidates", [])
@@ -39,12 +40,28 @@ class GeminiLLMProvider(LLMProvider):
             if "text" in part and not part.get("thought", False):
                 return part["text"]
 
+
         # Fallback to the last part with text if all had thought flag or flag wasn't set
         for part in reversed(parts):
             if "text" in part:
                 return part["text"]
 
         raise ValueError(f"No text part found in Gemini candidate parts: {parts}")
+
+    async def _post_with_retry(
+        self, client: httpx.AsyncClient, url: str, payload: Dict[str, Any], max_retries: int = 3
+    ) -> httpx.Response:
+        for attempt in range(max_retries + 1):
+            resp = await client.post(url, json=payload)
+            if resp.status_code in (429, 503) and attempt < max_retries:
+                wait_sec = (attempt + 1) * 2.0
+                logger.warning(
+                    f"[GeminiLLMProvider] Rate limit or busy ({resp.status_code}). Backing off {wait_sec}s (attempt {attempt+1}/{max_retries})..."
+                )
+                await asyncio.sleep(wait_sec)
+                continue
+            return resp
+        return resp
 
     async def generate_text(self, prompt: str, system_instruction: Optional[str] = None) -> str:
         if not self.api_key:
@@ -58,7 +75,7 @@ class GeminiLLMProvider(LLMProvider):
             payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
 
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, json=payload)
+            resp = await self._post_with_retry(client, url, payload)
             if resp.is_error:
                 logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
             resp.raise_for_status()
@@ -81,7 +98,7 @@ class GeminiLLMProvider(LLMProvider):
 
         logger.info(f"[GeminiLLMProvider] Sending generate_json request to model '{self.model}'")
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, json=payload)
+            resp = await self._post_with_retry(client, url, payload)
             if resp.is_error:
                 logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
             resp.raise_for_status()
@@ -140,12 +157,12 @@ class GeminiLLMProvider(LLMProvider):
 
         logger.info(f"[GeminiLLMProvider] generate_json_schema → {chosen_model}")
         async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await client.post(url, json=payload)
+            resp = await self._post_with_retry(client, url, payload)
             if resp.is_error:
                 # If the model rejects thinking_config (older SDK/model), retry once without it.
                 if "thinking" in resp.text.lower() and "thinking_config" in gen_cfg:
                     gen_cfg.pop("thinking_config", None)
-                    resp = await client.post(url, json=payload)
+                    resp = await self._post_with_retry(client, url, payload)
                 if resp.is_error:
                     logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
             resp.raise_for_status()
@@ -195,7 +212,7 @@ class GeminiLLMProvider(LLMProvider):
             payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
 
         async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await client.post(url, json=payload)
+            resp = await self._post_with_retry(client, url, payload)
             if resp.is_error:
                 logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
             resp.raise_for_status()
@@ -305,7 +322,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(url, json=payload)
+                resp = await self._post_with_retry(client, url, payload)
                 if resp.is_error:
                     logger.error(f"[GeminiEmbeddingProvider] API error ({resp.status_code}): {resp.text}")
                 resp.raise_for_status()
@@ -347,7 +364,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
             }
             try:
                 async with httpx.AsyncClient(timeout=45.0) as client:
-                    resp = await client.post(url, json=payload)
+                    resp = await self._post_with_retry(client, url, payload)
                     if resp.is_error:
                         logger.warning(f"[GeminiEmbeddingProvider] batchEmbedContents error ({resp.status_code}), falling back to serial")
                         for t in chunk:
