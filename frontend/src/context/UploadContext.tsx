@@ -1,377 +1,619 @@
-'use client';
-
-import React, {
-  createContext,
-  useContext,
-  useState,
-  useEffect,
-  useRef,
-  useCallback,
-} from 'react';
-import { api, isAbortError, UPLOAD_CHUNK_SIZE, UploadProgressInfo } from '../lib/api';
-import { DocumentItem } from '../lib/types';
-
-export interface PipelineProgress {
-  step: string;
-  percentage: number;
-  slides: number;
-  questions: number;
-  status: string; // 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
-  detail?: string | null;
-  events?: { ts: number; msg: string }[];
-  memory?: { cur?: number | null; peak?: number | null; limit?: number | null };
-  error?: string | null;
-}
-
-export interface UploadTiming {
-  startedAt: number;
-  uploadEndedAt: number | null;
-  finishedAt: number | null;
-}
-
-interface UploadContextType {
-  uploading: boolean;
-  activeDocId: string | null;
-  activeFileName: string | null;
-  pipelineProgress: PipelineProgress | null;
-  uploadDetail: UploadProgressInfo | null;
-  cancelling: boolean;
-  timing: UploadTiming | null;
-  showLog: boolean;
-  setShowLog: React.Dispatch<React.SetStateAction<boolean>>;
-  version: number;
-  handleFileUpload: (file: File) => Promise<void>;
-  handleCancel: () => Promise<void>;
-  dismissProgress: () => void;
-  fmtMB: (bytes: number) => string;
-  fmtDuration: (ms: number) => string;
-}
-
-const UploadContext = createContext<UploadContextType | null>(null);
-
-const STORAGE_ACTIVE_KEY = 'qshala_active_upload';
-
-export function UploadProvider({ children }: { children: React.ReactNode }) {
-  const [uploading, setUploading] = useState(false);
-  const [activeDocId, setActiveDocId] = useState<string | null>(null);
-  const [activeFileName, setActiveFileName] = useState<string | null>(null);
-  const [pipelineProgress, setPipelineProgress] = useState<PipelineProgress | null>(null);
-  const [uploadDetail, setUploadDetail] = useState<UploadProgressInfo | null>(null);
-  const [cancelling, setCancelling] = useState(false);
-  const [showLog, setShowLog] = useState(false);
-  const [version, setVersion] = useState(0);
-
-  const abortRef = useRef<AbortController | null>(null);
-  const uploadIdRef = useRef<string | null>(null);
-
-  const [timing, setTiming] = useState<UploadTiming | null>(null);
-  const [, setTick] = useState(0);
-
-  // Formatting helpers
-  const fmtMB = useCallback((bytes: number) => (bytes / (1024 * 1024)).toFixed(1), []);
-  const fmtDuration = useCallback((ms: number) => {
-    const total = Math.max(0, Math.round(ms / 1000));
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-    return h > 0
-      ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-      : `${m}:${String(s).padStart(2, '0')}`;
-  }, []);
-
-  const stopClock = useCallback(() => {
-    setTiming((t) => (t && !t.finishedAt ? { ...t, finishedAt: Date.now() } : t));
-  }, []);
-
-  // Live stopwatch tick
-  useEffect(() => {
-    if (!timing || timing.finishedAt) return;
-    const id = setInterval(() => setTick((t) => t + 1), 500);
-    return () => clearInterval(id);
-  }, [timing]);
-
-  // Tab unload warning while slices/bytes are uploading
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (uploading) {
-        e.preventDefault();
-        e.returnValue = 'An upload is currently sending slices to the server. Leaving will cancel the upload.';
-        return e.returnValue;
-      }
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [uploading]);
-
-  // Auto-reconnect to any active processing document on initial load or reload
-  useEffect(() => {
-    let isMounted = true;
-    const resumeOngoing = async () => {
-      try {
-        let savedDocId: string | null = null;
-        let savedFileName: string | null = null;
-        try {
-          const raw = localStorage.getItem(STORAGE_ACTIVE_KEY);
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            savedDocId = parsed.id;
-            savedFileName = parsed.fileName;
-          }
-        } catch {}
-
-        // Check backend documents to see if one is currently PROCESSING
-        const docs = await api.listDocuments();
-        if (!isMounted) return;
-
-        const processing = docs.find((d) => d.processing_status === 'PROCESSING' || d.id === savedDocId);
-
-        if (processing && processing.processing_status === 'PROCESSING') {
-          setActiveDocId(processing.id);
-          setActiveFileName(savedFileName || processing.filename || processing.title);
-          setPipelineProgress({
-            step: 'Processing presentation...',
-            percentage: 25,
-            slides: 0,
-            questions: 0,
-            status: 'PROCESSING',
-          });
-          setTiming((t) => t || { startedAt: Date.now() - 15000, uploadEndedAt: Date.now() - 15000, finishedAt: null });
-        } else {
-          try {
-            localStorage.removeItem(STORAGE_ACTIVE_KEY);
-          } catch {}
-        }
-      } catch (err) {
-        console.warn('Could not auto-resume background upload:', err);
-      }
-    };
-
-    resumeOngoing();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  // Poll status while an active doc is processing on the backend
-  useEffect(() => {
-    if (!activeDocId) return;
-
-    const interval = setInterval(async () => {
-      try {
-        const status = await api.getIngestionStatus(activeDocId);
-        setPipelineProgress({
-          step: status.current_step,
-          percentage: status.progress_percentage,
-          slides: status.slides_processed,
-          questions: status.questions_extracted,
-          status: status.status,
-          detail: status.detail,
-          events: status.events || [],
-          memory: { cur: status.memory_mb, peak: status.peak_memory_mb, limit: status.memory_limit_mb },
-          error: status.error,
-        });
-
-        if (status.status === 'COMPLETED' || status.status === 'FAILED' || status.status === 'CANCELLED') {
-          clearInterval(interval);
-          setActiveDocId(null);
-          setCancelling(false);
-          stopClock();
-          setVersion((v) => v + 1);
-          try {
-            localStorage.removeItem(STORAGE_ACTIVE_KEY);
-          } catch {}
-        }
-      } catch (e) {
-        console.error('Ingestion polling error:', e);
-      }
-    }, 1200);
-
-    return () => clearInterval(interval);
-  }, [activeDocId, stopClock]);
-
-  // Main file upload handler: persists across route navigation
-  const handleFileUpload = async (file: File) => {
-    const controller = new AbortController();
-    abortRef.current = controller;
-    uploadIdRef.current = null;
-    setCancelling(false);
-    setActiveFileName(file.name);
-    setTiming({ startedAt: Date.now(), uploadEndedAt: null, finishedAt: null });
-    setUploading(true);
-
-    const mbSize = fmtMB(file.size);
-    const isLocalhost =
-      typeof window !== 'undefined' &&
-      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-    const directUploadLimit = isLocalhost ? 100 * 1024 * 1024 : UPLOAD_CHUNK_SIZE;
-    const sliceMB = Math.round(UPLOAD_CHUNK_SIZE / (1024 * 1024));
-
-    try {
-      let doc: DocumentItem;
-
-      if (file.size > directUploadLimit) {
-        const plannedSlices = Math.ceil(file.size / UPLOAD_CHUNK_SIZE);
-        setUploadDetail({
-          bytesSent: 0,
-          totalBytes: file.size,
-          chunkIndex: 1,
-          totalChunks: plannedSlices,
-          chunkSize: UPLOAD_CHUNK_SIZE,
-        });
-        setPipelineProgress({
-          step: `Uploading ${file.name} (${mbSize} MB) in ${plannedSlices} slices of ${sliceMB} MB...`,
-          percentage: 5,
-          slides: 0,
-          questions: 0,
-          status: 'PROCESSING',
-        });
-
-        doc = await api.uploadDocumentChunked(
-          file,
-          (pct, currentChunk, totalChunks, info) => {
-            setUploadDetail(info);
-            setPipelineProgress({
-              step: `Uploading slice ${currentChunk} of ${totalChunks} (${pct}% of ${mbSize} MB)...`,
-              percentage: Math.min(Math.round(5 + pct * 0.2), 25), // 5% to 25% for upload stage
-              slides: 0,
-              questions: 0,
-              status: 'PROCESSING',
-            });
-          },
-          undefined,
-          undefined,
-          undefined,
-          {
-            signal: controller.signal,
-            onUploadId: (id) => {
-              uploadIdRef.current = id;
-            },
-          }
-        );
-      } else {
-        setPipelineProgress({
-          step: `Uploading ${file.name} (${mbSize} MB) to server...`,
-          percentage: 18,
-          slides: 0,
-          questions: 0,
-          status: 'PROCESSING',
-        });
-        doc = await api.uploadDocument(file, undefined, undefined, {
-          signal: controller.signal,
-          onProgress: (info) => setUploadDetail(info),
-        });
-      }
-
-      setUploadDetail(null);
-      setTiming((t) => (t ? { ...t, uploadEndedAt: Date.now() } : t));
-      setActiveDocId(doc.id);
-      setVersion((v) => v + 1);
-
-      try {
-        localStorage.setItem(
-          STORAGE_ACTIVE_KEY,
-          JSON.stringify({ id: doc.id, fileName: file.name, startedAt: Date.now() })
-        );
-      } catch {}
-    } catch (err: any) {
-      if (isAbortError(err)) {
-        stopClock();
-        setPipelineProgress({
-          step: 'Upload cancelled. Nothing was kept on the server.',
-          percentage: 0,
-          slides: 0,
-          questions: 0,
-          status: 'CANCELLED',
-        });
-      } else {
-        alert(err.message || 'Upload failed');
-        setPipelineProgress(null);
-        setTiming(null);
-        setActiveFileName(null);
-      }
-      try {
-        localStorage.removeItem(STORAGE_ACTIVE_KEY);
-      } catch {}
-    } finally {
-      setUploading(false);
-      setUploadDetail(null);
-      abortRef.current = null;
-      setCancelling(false);
-    }
-  };
-
-  const handleCancel = async () => {
-    if (cancelling) return;
-    setCancelling(true);
-    setPipelineProgress((p) => (p ? { ...p, step: 'Cancelling...' } : p));
-    try {
-      if (abortRef.current) {
-        abortRef.current.abort();
-        const id = uploadIdRef.current;
-        if (id) await api.cancelChunkedUpload(id);
-      } else if (activeDocId) {
-        const res = await api.cancelIngestion(activeDocId);
-        if (res.status === 'CANCELLED') {
-          setActiveDocId(null);
-          stopClock();
-          setPipelineProgress({
-            step: 'Upload cancelled. Nothing was kept on the server.',
-            percentage: 0,
-            slides: 0,
-            questions: 0,
-            status: 'CANCELLED',
-          });
-          setCancelling(false);
-          setVersion((v) => v + 1);
-          try {
-            localStorage.removeItem(STORAGE_ACTIVE_KEY);
-          } catch {}
-        }
-      }
-    } catch (e) {
-      console.error('Cancel upload error:', e);
-      setCancelling(false);
-    }
-  };
-
-  const dismissProgress = () => {
-    setPipelineProgress(null);
-    setTiming(null);
-    setActiveFileName(null);
-    try {
-      localStorage.removeItem(STORAGE_ACTIVE_KEY);
-    } catch {}
-  };
-
-  return (
-    <UploadContext.Provider
-      value={{
-        uploading,
-        activeDocId,
-        activeFileName,
-        pipelineProgress,
-        uploadDetail,
-        cancelling,
-        timing,
-        showLog,
-        setShowLog,
-        version,
-        handleFileUpload,
-        handleCancel,
-        dismissProgress,
-        fmtMB,
-        fmtDuration,
-      }}
-    >
-      {children}
-    </UploadContext.Provider>
-  );
-}
-
-export function useUpload() {
-  const ctx = useContext(UploadContext);
-  if (!ctx) {
-    throw new Error('useUpload must be used within an UploadProvider');
-  }
-  return ctx;
-}
+'use client';
+
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from 'react';
+import { api, isAbortError, UPLOAD_CHUNK_SIZE, UploadProgressInfo } from '../lib/api';
+import {
+  DocumentItem,
+  BatchLocalItem,
+  BatchTotals,
+  BatchItemPhase,
+} from '../lib/types';
+
+export interface PipelineProgress {
+  step: string;
+  percentage: number;
+  slides: number;
+  questions: number;
+  status: string; // 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+  detail?: string | null;
+  events?: { ts: number; msg: string }[];
+  memory?: { cur?: number | null; peak?: number | null; limit?: number | null };
+  error?: string | null;
+}
+
+export interface UploadTiming {
+  startedAt: number;
+  uploadEndedAt: number | null;
+  finishedAt: number | null;
+}
+
+interface UploadContextType {
+  // Batch state
+  activeBatchId: string | null;
+  items: BatchLocalItem[];
+  batchTotals: BatchTotals | null;
+  summary: string;
+  // Detail / processing item state
+  uploading: boolean;
+  activeDocId: string | null;
+  activeFileName: string | null;
+  pipelineProgress: PipelineProgress | null;
+  uploadDetail: UploadProgressInfo | null;
+  cancelling: boolean;
+  timing: UploadTiming | null;
+  showLog: boolean;
+  setShowLog: React.Dispatch<React.SetStateAction<boolean>>;
+  version: number;
+  // Actions
+  handleFileUpload: (file: File) => Promise<void>;
+  handleMultiFileUpload: (files: File[]) => Promise<void>;
+  handleRetry: (jobId: string) => Promise<void>;
+  handleCancelPending: () => Promise<void>;
+  handleCancel: () => Promise<void>;
+  dismissProgress: () => void;
+  fmtMB: (bytes: number) => string;
+  fmtDuration: (ms: number) => string;
+}
+
+const UploadContext = createContext<UploadContextType | null>(null);
+
+const STORAGE_BATCH_KEY = 'qshala_active_upload_batch';
+const STORAGE_ACTIVE_KEY = 'qshala_active_upload';
+
+function generateClientItemId(prefix = 'item'): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return `${prefix}_${crypto.randomUUID().slice(0, 8)}`;
+  }
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+export function UploadProvider({ children }: { children: React.ReactNode }) {
+  const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
+  const [items, setItems] = useState<BatchLocalItem[]>([]);
+  const [batchTotals, setBatchTotals] = useState<BatchTotals | null>(null);
+
+  const [activeDocId, setActiveDocId] = useState<string | null>(null);
+  const [activeFileName, setActiveFileName] = useState<string | null>(null);
+  const [pipelineProgress, setPipelineProgress] = useState<PipelineProgress | null>(null);
+  const [uploadDetail, setUploadDetail] = useState<UploadProgressInfo | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+  const [version, setVersion] = useState(0);
+
+  const abortRef = useRef<AbortController | null>(null);
+  const uploadIdRef = useRef<string | null>(null);
+  const isUploadingRef = useRef(false);
+  const [triggerNextUpload, setTriggerNextUpload] = useState(0);
+
+  const [timing, setTiming] = useState<UploadTiming | null>(null);
+  const [, setTick] = useState(0);
+
+  // Formatting helpers
+  const fmtMB = useCallback((bytes: number) => (bytes / (1024 * 1024)).toFixed(1), []);
+  const fmtDuration = useCallback((ms: number) => {
+    const total = Math.max(0, Math.round(ms / 1000));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return h > 0
+      ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+      : `${m}:${String(s).padStart(2, '0')}`;
+  }, []);
+
+  const stopClock = useCallback(() => {
+    setTiming((t) => (t && !t.finishedAt ? { ...t, finishedAt: Date.now() } : t));
+  }, []);
+
+  // Live stopwatch tick
+  useEffect(() => {
+    if (!timing || timing.finishedAt) return;
+    const id = setInterval(() => setTick((t) => t + 1), 500);
+    return () => clearInterval(id);
+  }, [timing]);
+
+  // Tab unload warning: ONLY while an item has phase === 'UPLOADING' (bytes in flight)
+  const uploading = useMemo(() => items.some((it) => it.phase === 'UPLOADING'), [items]);
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (uploading) {
+        e.preventDefault();
+        e.returnValue = 'An upload is currently sending bytes to the server. Leaving will cancel the upload.';
+        return e.returnValue;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [uploading]);
+
+  // Summary string: "3 of 10 done - 1 processing - 6 queued - 0 failed"
+  const summary = useMemo(() => {
+    const total = items.length;
+    if (total === 0) return 'No active batch';
+    const completed = items.filter((it) => it.phase === 'COMPLETED').length;
+    const processing = items.filter((it) => it.phase === 'PROCESSING').length;
+    const queued = items.filter((it) => it.phase === 'QUEUED' || it.phase === 'UPLOADING' || it.phase === 'WAITING').length;
+    const failed = items.filter((it) => it.phase === 'FAILED').length;
+    return `${completed} of ${total} done - ${processing} processing - ${queued} queued - ${failed} failed`;
+  }, [items]);
+
+  // Auto-reconnect to any active batch on initial load or reload
+  useEffect(() => {
+    let isMounted = true;
+    const resumeOngoing = async () => {
+      try {
+        let savedBatchId: string | null = null;
+        try {
+          const raw = localStorage.getItem(STORAGE_BATCH_KEY);
+          if (raw) savedBatchId = JSON.parse(raw).batchId;
+        } catch {
+          // ignore localStorage parsing errors
+        }
+
+        const activeRes = await api.getActiveUploadBatch();
+        const batchIdToAdopt = activeRes.batch_id || savedBatchId;
+
+        if (batchIdToAdopt && isMounted) {
+          const status = await api.getUploadBatch(batchIdToAdopt);
+          if (!isMounted) return;
+          setActiveBatchId(status.batch_id);
+          setBatchTotals(status.totals);
+          const mappedItems: BatchLocalItem[] = status.items.map((it) => ({
+            clientItemId: it.client_item_id,
+            filename: it.filename,
+            size: 0,
+            phase: it.status as BatchItemPhase,
+            docId: it.document_id,
+            jobId: it.job_id,
+            queuePosition: it.queue_position,
+            slides: it.slides,
+            questions: it.questions,
+            step: it.step,
+            percentage: it.percentage,
+            error: it.error,
+          }));
+          setItems(mappedItems);
+
+          const procItem = status.items.find((it) => it.status === 'PROCESSING');
+          if (procItem && procItem.document_id) {
+            setActiveDocId(procItem.document_id);
+            setActiveFileName(procItem.filename);
+            setPipelineProgress({
+              step: procItem.step || 'Processing presentation...',
+              percentage: procItem.percentage || 25,
+              slides: procItem.slides || 0,
+              questions: procItem.questions || 0,
+              status: 'PROCESSING',
+              error: procItem.error,
+            });
+            setTiming((t) => t || { startedAt: Date.now() - 15000, uploadEndedAt: Date.now() - 15000, finishedAt: null });
+          }
+        }
+      } catch (err) {
+        console.warn('Could not auto-resume background batch upload:', err);
+      }
+    };
+
+    resumeOngoing();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Poll batch status every 3s while activeBatchId is set and batch has non-terminal items
+  useEffect(() => {
+    if (!activeBatchId) return;
+
+    const isAllTerminal =
+      items.length > 0 &&
+      items.every(
+        (it) => it.phase === 'COMPLETED' || it.phase === 'FAILED' || it.phase === 'CANCELLED'
+      );
+    if (isAllTerminal) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const batchStatus = await api.getUploadBatch(activeBatchId);
+        setBatchTotals(batchStatus.totals);
+
+        setItems((prev) => {
+          const serverMap = new Map(batchStatus.items.map((s) => [s.client_item_id, s]));
+          return prev.map((local) => {
+            const server = serverMap.get(local.clientItemId);
+            if (!server) return local;
+
+            // Preserve local UPLOADING phase & percentage while file bytes are in-flight
+            if (local.phase === 'UPLOADING') return local;
+
+            return {
+              ...local,
+              filename: server.filename || local.filename,
+              phase: server.status as BatchItemPhase,
+              docId: server.document_id || local.docId,
+              jobId: server.job_id || local.jobId,
+              queuePosition: server.queue_position,
+              slides: server.slides,
+              questions: server.questions,
+              step: server.step || local.step,
+              percentage:
+                server.status === 'PROCESSING'
+                  ? Math.max(local.percentage, server.percentage)
+                  : server.percentage || 0,
+              error: server.error || local.error,
+            };
+          });
+        });
+
+        // Find current processing item for single-deck detail polling
+        const proc = batchStatus.items.find((it) => it.status === 'PROCESSING');
+        if (proc && proc.document_id) {
+          setActiveDocId(proc.document_id);
+          setActiveFileName(proc.filename);
+        } else {
+          setActiveDocId(null);
+        }
+
+        const allDone = batchStatus.items.every(
+          (it) => it.status === 'COMPLETED' || it.status === 'FAILED' || it.status === 'CANCELLED'
+        );
+        if (allDone) {
+          setVersion((v) => v + 1);
+          stopClock();
+        }
+      } catch (err) {
+        console.warn('Batch polling error:', err);
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [activeBatchId, items, stopClock]);
+
+  // Poll single active document every 1.2s while PROCESSING to feed smooth progress and activity log
+  useEffect(() => {
+    if (!activeDocId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const status = await api.getIngestionStatus(activeDocId);
+        setPipelineProgress({
+          step: status.current_step,
+          percentage: status.progress_percentage,
+          slides: status.slides_processed,
+          questions: status.questions_extracted,
+          status: status.status,
+          detail: status.detail,
+          events: status.events || [],
+          memory: { cur: status.memory_mb, peak: status.peak_memory_mb, limit: status.memory_limit_mb },
+          error: status.error,
+        });
+
+        setItems((prev) =>
+          prev.map((it) =>
+            it.docId === activeDocId
+              ? {
+                  ...it,
+                  percentage: status.progress_percentage,
+                  step: status.current_step,
+                  slides: status.slides_processed,
+                  questions: status.questions_extracted,
+                }
+              : it
+          )
+        );
+
+        if (status.status === 'COMPLETED' || status.status === 'FAILED' || status.status === 'CANCELLED') {
+          setActiveDocId(null);
+          setVersion((v) => v + 1);
+        }
+      } catch (e) {
+        console.error('Document ingestion polling error:', e);
+      }
+    }, 1200);
+
+    return () => clearInterval(interval);
+  }, [activeDocId]);
+
+  // Serial client uploader: upload one file at a time from items queue
+  useEffect(() => {
+    if (!activeBatchId) return;
+    if (isUploadingRef.current) return;
+
+    const nextItem = items.find((it) => it.phase === 'WAITING' && it.file);
+    if (!nextItem || !nextItem.file) return;
+
+    const uploadNextFile = async (item: BatchLocalItem) => {
+      isUploadingRef.current = true;
+      const file = item.file!;
+      const controller = new AbortController();
+      abortRef.current = controller;
+      uploadIdRef.current = null;
+
+      setItems((prev) =>
+        prev.map((it) =>
+          it.clientItemId === item.clientItemId
+            ? { ...it, phase: 'UPLOADING' as BatchItemPhase, percentage: 5, step: 'Starting upload...' }
+            : it
+        )
+      );
+
+      const isLocalhost =
+        typeof window !== 'undefined' &&
+        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+      const directUploadLimit = isLocalhost ? 100 * 1024 * 1024 : UPLOAD_CHUNK_SIZE;
+
+      try {
+        let doc: DocumentItem;
+        if (file.size > directUploadLimit) {
+          doc = await api.uploadDocumentChunked(
+            file,
+            (pct, _cur, _tot, info) => {
+              setUploadDetail(info);
+              setItems((prev) =>
+                prev.map((it) =>
+                  it.clientItemId === item.clientItemId
+                    ? { ...it, percentage: Math.min(Math.round(5 + pct * 0.9), 98), step: `Uploading (${pct}%)...` }
+                    : it
+                )
+              );
+            },
+            undefined,
+            undefined,
+            undefined,
+            {
+              signal: controller.signal,
+              batchId: activeBatchId,
+              clientItemId: item.clientItemId,
+              onUploadId: (id) => {
+                uploadIdRef.current = id;
+              },
+            }
+          );
+        } else {
+          doc = await api.uploadDocument(file, undefined, undefined, {
+            signal: controller.signal,
+            batchId: activeBatchId,
+            clientItemId: item.clientItemId,
+            onProgress: (info) => {
+              setUploadDetail(info);
+              const pct = info.totalBytes > 0 ? Math.round((info.bytesSent / info.totalBytes) * 100) : 50;
+              setItems((prev) =>
+                prev.map((it) =>
+                  it.clientItemId === item.clientItemId
+                    ? { ...it, percentage: Math.min(pct, 98), step: `Uploading (${pct}%)...` }
+                    : it
+                )
+              );
+            },
+          });
+        }
+
+        // Upload complete for this file
+        setItems((prev) =>
+          prev.map((it) =>
+            it.clientItemId === item.clientItemId
+              ? {
+                  ...it,
+                  phase: 'QUEUED' as BatchItemPhase,
+                  docId: doc.id,
+                  percentage: 0,
+                  step: 'Queued for processing',
+                  file: undefined,
+                }
+              : it
+          )
+        );
+        setVersion((v) => v + 1);
+      } catch (err: unknown) {
+        if (isAbortError(err)) {
+          setItems((prev) =>
+            prev.map((it) =>
+              it.clientItemId === item.clientItemId
+                ? { ...it, phase: 'CANCELLED' as BatchItemPhase, step: 'Upload cancelled' }
+                : it
+            )
+          );
+        } else {
+          const errMsg = err instanceof Error ? err.message : 'Upload failed';
+          console.error(`Upload failed for ${file.name}:`, err);
+          setItems((prev) =>
+            prev.map((it) =>
+              it.clientItemId === item.clientItemId
+                ? { ...it, phase: 'FAILED' as BatchItemPhase, error: errMsg }
+                : it
+            )
+          );
+        }
+      } finally {
+        setUploadDetail(null);
+        abortRef.current = null;
+        uploadIdRef.current = null;
+        isUploadingRef.current = false;
+        setTriggerNextUpload((n) => n + 1);
+      }
+    };
+
+    uploadNextFile(nextItem);
+  }, [activeBatchId, items, triggerNextUpload]);
+
+  // Multi-file upload entry point
+  const handleMultiFileUpload = async (files: File[]) => {
+    if (!files || files.length === 0) return;
+    const cappedFiles = files.slice(0, 25);
+
+    const initialItems: BatchLocalItem[] = cappedFiles.map((file) => ({
+      clientItemId: generateClientItemId('deck'),
+      file,
+      filename: file.name,
+      size: file.size,
+      phase: 'WAITING',
+      percentage: 0,
+      slides: 0,
+      questions: 0,
+    }));
+
+    setTiming({ startedAt: Date.now(), uploadEndedAt: null, finishedAt: null });
+    setCancelling(false);
+
+    try {
+      const regPayload = {
+        files: initialItems.map((it) => ({
+          client_item_id: it.clientItemId,
+          filename: it.filename,
+          size_bytes: it.size,
+        })),
+      };
+
+      const res = await api.createUploadBatch(regPayload);
+      setActiveBatchId(res.batch_id);
+      setItems(initialItems);
+      setBatchTotals({
+        total: initialItems.length,
+        completed: 0,
+        processing: 0,
+        queued: 0,
+        waiting: initialItems.length,
+        failed: 0,
+        cancelled: 0,
+      });
+
+      try {
+        localStorage.setItem(STORAGE_BATCH_KEY, JSON.stringify({ batchId: res.batch_id }));
+      } catch {
+        // ignore
+      }
+
+      setTriggerNextUpload((n) => n + 1);
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Failed to register upload batch';
+      alert(errMsg);
+      console.error('Failed to create upload batch:', err);
+    }
+  };
+
+  // Single-file backward compatibility wrapper
+  const handleFileUpload = useCallback(
+    async (file: File) => {
+      await handleMultiFileUpload([file]);
+    },
+    []
+  );
+
+  // Retry a failed job in the batch
+  const handleRetry = async (jobId: string) => {
+    try {
+      await api.retryJob(jobId);
+      setItems((prev) =>
+        prev.map((it) =>
+          it.jobId === jobId
+            ? { ...it, phase: 'QUEUED' as BatchItemPhase, error: null, percentage: 0, step: 'Queued for retry' }
+            : it
+        )
+      );
+      setVersion((v) => v + 1);
+    } catch (err) {
+      console.error('Failed to retry job:', err);
+    }
+  };
+
+  // Cancel remaining QUEUED jobs in the batch
+  const handleCancelPending = async () => {
+    if (!activeBatchId) return;
+    try {
+      await api.cancelPendingBatch(activeBatchId);
+      setItems((prev) =>
+        prev.map((it) =>
+          it.phase === 'QUEUED'
+            ? { ...it, phase: 'CANCELLED' as BatchItemPhase, step: 'Cancelled by user' }
+            : it
+        )
+      );
+      setVersion((v) => v + 1);
+    } catch (err) {
+      console.error('Failed to cancel remaining jobs:', err);
+    }
+  };
+
+  // Cancel active byte upload or processing deck
+  const handleCancel = async () => {
+    if (cancelling) return;
+    setCancelling(true);
+    try {
+      if (abortRef.current) {
+        abortRef.current.abort();
+        const id = uploadIdRef.current;
+        if (id) await api.cancelChunkedUpload(id);
+      } else if (activeDocId) {
+        const res = await api.cancelIngestion(activeDocId);
+        if (res.status === 'CANCELLED') {
+          setActiveDocId(null);
+          setVersion((v) => v + 1);
+        }
+      }
+    } catch (e) {
+      console.error('Cancel upload error:', e);
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const dismissProgress = () => {
+    setPipelineProgress(null);
+    setTiming(null);
+    setActiveFileName(null);
+    setActiveBatchId(null);
+    setItems([]);
+    setBatchTotals(null);
+    try {
+      localStorage.removeItem(STORAGE_BATCH_KEY);
+      localStorage.removeItem(STORAGE_ACTIVE_KEY);
+    } catch {
+      // ignore
+    }
+  };
+
+  return (
+    <UploadContext.Provider
+      value={{
+        activeBatchId,
+        items,
+        batchTotals,
+        summary,
+        uploading,
+        activeDocId,
+        activeFileName,
+        pipelineProgress,
+        uploadDetail,
+        cancelling,
+        timing,
+        showLog,
+        setShowLog,
+        version,
+        handleFileUpload,
+        handleMultiFileUpload,
+        handleRetry,
+        handleCancelPending,
+        handleCancel,
+        dismissProgress,
+        fmtMB,
+        fmtDuration,
+      }}
+    >
+      {children}
+    </UploadContext.Provider>
+  );
+}
+
+export function useUpload() {
+  const ctx = useContext(UploadContext);
+  if (!ctx) {
+    throw new Error('useUpload must be used within an UploadProvider');
+  }
+  return ctx;
+}

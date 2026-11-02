@@ -547,3 +547,82 @@ export interface QshalaSearchResponse {
     tag: QshalaTag;
   }[];
 }
+
+export interface BatchFileRegisterItem {
+  client_item_id: string;
+  filename: string;
+  size_bytes: number;
+}
+
+export interface BatchRegisterPayload {
+  files: BatchFileRegisterItem[];
+}
+
+export interface BatchRegisterResponse {
+  batch_id: string;
+}
+
+export interface ActiveBatchResponse {
+  batch_id: string | null;
+}
+
+export interface BatchTotals {
+  total: number;
+  completed: number;
+  processing: number;
+  queued: number;
+  waiting: number;
+  failed: number;
+  cancelled: number;
+}
+
+export type BatchItemPhase =
+  | 'WAITING'
+  | 'UPLOADING'
+  | 'QUEUED'
+  | 'PROCESSING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED';
+
+export interface BatchItemStatus {
+  client_item_id: string;
+  filename: string;
+  status: 'WAITING' | 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  document_id: string | null;
+  job_id: string | null;
+  queue_position: number | null;
+  slides: number;
+  questions: number;
+  step: string | null;
+  percentage: number;
+  error: string | null;
+}
+
+export interface BatchStatusResponse {
+  batch_id: string;
+  created_at: string | null;
+  totals: BatchTotals;
+  items: BatchItemStatus[];
+}
+
+export interface CancelPendingResponse {
+  batch_id: string;
+  cancelled_count: number;
+}
+
+export interface BatchLocalItem {
+  clientItemId: string;
+  file?: File;
+  filename: string;
+  size: number;
+  phase: BatchItemPhase;
+  docId?: string | null;
+  jobId?: string | null;
+  queuePosition?: number | null;
+  slides?: number;
+  questions?: number;
+  step?: string | null;
+  percentage: number;
+  error?: string | null;
+}

@@ -23,6 +23,11 @@ import {
   EditHistoryItem,
   TaxonomyV6,
   DeckMeta,
+  BatchRegisterPayload,
+  BatchRegisterResponse,
+  BatchStatusResponse,
+  ActiveBatchResponse,
+  CancelPendingResponse,
 } from './types';
 
 // Module-scoped fetch shadow, applied to every existing fetch() call site in this file with no
@@ -230,12 +235,19 @@ export const api = {
     file: File,
     title?: string,
     year?: number,
-    options?: { signal?: AbortSignal; onProgress?: (info: UploadProgressInfo) => void }
+    options?: {
+      signal?: AbortSignal;
+      onProgress?: (info: UploadProgressInfo) => void;
+      batchId?: string;
+      clientItemId?: string;
+    }
   ): Promise<DocumentItem> => {
     const formData = new FormData();
     formData.append('file', file);
     if (title) formData.append('title', title);
     if (year) formData.append('year', year.toString());
+    if (options?.batchId) formData.append('batch_id', options.batchId);
+    if (options?.clientItemId) formData.append('client_item_id', options.clientItemId);
 
     const res = await xhrPost(`${getApiBase()}/documents/upload`, formData, {
       signal: options?.signal,
@@ -263,7 +275,12 @@ export const api = {
     year?: number,
     chunkSize: number = UPLOAD_CHUNK_SIZE, // chunking is for resilience (a dropped connection only costs
     // one slice) AND, on Cloud Run specifically, a real payload ceiling -- see UPLOAD_CHUNK_SIZE above
-    options?: { signal?: AbortSignal; onUploadId?: (uploadId: string) => void }
+    options?: {
+      signal?: AbortSignal;
+      onUploadId?: (uploadId: string) => void;
+      batchId?: string;
+      clientItemId?: string;
+    }
   ): Promise<DocumentItem> => {
     const signal = options?.signal;
     const uploadId =
@@ -302,6 +319,8 @@ export const api = {
       formData.append('filename', file.name);
       if (title) formData.append('title', title);
       if (year) formData.append('year', year.toString());
+      if (options?.batchId) formData.append('batch_id', options.batchId);
+      if (options?.clientItemId) formData.append('client_item_id', options.clientItemId);
 
       // Attempt upload with up to 3 retries against intermittent network fluctuations.
       // A cancel (abort, or the server answering 409 "cancelled") is never retried.
@@ -496,11 +515,55 @@ export const api = {
     return handleResponse<JobActionResponse>(res);
   },
 
-  retryJob: async (jobId: string): Promise<JobRetryResponse> => {
+  retryJob: async (jobId: string, options?: { signal?: AbortSignal }): Promise<JobRetryResponse> => {
     const res = await fetch(`${getApiBase()}/jobs/${jobId}/retry`, {
       method: 'POST',
+      signal: options?.signal,
     });
     return handleResponse<JobRetryResponse>(res);
+  },
+
+  createUploadBatch: async (
+    payload: BatchRegisterPayload,
+    options?: { signal?: AbortSignal }
+  ): Promise<BatchRegisterResponse> => {
+    const res = await fetch(`${getApiBase()}/jobs/upload-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: options?.signal,
+    });
+    return handleResponse<BatchRegisterResponse>(res);
+  },
+
+  getUploadBatch: async (
+    batchId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<BatchStatusResponse> => {
+    const res = await fetch(`${getApiBase()}/jobs/upload-batch/${batchId}`, {
+      signal: options?.signal,
+    });
+    return handleResponse<BatchStatusResponse>(res);
+  },
+
+  getActiveUploadBatch: async (
+    options?: { signal?: AbortSignal }
+  ): Promise<ActiveBatchResponse> => {
+    const res = await fetch(`${getApiBase()}/jobs/upload-batches/active`, {
+      signal: options?.signal,
+    });
+    return handleResponse<ActiveBatchResponse>(res);
+  },
+
+  cancelPendingBatch: async (
+    batchId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<CancelPendingResponse> => {
+    const res = await fetch(`${getApiBase()}/jobs/upload-batch/${batchId}/cancel-pending`, {
+      method: 'POST',
+      signal: options?.signal,
+    });
+    return handleResponse<CancelPendingResponse>(res);
   },
 
   updateQuestionTags: async (
