@@ -30,7 +30,7 @@ for _k, _v in list(os.environ.items()):
 # Handle Vercel serverless environment (/tmp is the only writable directory)
 is_vercel = bool(os.environ.get("VERCEL"))
 is_cloud_run = bool(os.environ.get("K_SERVICE"))
-if is_vercel:
+if is_vercel or is_cloud_run:
     STORAGE_DIR = Path("/tmp/storage")
     default_db_url = "sqlite:////tmp/qshala.db"
     tmp_db = Path("/tmp/qshala.db")

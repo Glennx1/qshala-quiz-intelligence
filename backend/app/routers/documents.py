@@ -475,9 +475,6 @@ async def upload_document_chunk(
             detail=f"Unsupported file format '{ext}'. Only PDF and PowerPoint (PPT, PPTX) files are supported."
         )
 
-    chunk_dir = settings.STORAGE_DIR / "tmp_chunks" / upload_id
-    chunk_dir.mkdir(parents=True, exist_ok=True)
-
     # When ingestion runs on a separate Cloud Run Job and R2 is configured, stream each slice
     # straight into an R2 multipart upload as it arrives instead of writing it to local disk and
     # stitching a full copy afterward -- the worker already fetches the raw deck from R2 (see
@@ -487,13 +484,22 @@ async def upload_document_chunk(
     from backend.app.services.storage.r2_storage import get_r2_service
     r2 = get_r2_service()
     if settings.INGESTION_MODE == "cloud_run_job" and r2.is_configured:
-        return await _upload_chunk_direct_to_r2(
-            chunk_dir=chunk_dir, chunk=chunk, upload_id=upload_id,
-            chunk_index=chunk_index, total_chunks=total_chunks,
-            ext=ext, filename=filename, title=title, year=year,
-            r2=r2, db=db, background_tasks=background_tasks,
-            batch_id=batch_id, client_item_id=client_item_id,
-        )
+        try:
+            return await _upload_chunk_direct_to_r2(
+                chunk_dir=None, chunk=chunk, upload_id=upload_id,
+                chunk_index=chunk_index, total_chunks=total_chunks,
+                ext=ext, filename=filename, title=title, year=year,
+                r2=r2, db=db, background_tasks=background_tasks,
+                batch_id=batch_id, client_item_id=client_item_id,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception("[UPLOAD-CHUNK] direct to R2 failed: %s", e)
+            raise HTTPException(status_code=500, detail=f"Direct R2 chunk upload error: {type(e).__name__}: {str(e)}")
+
+    chunk_dir = settings.STORAGE_DIR / "tmp_chunks" / upload_id
+    chunk_dir.mkdir(parents=True, exist_ok=True)
 
     if chunk_index == 0:
         meta_path = chunk_dir / "meta.json"
