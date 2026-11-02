@@ -501,21 +501,22 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
 
     bank = _load_bank(db)
 
-    # 3. Librarian: search broadly with filters=None, top_k=300
+    # 3. Librarian: search broadly across the entire bank
     idx = Index(bank)
     search_query = brief.query
     if getattr(brief, 'search_terms', None):
         search_query = brief.query + " " + " ".join(brief.search_terms)
-    hits = idx.search(search_query, filters=None, top_k=300)
+    pool_cap = max(300, len(bank))
+    hits = idx.search(search_query, filters=None, top_k=pool_cap)
 
     # Drop hits below the relevance floor from on-topic retrieval
     if brief.query:
         hits = [h for h in hits if float(h.get("score") or 0.0) >= MIN_RELEVANCE_SCORE]
 
     # Broad hits for adjacent pool only (tagged with score 0 so is_on_topic never picks them)
-    if len(hits) < 300:
+    if len(hits) < pool_cap:
         seen = {h["id"] for h in hits}
-        broad = idx.search("", filters=None, top_k=300)
+        broad = idx.search("", filters=None, top_k=pool_cap)
         for b in broad:
             if b["id"] not in seen:
                 b_adj = dict(b)
@@ -602,7 +603,7 @@ def swap_one(db: Session, prompt: str, question_id: str, keep_ids: List[str],
     search_query = brief.query
     if getattr(brief, 'search_terms', None):
         search_query = brief.query + " " + " ".join(brief.search_terms)
-    hits = idx.search(search_query, filters=None, top_k=300)
+    hits = idx.search(search_query, filters=None, top_k=max(300, len(bank)))
     if brief.query:
         hits = [h for h in hits if float(h.get("score") or 0.0) >= MIN_RELEVANCE_SCORE]
 

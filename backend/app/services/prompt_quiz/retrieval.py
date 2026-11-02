@@ -188,8 +188,23 @@ class Index:
             geo = filters.get("india_international")
             if geo and item.get("india_international") not in (geo, "MIXED"):
                 if geo == "IN":
-                    txt = (item.get("question_text", "") + " " + (item.get("answer") or "") + " " + (item.get("topic_l1") or "")).lower()
-                    if "india" not in txt and "indian" not in txt:
+                    txt = (
+                        (item.get("question_text") or "")
+                        + " "
+                        + (item.get("answer") or "")
+                        + " "
+                        + (item.get("topic_l1") or "")
+                        + " "
+                        + (item.get("city_name") or "")
+                        + " "
+                        + (item.get("geo_region") or "")
+                    ).lower()
+                    in_markers = (
+                        "india", "indian", "karnataka", "bangalore", "bengaluru",
+                        "mumbai", "bombay", "delhi", "chennai", "madras",
+                        "kolkata", "calcutta", "pune", "hyderabad", "mysore", "mysuru", "hassan"
+                    )
+                    if not any(m in txt for m in in_markers):
                         return False
                 else:
                     return False
