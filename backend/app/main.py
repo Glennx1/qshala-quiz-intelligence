@@ -71,6 +71,13 @@ from backend.app.models.document import Document
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize DB tables and schema columns
+    try:
+        from backend.app.database import ensure_schema_columns
+        ensure_schema_columns()
+    except Exception as e:
+        logger.warning(f"DB schema migration notice: {e}")
+
     try:
         db = SessionLocal()
         doc_count = db.query(Document).count()

@@ -208,14 +208,12 @@ def _write_terminal_job_status(document_id: str, error: "str | None" = None) -> 
 
 def _best_effort_dispatch_next() -> None:
     try:
-        from backend.app.config import settings
-        if settings.UPLOAD_QUEUE_ENABLED:
-            from backend.app.services.ingestion.upload_queue import dispatch_available
-            loop = asyncio.new_event_loop()
-            try:
-                loop.run_until_complete(dispatch_available())
-            finally:
-                loop.close()
+        from backend.app.services.ingestion.upload_queue import dispatch_available
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(dispatch_available())
+        finally:
+            loop.close()
     except Exception as e:
         logger.debug("[WORKER] best-effort dispatch next skipped: %s", e)
 

@@ -111,9 +111,16 @@ if is_postgres:
     # (see IngestionPipeline.run). NOTE: through Neon's pooled (-pooler) endpoint PgBouncer may ignore
     # or reject this startup option, so we never let it drop us to SQLite — if the option is refused we
     # retry the engine without it.
+    # NOTE: Neon's pooled (-pooler) endpoint runs PgBouncer in transaction mode, which strictly
+    # rejects startup options like idle_in_transaction_session_timeout. Attempting it causes psycopg
+    # to fail sequentially across all resolved IPv6 and IPv4 addresses (6+ attempts), taking 5-15s
+    # and causing Cloud Run startup TCP probes to fail with DEADLINE_EXCEEDED.
+    # Therefore, skip startup options if connecting through a pooler.
+    is_pooled = "-pooler" in raw_db_url
     _pg_base = dict(echo=False, pool_pre_ping=True, pool_recycle=280)
-    _pg_connect_args = {"options": "-c idle_in_transaction_session_timeout=0"}
-    for _attempt_args in (_pg_connect_args, None):
+    _pg_connect_args = None if is_pooled else {"options": "-c idle_in_transaction_session_timeout=0"}
+    _attempts = (_pg_connect_args, None) if _pg_connect_args else (None,)
+    for _attempt_args in _attempts:
         try:
             _kwargs = dict(_pg_base)
             if _attempt_args:
@@ -124,7 +131,7 @@ if is_postgres:
             if _attempt_args:
                 logger.info("PostgreSQL engine ready (idle-in-transaction timeout disabled)")
             else:
-                logger.info("PostgreSQL engine ready (plain; startup option not accepted by endpoint)")
+                logger.info("PostgreSQL engine ready (plain; startup option skipped or not accepted by endpoint)")
             break
         except Exception as exc:
             engine = None

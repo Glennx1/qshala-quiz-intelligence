@@ -285,3 +285,53 @@ def test_cancel_pending_leaves_processing_untouched(monkeypatch):
         assert totals["queued"] == 0
     finally:
         _cleanup(doc_proc, doc_pend)
+
+
+def test_cancel_entire_batch_cancels_processing_and_queued_jobs(monkeypatch):
+    files = [
+        {"client_item_id": "proc_item2", "filename": "proc2.pptx", "size_bytes": 1000},
+        {"client_item_id": "pend_item2", "filename": "pend2.pptx", "size_bytes": 2000},
+    ]
+    create_res = client.post("/api/v1/jobs/upload-batch", json={"files": files})
+    batch_id = create_res.json()["batch_id"]
+
+    db = SessionLocal()
+    doc_proc = _mk_doc(db, status="PROCESSING")
+    doc_pend = _mk_doc(db, status="QUEUED")
+
+    try:
+        job_proc = uq.enqueue_upload(
+            db, document_id=doc_proc, filename="proc2.pptx",
+            batch_id=batch_id, client_item_id="proc_item2"
+        )
+        job_proc.status = "PROCESSING"
+        proc_id = job_proc.id
+
+        job_pend = uq.enqueue_upload(
+            db, document_id=doc_pend, filename="pend2.pptx",
+            batch_id=batch_id, client_item_id="pend_item2"
+        )
+        pend_id = job_pend.id
+        db.commit()
+        db.close()
+
+        # Call cancel entire batch
+        cancel_res = client.post(f"/api/v1/jobs/upload-batch/{batch_id}/cancel")
+        assert cancel_res.status_code == 200
+        assert cancel_res.json()["cancelled_count"] == 2
+
+        # Verify DB directly
+        verify_db = SessionLocal()
+        try:
+            saved_proc = verify_db.query(IngestionJob).filter(IngestionJob.id == proc_id).first()
+            assert saved_proc.status == "CANCELLED"
+
+            saved_pend = verify_db.query(IngestionJob).filter(IngestionJob.id == pend_id).first()
+            assert saved_pend.status == "CANCELLED"
+
+            saved_doc_proc = verify_db.query(Document).filter(Document.id == doc_proc).first()
+            assert saved_doc_proc.processing_status == "CANCELLED"
+        finally:
+            verify_db.close()
+    finally:
+        _cleanup(doc_proc, doc_pend)

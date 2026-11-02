@@ -96,7 +96,7 @@ def _schedule_ingestion(
                 db.commit()
                 return
 
-        if settings.UPLOAD_QUEUE_ENABLED:
+        if settings.UPLOAD_QUEUE_ENABLED or batch_id:
             from backend.app.services.ingestion import upload_queue
             job = upload_queue.enqueue_upload(
                 db, document_id=doc.id, filename=doc.filename,
@@ -117,7 +117,7 @@ def _schedule_ingestion(
             doc.processing_error = str(e)
             db.commit()
         return
-    if settings.UPLOAD_QUEUE_ENABLED:
+    if settings.UPLOAD_QUEUE_ENABLED or batch_id:
         from backend.app.services.ingestion import upload_queue
         job = upload_queue.enqueue_upload(
             db, document_id=doc.id, filename=doc.filename,

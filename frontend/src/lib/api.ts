@@ -566,6 +566,28 @@ export const api = {
     return handleResponse<CancelPendingResponse>(res);
   },
 
+  cancelBatch: async (
+    batchId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<CancelPendingResponse> => {
+    const res = await fetch(`${getApiBase()}/jobs/upload-batch/${batchId}/cancel`, {
+      method: 'POST',
+      signal: options?.signal,
+    });
+    return handleResponse<CancelPendingResponse>(res);
+  },
+
+  cancelJob: async (
+    jobId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<{ message: string }> => {
+    const res = await fetch(`${getApiBase()}/jobs/${jobId}/cancel`, {
+      method: 'POST',
+      signal: options?.signal,
+    });
+    return handleResponse<{ message: string }>(res);
+  },
+
   updateQuestionTags: async (
     questionId: string,
     tags: string[],

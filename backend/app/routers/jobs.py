@@ -283,6 +283,64 @@ def cancel_pending_batch_items(batch_id: str, db: Session = Depends(get_db)):
     logger.info("[BATCH-CANCEL] cancelled %d pending job(s) for batch %s", cancelled_count, batch_id)
     return {"batch_id": batch_id, "cancelled_count": cancelled_count}
 
+
+@router.post("/upload-batch/{batch_id}/cancel")
+def cancel_entire_batch(batch_id: str, db: Session = Depends(get_db)):
+    """Cancels all active jobs (both PENDING and PROCESSING) in this batch and purges pending artifacts."""
+    from backend.app.services.ingestion import upload_queue as uq
+    from backend.app.services.ingestion.cancellation import request_doc_cancel
+    from backend.app.services.storage.r2_storage import get_r2_service
+
+    now = datetime.now(timezone.utc)
+    active_jobs = (
+        db.query(IngestionJob)
+        .filter(
+            IngestionJob.batch_id == batch_id,
+            IngestionJob.status.in_(["PENDING", "PROCESSING"])
+        )
+        .all()
+    )
+
+    r2 = get_r2_service()
+    cancelled_count = 0
+
+    for job in active_jobs:
+        job.status = "CANCELLED"
+        job.current_step = "CANCELLED"
+        job.completed_at = now
+        job.updated_at = now
+        job.error_message = "Cancelled by user"
+
+        if job.document_id:
+            request_doc_cancel(job.document_id)
+            doc = db.query(Document).filter(Document.id == job.document_id).first()
+            if doc:
+                doc.processing_status = "CANCELLED"
+                doc.cancel_requested = True
+                if r2.is_configured:
+                    ext = os.path.splitext(doc.storage_path or doc.filename or "")[1]
+                    raw_key = f"raw-uploads/{doc.id}{ext}"
+                    try:
+                        r2.delete_object(raw_key)
+                        logger.info("[BATCH-CANCEL] removed raw R2 key %s for doc %s", raw_key, doc.id)
+                    except Exception as e:
+                        logger.warning("[BATCH-CANCEL] failed to delete R2 object %s: %s", raw_key, e)
+                if doc.storage_path and os.path.exists(doc.storage_path):
+                    try:
+                        os.remove(doc.storage_path)
+                    except Exception:
+                        pass
+                try:
+                    uq.purge_artifacts(db, doc.id)
+                except Exception as e:
+                    logger.warning("[BATCH-CANCEL] purge_artifacts failed for doc %s: %s", doc.id, e)
+
+        cancelled_count += 1
+
+    db.commit()
+    logger.info("[BATCH-CANCEL] cancelled entire batch %s (%d jobs)", batch_id, cancelled_count)
+    return {"batch_id": batch_id, "cancelled_count": cancelled_count}
+
 def to_job_dict(job: IngestionJob) -> Dict[str, Any]:
     step_data = job.step_data or {}
     return {
@@ -385,13 +443,49 @@ async def retry_job(job_id: str, db: Session = Depends(get_db)):
 
 @router.post("/{job_id}/cancel")
 def cancel_job(job_id: str, db: Session = Depends(get_db)):
-    """Cancels a job and marks it as FAILED."""
+    """Cancels a job and cleans up associated document resources."""
+    from backend.app.services.ingestion.cancellation import request_doc_cancel
+    from backend.app.services.storage.r2_storage import get_r2_service
+    from backend.app.services.ingestion import upload_queue as uq
+
     job = db.query(IngestionJob).filter(IngestionJob.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Ingestion job not found")
 
-    job.status = "FAILED"
+    if job.status in ("COMPLETED", "FAILED", "CANCELLED"):
+        return {"message": "Job already in terminal status", "job": to_job_dict(job)}
+
+    now = datetime.now(timezone.utc)
+    job.status = "CANCELLED"
+    job.current_step = "CANCELLED"
+    job.completed_at = now
+    job.updated_at = now
     job.error_message = "Cancelled by user"
+
+    if job.document_id:
+        request_doc_cancel(job.document_id)
+        doc = db.query(Document).filter(Document.id == job.document_id).first()
+        if doc:
+            doc.processing_status = "CANCELLED"
+            doc.cancel_requested = True
+            r2 = get_r2_service()
+            if r2.is_configured:
+                ext = os.path.splitext(doc.storage_path or doc.filename or "")[1]
+                raw_key = f"raw-uploads/{doc.id}{ext}"
+                try:
+                    r2.delete_object(raw_key)
+                except Exception:
+                    pass
+            if doc.storage_path and os.path.exists(doc.storage_path):
+                try:
+                    os.remove(doc.storage_path)
+                except Exception:
+                    pass
+            try:
+                uq.purge_artifacts(db, doc.id)
+            except Exception:
+                pass
+
     db.commit()
     db.refresh(job)
     return {"message": "Job cancelled", "job": to_job_dict(job)}
