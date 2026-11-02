@@ -85,6 +85,8 @@ def _brief_from_gemini(prompt: str, gem: Dict[str, Any], count: Optional[int],
     subtopics_l2 = list(gem.get("subtopics_l2") or (previous_brief or {}).get("subtopics_l2") or [])
 
     raw_query = str(gem.get("query") or "").strip()
+    if not raw_query and previous_brief:
+        raw_query = str(previous_brief.get("query") or "").strip()
     query_bits = [raw_query] if raw_query else []
     query_bits += [str(t) for t in topics_l1 if t]
     if not raw_query:
@@ -156,13 +158,22 @@ def _brief_from_gemini(prompt: str, gem: Dict[str, Any], count: Optional[int],
 
 
 def _brief_from_regex(prompt: str, count: Optional[int],
-                      previous_brief: Optional[Dict[str, Any]]) -> Brief:
+                      previous_brief: Optional[Dict[str, Any]],
+                      current_questions: Optional[List[Dict[str, Any]]] = None) -> Brief:
     query, raw_filters, n = parse_prompt(prompt or "")
     p = (prompt or "").lower()
-    has_number = bool(re.search(r"\b\d{1,3}\b", p)) or any(
-        re.search(r"\b" + re.escape(w) + r"\b", p) for w in WORD_NUMS)
-    inherited = (previous_brief or {}).get("count") if previous_brief else None
-    final_n = count or (n if has_number else (inherited or 10))
+
+    # Relative count expansion (e.g. "5 more", "give me 5 more questions")
+    more_m = re.search(r"\b(?:add|give\s+me\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+more\b", p)
+    if more_m and previous_brief:
+        raw_val = more_m.group(1)
+        val = int(WORD_NUMS.get(raw_val, raw_val))
+        final_n = min(50, (previous_brief.get("count") or 10) + val)
+    else:
+        has_number = bool(re.search(r"\b\d{1,3}\b", p)) or any(
+            re.search(r"\b" + re.escape(w) + r"\b", p) for w in WORD_NUMS)
+        inherited = (previous_brief or {}).get("count") if previous_brief else None
+        final_n = count or (n if has_number else (inherited or 10))
     final_n = max(1, min(int(final_n), 50))
 
     prev_bias = (previous_brief or {}).get("hard_bias")
@@ -220,13 +231,34 @@ def _brief_from_regex(prompt: str, count: Optional[int],
     if re.search(r"\b(related|adjacent|whatever you have|fill the rest)\b", p):
         cross_topic_padding = True
 
-    # Detect V6 theme in prompt if not inherited
-    matched_l1s = [t for t in V6_THEMES if t.lower() in p]
-    topics_l1 = matched_l1s or list((previous_brief or {}).get("topics_l1") or [])
-    subtopics_l2 = list((previous_brief or {}).get("subtopics_l2") or [])
+    # Detect topic replacement: e.g. "replace sports with tech", "swap cricket for finance"
+    replace_m = re.search(r"\b(?:replace|swap|change)\s+([a-z\s]+?)\s+(?:with|for|to)\s+([a-z\s]+)\b", p)
+    if replace_m:
+        query = replace_m.group(2).strip()
+        matched_l1s = [t for t in V6_THEMES if t.lower() in query.lower()]
+        topics_l1 = matched_l1s or []
+        subtopics_l2 = []
+        search_terms = []
+    else:
+        # Detect V6 theme in prompt if not inherited
+        matched_l1s = [t for t in V6_THEMES if t.lower() in p]
+        topics_l1 = matched_l1s or list((previous_brief or {}).get("topics_l1") or [])
+        subtopics_l2 = list((previous_brief or {}).get("subtopics_l2") or [])
+        search_terms = list((previous_brief or {}).get("search_terms") or [])
+
+        # If this is a modifier-only refinement on an existing quiz, preserve the previous topic
+        is_modifier_prompt = previous_brief and (
+            bool(re.search(r"^(?:make\s+it\s+|more\s+)?(?:harder|easier|tougher|spicier|tough|spicy|easy|warmup|balanced)$", p.strip()))
+            or bool(re.search(r"^(?:for\s+)?(?:school|kids|children|college|corporate)$", p.strip()))
+            or bool(re.search(r"^(?:no\s+images?|text\s+only|without\s+images?|with\s+images?|images?\s+only)$", p.strip()))
+            or bool(re.search(r"^(?:evergreen\s+only|evergreen)$", p.strip()))
+            or bool(more_m)
+            or query.strip().lower() in ("make it harder", "harder", "easier", "school", "kids", "no images", "text only", "evergreen", "5 more", "more")
+        )
+        if is_modifier_prompt and previous_brief.get("query"):
+            query = previous_brief.get("query")
 
     framing = (previous_brief or {}).get("framing")
-    search_terms = list((previous_brief or {}).get("search_terms") or [])
 
     return Brief(
         prompt=prompt,
@@ -248,19 +280,20 @@ def _brief_from_regex(prompt: str, count: Optional[int],
 
 
 def interpret(prompt: str, count: Optional[int] = None, options: Optional[Dict[str, Any]] = None,
-              previous_brief: Optional[Dict[str, Any]] = None) -> Brief:
+              previous_brief: Optional[Dict[str, Any]] = None,
+              current_questions: Optional[List[Dict[str, Any]]] = None) -> Brief:
     """Prompt -> Brief. Tries the Gemini Interpreter first; on any failure (no key, timeout,
     error) falls back seamlessly to the regex parser. `options` are explicit UI toggles applied
     last and always win. `previous_brief` enables refinement ("make it harder", "5 more")."""
     gem: Optional[Dict[str, Any]] = None
     try:
         from backend.app.services.prompt_quiz.interpreter_llm import interpret_with_gemini
-        gem = interpret_with_gemini(prompt or "", previous_brief)
+        gem = interpret_with_gemini(prompt or "", previous_brief, current_questions=current_questions)
     except Exception:
         gem = None
 
     brief = _brief_from_gemini(prompt, gem, count, previous_brief) if gem \
-        else _brief_from_regex(prompt, count, previous_brief)
+        else _brief_from_regex(prompt, count, previous_brief, current_questions=current_questions)
 
     # Defaults for audience
     f, hb = defaults_for_audience(brief.filters.get("audience"), brief.filters, brief.hard_bias)
@@ -539,8 +572,9 @@ def _view(c: Dict[str, Any]) -> Dict[str, Any]:
 def build_draft(db: Session, prompt: str, count: Optional[int] = None,
                 options: Optional[Dict[str, Any]] = None,
                 previous_brief: Optional[Dict[str, Any]] = None,
-                exclude_ids: Optional[Set[str]] = None) -> Dict[str, Any]:
-    brief = interpret(prompt, count, options, previous_brief)
+                exclude_ids: Optional[Set[str]] = None,
+                current_questions: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    brief = interpret(prompt, count, options, previous_brief, current_questions=current_questions)
 
     # Geographic/locality queries: don't restrict to a single L1 topic or L2 subtopics.
     # "5 questions on Karnataka" wants ALL Karnataka content, not just Geography or Festivals.

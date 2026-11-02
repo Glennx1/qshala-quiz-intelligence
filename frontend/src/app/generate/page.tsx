@@ -225,22 +225,37 @@ export default function QuizzerHome() {
     fn(n);
   };
 
-  async function handleRefine() {
-    if (!refineText.trim() || loading || !draft) return;
-    const p = refineText.trim();
-    const keptIds = qs.filter((q) => checked.has(q.id)).map((q) => q.id);
+  async function handleRefine(overrideText?: string) {
+    const textToUse = (overrideText !== undefined ? overrideText : refineText).trim();
+    if (!textToUse || loading || !draft) return;
+
+    // Only genuinely locked questions are kept; unchecked questions are excluded
+    const keptIds = Array.from(locked);
+    const excludedIds = qs.filter((q) => !checked.has(q.id)).map((q) => q.id);
+    const currentQuestions = qs.map((q, idx) => ({
+      index: idx + 1,
+      id: q.id,
+      question_text: q.question_text,
+      topic: q.subtopic_l2 || q.topic_l1,
+    }));
+
     setError(''); setLoading(true); setStage(0);
     try {
       const d = await api<Draft>('/prompt-quiz/draft', {
-        prompt: p,
+        prompt: textToUse,
         previous_brief: draft.brief,
         keep_ids: keptIds,
+        exclude_ids: excludedIds,
+        current_questions: currentQuestions,
       });
       setDraft(d);
       setQs(d.questions);
       setChecked(new Set(d.questions.map((q) => q.id)));
+      // Retain lock state for questions that survived in the updated list
+      const newIds = new Set(d.questions.map((q) => q.id));
+      setLocked(new Set(Array.from(locked).filter((id) => newIds.has(id))));
       setRefineText('');
-      setLastPrompt(p);
+      setLastPrompt(textToUse);
       syncChipsFromBrief(d.brief);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Refinement failed');
@@ -522,7 +537,9 @@ export default function QuizzerHome() {
               <li
                 key={q.id}
                 className={`group px-5 py-4 transition-all duration-150 ${
-                  checked.has(q.id) ? 'bg-white' : 'bg-slate-50/70 opacity-45'
+                  locked.has(q.id)
+                    ? 'bg-amber-50/30 border-l-4 border-l-amber-500'
+                    : checked.has(q.id) ? 'bg-white' : 'bg-slate-50/70 opacity-45'
                 }`}
               >
                 <div className="flex gap-3.5 items-start">
@@ -575,10 +592,17 @@ export default function QuizzerHome() {
                         )}
                       </div>
                     )}
-                    <p className="mt-2 text-[12px] text-slate-400">{[q.subtopic_l2 || q.topic_l1, q.difficulty !== 'Unrated' ? q.difficulty : null, q.image_dependent ? 'has image' : null].filter(Boolean).join(' · ')}</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {locked.has(q.id) && (
+                        <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800">
+                          <Lock size={11} /> Pinned
+                        </span>
+                      )}
+                      <p className="text-[12px] text-slate-400">{[q.subtopic_l2 || q.topic_l1, q.difficulty !== 'Unrated' ? q.difficulty : null, q.image_dependent ? 'has image' : null].filter(Boolean).join(' · ')}</p>
+                    </div>
                   </div>
                   <div className="flex shrink-0 items-start gap-1 text-slate-400 opacity-60 transition group-hover:opacity-100 focus-within:opacity-100">
-                    <button aria-label={locked.has(q.id) ? 'Unlock' : 'Lock'} onClick={() => toggle(locked, q.id, setLocked)} className="p-1.5 hover:text-slate-900" title={locked.has(q.id) ? 'Unlock' : 'Lock'}>{locked.has(q.id) ? <Lock size={16} /> : <Unlock size={16} />}</button>
+                    <button aria-label={locked.has(q.id) ? 'Unlock' : 'Lock'} onClick={() => toggle(locked, q.id, setLocked)} className={`p-1.5 transition ${locked.has(q.id) ? 'text-amber-600 hover:text-amber-700' : 'hover:text-slate-900'}`} title={locked.has(q.id) ? 'Unlock question' : 'Lock question'}>{locked.has(q.id) ? <Lock size={16} /> : <Unlock size={16} />}</button>
                     <button aria-label="Swap for another" disabled={locked.has(q.id)} onClick={() => swap(q.id)} className="p-1.5 hover:text-slate-900 disabled:opacity-30"><RefreshCw size={16} /></button>
                     <button aria-label="Remove" disabled={locked.has(q.id)} onClick={() => removeQuestion(q.id)} className="p-1.5 hover:text-red-600 disabled:opacity-30"><Trash2 size={16} /></button>
                   </div>
@@ -588,23 +612,56 @@ export default function QuizzerHome() {
           </ol>
           {qs.length === 0 && <p className="mt-4 text-[14px] text-slate-500">Nothing left. Try a broader prompt.</p>}
 
-          {/* Refine Box */}
-          <div className="mt-6 flex gap-2">
-            <input
-              type="text"
-              value={refineText}
-              onChange={(e) => setRefineText(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleRefine(); }}
-              placeholder="Adjust this quiz… (e.g. make it harder, replace sports with tech)"
-              className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-[14px] text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none"
-            />
-            <button
-              onClick={handleRefine}
-              disabled={loading || !refineText.trim()}
-              className="rounded-xl bg-slate-900 px-5 py-2.5 text-[14px] font-medium text-white transition hover:bg-slate-700 disabled:opacity-40"
-            >
-              Refine
-            </button>
+          {/* Refine Box & Quick Suggestions */}
+          <div className="mt-6">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[12px] font-medium text-slate-500">Quick Adjustments:</span>
+              {locked.size > 0 && (
+                <span className="text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <Lock size={11} /> {locked.size} {locked.size === 1 ? 'question' : 'questions'} pinned
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5 mb-2.5">
+              {[
+                { label: '🔥 Make it harder', prompt: 'Make it harder' },
+                { label: '🌱 School friendly', prompt: 'Make it for middle school kids' },
+                { label: '🖼️ Only with images', prompt: 'Only questions with images' },
+                { label: '📝 Text only', prompt: 'Text only, no images' },
+                { label: '➕ Add 5 questions', prompt: 'Give me 5 more questions' },
+                { label: '🇮🇳 India focus', prompt: 'Focus on India' },
+              ].map((pill, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  disabled={loading}
+                  onClick={() => {
+                    setRefineText(pill.prompt);
+                    handleRefine(pill.prompt);
+                  }}
+                  className="rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-slate-300 px-2.5 py-1 text-[12px] text-slate-700 transition disabled:opacity-40 cursor-pointer"
+                >
+                  {pill.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={refineText}
+                onChange={(e) => setRefineText(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleRefine(); }}
+                placeholder="Adjust this quiz… (e.g. make it harder, replace question 3 with fintech)"
+                className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-[14px] text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none"
+              />
+              <button
+                onClick={() => handleRefine()}
+                disabled={loading || !refineText.trim()}
+                className="rounded-xl bg-slate-900 px-5 py-2.5 text-[14px] font-medium text-white transition hover:bg-slate-700 disabled:opacity-40 cursor-pointer"
+              >
+                Refine
+              </button>
+            </div>
           </div>
 
           <div className="mt-6 flex items-center gap-4">
