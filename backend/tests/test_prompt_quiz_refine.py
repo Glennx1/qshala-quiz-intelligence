@@ -137,3 +137,26 @@ def test_refine_audience_modifier():
     d2 = r2.json()
     assert d2["brief"]["filters"].get("audience") == "school"
     assert d2["brief"]["filters"].get("school_safe") is True
+
+
+def test_refine_partial_replacement_preserves_total_count():
+    """Verify 'change 3 questions to tech' on a 10-question quiz keeps 10 questions total (does not shrink to 3)."""
+    r1 = client.post("/api/v1/prompt-quiz/draft", json={"prompt": "10 questions on banking"})
+    assert r1.status_code == 200
+    d1 = r1.json()
+    assert len(d1["questions"]) == 10
+    q1_ids = [q["id"] for q in d1["questions"]]
+
+    r2 = client.post("/api/v1/prompt-quiz/draft", json={
+        "prompt": "change 3 questions to tech",
+        "previous_brief": d1["brief"],
+        "current_questions": d1["questions"],
+    })
+    assert r2.status_code == 200
+    d2 = r2.json()
+    # Total count MUST be 10, NOT 3!
+    assert len(d2["questions"]) == 10
+    # First 7 questions from the original quiz should be kept
+    for i in range(7):
+        assert d2["questions"][i]["id"] == q1_ids[i]
+    assert "replaced 3 questions" in d2.get("message", "").lower()

@@ -163,9 +163,19 @@ def _brief_from_regex(prompt: str, count: Optional[int],
     query, raw_filters, n = parse_prompt(prompt or "")
     p = (prompt or "").lower()
 
+    # Partial replacement check: e.g. "change 3 questions to tech", "replace 2 with sports"
+    partial_m = re.search(
+        r"\b(?:change|replace|swap|make|mix\s+in)\s+(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:of\s+them\s+|questions?\s+)?(?:to|with|for|about|into)?\s*([a-z\s]+?)(?:\s+(?:and\s+)?keep\s+the\s+rest)?$",
+        p,
+        re.I
+    )
+
     # Relative count expansion (e.g. "5 more", "give me 5 more questions")
     more_m = re.search(r"\b(?:add|give\s+me\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+more\b", p)
-    if more_m and previous_brief:
+    if partial_m and previous_brief:
+        # Crucial: changing N questions in an existing quiz must NOT shrink the quiz to N questions!
+        final_n = previous_brief.get("count") or 10
+    elif more_m and previous_brief:
         raw_val = more_m.group(1)
         val = int(WORD_NUMS.get(raw_val, raw_val))
         final_n = min(50, (previous_brief.get("count") or 10) + val)
@@ -231,9 +241,17 @@ def _brief_from_regex(prompt: str, count: Optional[int],
     if re.search(r"\b(related|adjacent|whatever you have|fill the rest)\b", p):
         cross_topic_padding = True
 
-    # Detect topic replacement: e.g. "replace sports with tech", "swap cricket for finance"
-    replace_m = re.search(r"\b(?:replace|swap|change)\s+([a-z\s]+?)\s+(?:with|for|to)\s+([a-z\s]+)\b", p)
-    if replace_m:
+    # Detect partial or full topic replacement: e.g. "change 3 questions to tech", "replace sports with tech"
+    if partial_m:
+        raw_topic = partial_m.group(2).strip()
+        cleaned_topic = re.sub(r"\bquestions?\b", "", raw_topic, flags=re.I).strip()
+        query = cleaned_topic or "general knowledge"
+        matched_l1s = [t for t in V6_THEMES if t.lower() in query.lower()]
+        topics_l1 = matched_l1s or []
+        subtopics_l2 = []
+        search_terms = []
+    elif re.search(r"\b(?:replace|swap|change)\s+([a-z\s]+?)\s+(?:with|for|to)\s+([a-z\s]+)\b", p):
+        replace_m = re.search(r"\b(?:replace|swap|change)\s+([a-z\s]+?)\s+(?:with|for|to)\s+([a-z\s]+)\b", p)
         query = replace_m.group(2).strip()
         matched_l1s = [t for t in V6_THEMES if t.lower() in query.lower()]
         topics_l1 = matched_l1s or []
