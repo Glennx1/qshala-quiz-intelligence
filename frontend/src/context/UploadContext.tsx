@@ -183,7 +183,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           const mappedItems: BatchLocalItem[] = status.items.map((it) => ({
             clientItemId: it.client_item_id,
             filename: it.filename,
-            size: 0,
+            size: it.size_bytes || 0,
             phase: it.status as BatchItemPhase,
             docId: it.document_id,
             jobId: it.job_id,

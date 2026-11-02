@@ -597,6 +597,7 @@ export interface BatchItemStatus {
   step: string | null;
   percentage: number;
   error: string | null;
+  size_bytes: number;
 }
 
 export interface BatchStatusResponse {

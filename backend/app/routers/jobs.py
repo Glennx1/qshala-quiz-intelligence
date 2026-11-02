@@ -95,6 +95,12 @@ def get_active_upload_batch(db: Session = Depends(get_db)):
         for item in registered_items:
             cid = item.get("client_item_id")
             if cid not in jobs_by_cid:
+                if item.get("cancelled"):
+                    # Registered, bytes never received, and explicitly cancelled -- not active.
+                    # Without this check, a batch cancel on not-yet-uploaded items (which have no
+                    # IngestionJob row to mark CANCELLED) never actually clears here, so a page
+                    # refresh keeps re-adopting the "cancelled" batch as still in progress.
+                    continue
                 # Registered but bytes not yet received (WAITING)
                 is_active = True
                 break
@@ -203,23 +209,32 @@ async def get_upload_batch_status(batch_id: str, db: Session = Depends(get_db)):
                 "step": step_text,
                 "percentage": pct,
                 "error": err,
+                "size_bytes": item.get("size_bytes", 0),
             })
             totals[st.lower()] = totals.get(st.lower(), 0) + 1
         else:
+            # No IngestionJob row exists yet -- this file's bytes were never sent, either because
+            # it's still waiting in the browser's own upload queue, or because a batch/item cancel
+            # hit it before it got that far (see cancel_entire_batch / cancel_pending_batch_items,
+            # which flag registered-but-unsent items with "cancelled": True in batch.items since
+            # there's no job row for them to mark CANCELLED on). Report that flag here so a client
+            # that reloads mid-batch sees CANCELLED instead of the file reappearing as WAITING.
+            st = "CANCELLED" if item.get("cancelled") else "WAITING"
             items_out.append({
                 "client_item_id": cid,
                 "filename": fname,
-                "status": "WAITING",
+                "status": st,
                 "document_id": None,
                 "job_id": None,
                 "queue_position": None,
                 "slides": 0,
                 "questions": 0,
-                "step": None,
+                "step": "Cancelled by user" if st == "CANCELLED" else None,
                 "percentage": 0,
                 "error": None,
+                "size_bytes": item.get("size_bytes", 0),
             })
-            totals["waiting"] += 1
+            totals[st.lower()] += 1
 
     return {
         "batch_id": batch.id,
@@ -336,6 +351,34 @@ def cancel_entire_batch(batch_id: str, db: Session = Depends(get_db)):
                     logger.warning("[BATCH-CANCEL] purge_artifacts failed for doc %s: %s", doc.id, e)
 
         cancelled_count += 1
+
+    # Files still sitting in the browser's own upload queue (bytes never sent) have no
+    # IngestionJob row at all, so the loop above never touches them -- yet the frontend's
+    # "Cancel Batch" button is advertised (and confirmed by the user) as cancelling every
+    # unfinished deck in the batch, these included. Without persisting that here, a page
+    # reload re-derives batch state purely from the server (UploadBatch.items + IngestionJob),
+    # finds no record of these files being cancelled, and reports them straight back as
+    # WAITING/queued -- the batch "reappearing" after a refresh that a cancelled deck should
+    # not have survived. Flag them in-place on the registered item so get_upload_batch_status
+    # and get_active_upload_batch both see the cancellation after a reload, not just this
+    # response's in-memory state.
+    batch = db.query(UploadBatch).filter(UploadBatch.id == batch_id).first()
+    if batch and batch.items:
+        jobs_by_cid = {
+            j.client_item_id
+            for j in db.query(IngestionJob.client_item_id)
+                .filter(IngestionJob.batch_id == batch_id, IngestionJob.client_item_id.isnot(None))
+                .all()
+        }
+        updated_items = []
+        changed = False
+        for item in batch.items:
+            if item.get("client_item_id") not in jobs_by_cid and not item.get("cancelled"):
+                item = {**item, "cancelled": True}
+                changed = True
+            updated_items.append(item)
+        if changed:
+            batch.items = updated_items  # reassign (not mutate in place) so SQLAlchemy sees the change
 
     db.commit()
     logger.info("[BATCH-CANCEL] cancelled entire batch %s (%d jobs)", batch_id, cancelled_count)
