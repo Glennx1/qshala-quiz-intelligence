@@ -267,7 +267,12 @@ class IngestionPipeline:
                         # the local disk copy may not exist on this instance, so fetch over HTTP.
                         try:
                             import httpx as _httpx
-                            async with _httpx.AsyncClient(timeout=30.0) as client:
+                            # Same fix as exporter.py's _download_url_to_file: a default
+                            # client User-Agent (httpx's is "python-httpx/x.x") can get a
+                            # blanket 403 from CDN/edge bot-protection on R2's public pub-*.r2.dev
+                            # URLs -- a normal browser-like UA avoids that class of failure.
+                            headers = {"User-Agent": "Mozilla/5.0 (compatible; QShalaIngestion/1.0)"}
+                            async with _httpx.AsyncClient(timeout=30.0, headers=headers) as client:
                                 resp = await client.get(rel_img_path)
                                 resp.raise_for_status()
                                 img_bytes = resp.content

@@ -31,7 +31,15 @@ def _download_url_to_file(url: str, dest_dir: Path) -> Optional[Path]:
             return dest_path
 
         logger.info(f"Downloading media: {url} -> {dest_path}")
-        urllib.request.urlretrieve(url, str(dest_path))
+        # urlretrieve's default opener sends "User-Agent: Python-urllib/3.x" -- a signature
+        # commonly blocked outright by CDN/edge bot-protection, including (per real-world
+        # reports) Cloudflare's. R2's public pub-*.r2.dev URLs hit exactly this: every
+        # download here was 403ing even with the bucket's Public Development URL access
+        # enabled. A normal browser-like User-Agent is the standard fix for this class of
+        # 403 and costs nothing to set.
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; QShalaExporter/1.0)"})
+        with urllib.request.urlopen(req, timeout=30) as resp, open(dest_path, "wb") as out_f:
+            shutil.copyfileobj(resp, out_f)
 
         if dest_path.exists() and dest_path.stat().st_size > 0:
             return dest_path
