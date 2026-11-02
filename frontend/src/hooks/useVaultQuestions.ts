@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { api } from '../lib/api';
+import { useEffect, useRef, useState } from 'react';
+import { api, isAbortError } from '../lib/api';
 import { HistoricalQuestion, TopicItem, DocumentItem } from '../lib/types';
 import { isPlaceholderIcon } from '../lib/placeholderIcons';
 
@@ -40,6 +40,13 @@ export function useVaultQuestions(
   const [loading, setLoading] = useState(true);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
 
+  // Performance backlog item 4 (QSHALA_PERFORMANCE_IDEAS.md): every filter change fired a full
+  // re-fetch without cancelling whatever fetch was already in flight. On a fast typist / fast
+  // clicker, several stale requests could land out of order and the last *response to arrive*
+  // (not the last filter set) would win, occasionally flashing stale results after the real
+  // answer. Track the in-flight request so a new one can cancel it first.
+  const inFlightRequest = useRef<AbortController | null>(null);
+
   // Fetch topics list, documents list, and duplicate count on mount
   useEffect(() => {
     const loadMetadata = async () => {
@@ -73,10 +80,16 @@ export function useVaultQuestions(
   }, [topic]);
 
   const fetchQuestions = async () => {
+    // Cancel whatever fetch is still in flight before starting a new one -- its response, if it
+    // ever arrives, belongs to filters the user has already moved past.
+    inFlightRequest.current?.abort();
+    const controller = new AbortController();
+    inFlightRequest.current = controller;
+
     setLoading(true);
     try {
       if (activeTab === 'review') {
-        const data = await api.getReviewCandidates();
+        const data = await api.getReviewCandidates(controller.signal);
         setQuestions(data);
         setReviewCount(data.length);
         return;
@@ -94,17 +107,26 @@ export function useVaultQuestions(
         sort_by: sortBy,
         sort_order: sortOrder,
         limit: 100,
+        signal: controller.signal,
       });
       setQuestions(data);
     } catch (err) {
+      // A superseded request aborting itself is expected traffic, not a failure -- don't log it
+      // or flip off the loading state on behalf of the request that replaced it.
+      if (isAbortError(err)) return;
       console.error(err);
     } finally {
-      setLoading(false);
+      if (inFlightRequest.current === controller) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     fetchQuestions();
+    // Abort on unmount too, not just on the next filter change, so a pending request can't set
+    // state on an unmounted component.
+    return () => inFlightRequest.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, topic, subtopic, tagFilter, difficulty, formatFilter, selectedDeckId, gradeMin, sortBy, sortOrder]);
 

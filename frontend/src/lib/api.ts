@@ -59,6 +59,12 @@ const fetch = async (input: RequestInfo | URL, init: RequestInit = {}): Promise<
       }
       lastError = new Error(`HTTP ${response.status}`);
     } catch (err) {
+      // An intentional abort (e.g. a stale search superseded by a newer filter change) is not a
+      // transient failure -- retrying it would just refire a request the caller already gave up
+      // on, racing the request that replaced it.
+      if (err && typeof err === 'object' && (err as { name?: string }).name === 'AbortError') {
+        throw err;
+      }
       lastError = err;
       if (attempt === RETRY_DELAYS_MS.length) {
         throw err;
@@ -387,6 +393,7 @@ export const api = {
     sort_order?: 'asc' | 'desc';
     limit?: number;
     offset?: number;
+    signal?: AbortSignal;
   }): Promise<HistoricalQuestion[]> => {
     const searchParams = new URLSearchParams();
     if (params.query) searchParams.append('query', params.query);
@@ -405,7 +412,10 @@ export const api = {
     if (params.limit) searchParams.append('limit', params.limit.toString());
     if (params.offset) searchParams.append('offset', params.offset.toString());
 
-    const res = await fetch(`${getApiBase()}/questions?${searchParams.toString()}`, { cache: 'no-store' });
+    const res = await fetch(`${getApiBase()}/questions?${searchParams.toString()}`, {
+      cache: 'no-store',
+      signal: params.signal,
+    });
     return handleResponse<HistoricalQuestion[]>(res);
   },
 
@@ -414,8 +424,8 @@ export const api = {
     return handleResponse<HistoricalQuestion[]>(res);
   },
 
-  getReviewCandidates: async (): Promise<HistoricalQuestion[]> => {
-    const res = await fetch(`${getApiBase()}/questions/needs-review`, { cache: 'no-store' });
+  getReviewCandidates: async (signal?: AbortSignal): Promise<HistoricalQuestion[]> => {
+    const res = await fetch(`${getApiBase()}/questions/needs-review`, { cache: 'no-store', signal });
     return handleResponse<HistoricalQuestion[]>(res);
   },
 

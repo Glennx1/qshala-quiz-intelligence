@@ -21,6 +21,7 @@ if "backend" not in sys.modules:
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from backend.app.config import settings
 from backend.app.database import engine, Base
@@ -132,6 +133,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Performance backlog item 1 (QSHALA_PERFORMANCE_IDEAS.md): gzip JSON responses over 500 bytes.
+# Search results carry topic_paths, image arrays, transcripts -- easy to shrink, free bandwidth win.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # Optional shared-secret gate. Off by default (API_KEY_SECRET unset) so this deploys with zero
 # behavior change; set API_KEY_SECRET on the host once the frontend is sending X-API-Key to start

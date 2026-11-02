@@ -1,13 +1,19 @@
 'use client';
 
 import { useState, Suspense } from 'react';
+import dynamic from 'next/dynamic';
 import { useSearchParams } from 'next/navigation';
 import { AlertTriangle, Eye, X } from 'lucide-react';
 import { resolveMediaUrl, getFallbackMediaUrl } from '../../lib/api';
 import { HistoricalQuestion } from '../../lib/types';
-import SlideViewerModal from '../../components/SlideViewerModal';
-import TagManagerModal from '../../components/TagManagerModal';
-import MediaViewerModal from '../../components/MediaViewerModal';
+// Performance backlog item 5 (QSHALA_PERFORMANCE_IDEAS.md): these three only ever render once a
+// user clicks into a slide/tag/media view, but were imported eagerly into the page bundle. All
+// three are already conditionally rendered below ({selected... && <Modal/>}), so swapping to
+// next/dynamic trims first-load JS with no change to the render logic. ssr: false is safe here --
+// each only opens from a client-side click, never needed on the initial server render.
+const SlideViewerModal = dynamic(() => import('../../components/SlideViewerModal'), { ssr: false });
+const TagManagerModal = dynamic(() => import('../../components/TagManagerModal'), { ssr: false });
+const MediaViewerModal = dynamic(() => import('../../components/MediaViewerModal'), { ssr: false });
 import TableSkeleton from '../../components/TableSkeleton';
 import VaultFilters from '../../components/knowledge-base/VaultFilters';
 import QuestionRow from '../../components/knowledge-base/QuestionRow';
