@@ -1,0 +1,43 @@
+name: Upload Queue Dispatcher
+
+# Periodic driver for the upload queue so queued decks still progress even if no user tabs are open.
+# Calls POST /api/v1/jobs/process-upload-next with the optional X-API-Key secret.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  dispatch-queue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger next queued upload
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL || secrets.BACKEND_HEALTH_URL }}
+          API_KEY: ${{ secrets.QSHALA_API_KEY }}
+        run: |
+          set -e
+          if [ -z "$BACKEND_URL" ]; then
+            echo "::warning::BACKEND_URL or BACKEND_HEALTH_URL secret not set. Skipping scheduled queue trigger."
+            exit 0
+          fi
+          # Strip trailing slashes and /health if present
+          BASE_URL=$(echo "$BACKEND_URL" | sed -e 's|/health/*$||' -e 's|/*$||')
+          TARGET_URL="${BASE_URL}/api/v1/jobs/process-upload-next"
+          echo "Dispatching to $TARGET_URL"
+
+          HEADER=()
+          if [ -n "$API_KEY" ]; then
+            HEADER=(-H "X-API-Key: $API_KEY")
+          fi
+
+          STATUS=$(curl -s -X POST -o /tmp/dispatch.json -w '%{http_code}' --max-time 30 "${HEADER[@]}" "$TARGET_URL" || echo "000")
+          echo "HTTP $STATUS"
+          cat /tmp/dispatch.json 2>/dev/null || true
+          echo ""
+
+          if [ "$STATUS" -ge 400 ]; then
+            echo "::error::Queue dispatch failed with HTTP $STATUS"
+            exit 1
+          fi

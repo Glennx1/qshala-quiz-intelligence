@@ -122,3 +122,30 @@ Two authentic QShala-style presentation decks are pre-generated and indexed in t
    - Inspect question cards with validation scores and slide provenance badges.
    - Click **Make Easier** or **Regenerate** on any question.
    - Click **Export JSON** or **Export CSV** to download the finished quiz.
+
+---
+
+## 📦 Multi-Deck Upload & Server-Side Ingestion Queue
+
+The platform supports uploading up to 25 PPTX or PDF decks in a single batch, with serial browser-to-storage transfer and a concurrency-controlled server-side queue.
+
+### Environment Configuration
+- `UPLOAD_QUEUE_ENABLED`: set to `"True"` in production (or `.env`) to route all manual uploads through the serial database queue. When unset or `"False"`, the system operates in legacy immediate-ingest mode.
+- `INGESTION_MAX_CONCURRENCY`: integer (default `1`, minimum `1`). Controls how many decks can ingest concurrently.
+  - Keep at `1` on standard/memory-constrained containers to prevent out-of-memory (OOM) crashes.
+  - Raise to `2` or `3` only on larger hosts (8 GB+ RAM).
+
+### Verification
+1. Enable the queue in `.env` or container env:
+   ```env
+   UPLOAD_QUEUE_ENABLED="True"
+   INGESTION_MAX_CONCURRENCY=1
+   ```
+2. Navigate to `/uploads` and select 3 PPTX/PDF decks at once.
+3. Observe:
+   - Slices upload serially one file at a time from the browser.
+   - Only **one** deck is processing at any time, while the others remain queued (`#1 in queue`, `#2 in queue`).
+   - When Deck 1 finishes, Deck 2 begins automatically within 3 seconds.
+   - If a deck encounters an error, it is marked `FAILED` with a red badge and a "Retry" button, without halting the remaining queued decks.
+   - Reopening the page or opening on another device immediately resumes the active batch status from the server (`GET /jobs/upload-batches/active`).
+   - Even if all browser tabs are closed, the `.github/workflows/dispatch.yml` periodic workflow (or worker terminal triggers) continues advancing the queue.
