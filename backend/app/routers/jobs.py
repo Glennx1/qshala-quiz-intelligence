@@ -83,33 +83,49 @@ def create_upload_batch(payload: CreateBatchRequest, db: Session = Depends(get_d
     return {"batch_id": batch.id}
 
 
+@router.post("/upload-batch/{batch_id}/heartbeat")
+def upload_batch_heartbeat(batch_id: str, db: Session = Depends(get_db)):
+    """Keep the upload batch active while a client tab is open."""
+    batch = db.query(UploadBatch).filter(UploadBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Upload batch not found")
+    batch.last_seen_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"status": "OK", "batch_id": batch_id}
+
+
 @router.get("/upload-batches/active")
 def get_active_upload_batch(db: Session = Depends(get_db)):
-    """Return the most recent batch that still has any WAITING, QUEUED, or PROCESSING item, else {batch_id: null}."""
+    """Return the most recent batch that still has active work, ignoring abandoned batches (>5 min without heartbeat)."""
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    abandoned_cutoff = now - timedelta(minutes=5)
+
     batches = db.query(UploadBatch).order_by(UploadBatch.created_at.desc()).limit(20).all()
     for batch in batches:
         jobs = db.query(IngestionJob).filter(IngestionJob.batch_id == batch.id).all()
         jobs_by_cid = {j.client_item_id: j for j in jobs if j.client_item_id}
         registered_items = batch.items or []
-        is_active = False
+
+        # If any job is currently PENDING or PROCESSING on the server, batch is active
+        has_server_active = any(j.status in ("PENDING", "PROCESSING") for j in jobs)
+        if has_server_active:
+            return {"batch_id": batch.id}
+
+        # Check for WAITING items (bytes not yet sent)
+        has_waiting = False
         for item in registered_items:
             cid = item.get("client_item_id")
-            if cid not in jobs_by_cid:
-                if item.get("cancelled"):
-                    # Registered, bytes never received, and explicitly cancelled -- not active.
-                    # Without this check, a batch cancel on not-yet-uploaded items (which have no
-                    # IngestionJob row to mark CANCELLED) never actually clears here, so a page
-                    # refresh keeps re-adopting the "cancelled" batch as still in progress.
-                    continue
-                # Registered but bytes not yet received (WAITING)
-                is_active = True
+            if cid not in jobs_by_cid and not item.get("cancelled"):
+                has_waiting = True
                 break
-            j = jobs_by_cid[cid]
-            if j.status in ("PENDING", "PROCESSING"):
-                is_active = True
-                break
-        if is_active:
-            return {"batch_id": batch.id}
+
+        if has_waiting:
+            last_seen = batch.last_seen_at or batch.created_at
+            if last_seen and last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=timezone.utc)
+            if last_seen and last_seen >= abandoned_cutoff:
+                return {"batch_id": batch.id}
 
     return {"batch_id": None}
 

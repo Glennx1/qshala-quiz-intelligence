@@ -568,6 +568,13 @@ export const api = {
     return handleResponse<ActiveBatchResponse>(res);
   },
 
+  sendBatchHeartbeat: async (batchId: string): Promise<{ status: string }> => {
+    const res = await fetch(`${getApiBase()}/jobs/upload-batch/${encodeURIComponent(batchId)}/heartbeat`, {
+      method: 'POST',
+    });
+    return handleResponse<{ status: string }>(res);
+  },
+
   cancelPendingBatch: async (
     batchId: string,
     options?: { signal?: AbortSignal }

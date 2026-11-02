@@ -588,7 +588,7 @@ export type BatchItemPhase =
 export interface BatchItemStatus {
   client_item_id: string;
   filename: string;
-  status: 'WAITING' | 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  status: 'WAITING' | 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'CANCELLING';
   document_id: string | null;
   job_id: string | null;
   queue_position: number | null;

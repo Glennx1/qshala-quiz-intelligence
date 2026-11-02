@@ -373,10 +373,10 @@ export default function UploadPage() {
 
                   {/* Actions column */}
                   <div className="shrink-0 flex items-center gap-2">
-                    {isItemFailed && item.jobId && (
+                    {isItemFailed && (item.jobId || item.file) && (
                       <button
                         type="button"
-                        onClick={() => handleRetry(item.jobId!)}
+                        onClick={() => handleRetry(item.jobId || item.clientItemId)}
                         className="inline-flex items-center gap-1 px-3 py-1 text-[12px] font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer"
                       >
                         <RotateCcw className="h-3 w-3" />

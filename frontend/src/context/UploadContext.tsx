@@ -80,6 +80,10 @@ function generateClientItemId(prefix = 'deck'): string {
 export function UploadProvider({ children }: { children: React.ReactNode }) {
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
   const [items, setItems] = useState<BatchLocalItem[]>([]);
+  const itemsRef = useRef<BatchLocalItem[]>(items);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
   const [batchTotals, setBatchTotals] = useState<BatchTotals | null>(null);
 
   const [activeDocId, setActiveDocId] = useState<string | null>(null);
@@ -97,6 +101,17 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
   const [timing, setTiming] = useState<UploadTiming | null>(null);
   const [, setTick] = useState(0);
+
+  // Send batch heartbeat every 20s while activeBatchId is active to prevent abandoned status
+  useEffect(() => {
+    if (!activeBatchId) return;
+    const send = () => {
+      api.sendBatchHeartbeat(activeBatchId).catch(() => {});
+    };
+    send();
+    const interval = setInterval(send, 20000);
+    return () => clearInterval(interval);
+  }, [activeBatchId]);
 
   // Formatting helpers
   const fmtMB = useCallback((bytes: number) => (bytes / (1024 * 1024)).toFixed(1), []);
@@ -222,20 +237,25 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Poll batch status every 3s while activeBatchId is set and batch has non-terminal items
+  // Poll batch status using ref for items so poll interval is not torn down by doc polling (F7 fix)
   useEffect(() => {
     if (!activeBatchId) return;
 
-    const isAllTerminal =
-      items.length > 0 &&
-      items.every(
-        (it) => it.phase === 'COMPLETED' || it.phase === 'FAILED' || it.phase === 'CANCELLED'
-      );
-    if (isAllTerminal) return;
+    let isMounted = true;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
 
-    const interval = setInterval(async () => {
+    const pollBatch = async () => {
+      const currentItems = itemsRef.current;
+      const isAllTerminal =
+        currentItems.length > 0 &&
+        currentItems.every(
+          (it) => it.phase === 'COMPLETED' || it.phase === 'FAILED' || it.phase === 'CANCELLED'
+        );
+      if (isAllTerminal) return;
+
       try {
         const batchStatus = await api.getUploadBatch(activeBatchId);
+        if (!isMounted) return;
         setBatchTotals(batchStatus.totals);
 
         setItems((prev) => {
@@ -261,7 +281,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             return {
               ...local,
               filename: server.filename || local.filename,
-              phase: server.status as BatchItemPhase,
+              phase: (server.status === 'CANCELLING' ? 'CANCELLED' : server.status) as BatchItemPhase,
               docId: server.document_id || local.docId,
               jobId: server.job_id || local.jobId,
               queuePosition: server.queue_position,
@@ -279,7 +299,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           });
         });
 
-        // Find current processing item for single-deck detail polling
         const proc = batchStatus.items.find((it) => it.status === 'PROCESSING');
         if (proc && proc.document_id) {
           setActiveDocId(proc.document_id);
@@ -298,10 +317,24 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         console.warn('Batch polling error:', err);
       }
-    }, 3000);
 
-    return () => clearInterval(interval);
-  }, [activeBatchId, items, stopClock]);
+      if (isMounted) {
+        const nextItems = itemsRef.current;
+        const anyActive = nextItems.some(
+          (it) => it.phase === 'UPLOADING' || it.phase === 'WAITING' || it.phase === 'PROCESSING' || it.phase === 'QUEUED'
+        );
+        const delay = anyActive ? 3000 : 8000;
+        timerId = setTimeout(pollBatch, delay);
+      }
+    };
+
+    timerId = setTimeout(pollBatch, 1000);
+
+    return () => {
+      isMounted = false;
+      if (timerId) clearTimeout(timerId);
+    };
+  }, [activeBatchId, stopClock]);
 
   // Poll single active document every 1.2s while PROCESSING to feed smooth progress and activity log
   useEffect(() => {
@@ -470,7 +503,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           setItems((prev) =>
             prev.map((it) =>
               it.clientItemId === item.clientItemId
-                ? { ...it, phase: 'FAILED' as BatchItemPhase, error: errMsg, file: undefined }
+                ? { ...it, phase: 'FAILED' as BatchItemPhase, error: errMsg, file: it.file || file } // Retain file for retry (F8)
                 : it
             )
           );
@@ -550,20 +583,38 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  // Retry a failed job in the batch
-  const handleRetry = async (jobId: string) => {
-    try {
-      await api.retryJob(jobId);
+  // Retry a failed item (client-side upload failure or server-side ingestion failure)
+  const handleRetry = async (id: string) => {
+    const item = itemsRef.current.find((it) => it.clientItemId === id || it.jobId === id);
+    if (!item) return;
+
+    if (item.file) {
+      // Client-side retry with retained File object
       setItems((prev) =>
         prev.map((it) =>
-          it.jobId === jobId
-            ? { ...it, phase: 'QUEUED' as BatchItemPhase, error: null, percentage: 0, step: 'Queued for retry' }
+          it.clientItemId === item.clientItemId
+            ? { ...it, phase: 'WAITING' as BatchItemPhase, error: null, percentage: 0, step: 'Retrying upload...' }
             : it
         )
       );
-      setVersion((v) => v + 1);
-    } catch (err) {
-      console.error('Failed to retry job:', err);
+      setTriggerNextUpload((n) => n + 1);
+      return;
+    }
+
+    if (item.jobId) {
+      try {
+        await api.retryJob(item.jobId);
+        setItems((prev) =>
+          prev.map((it) =>
+            it.clientItemId === item.clientItemId
+              ? { ...it, phase: 'QUEUED' as BatchItemPhase, error: null, percentage: 0, step: 'Queued for retry' }
+              : it
+          )
+        );
+        setVersion((v) => v + 1);
+      } catch (err) {
+        console.error('Failed to retry job:', err);
+      }
     }
   };
 
@@ -645,6 +696,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
     if (target.phase === 'UPLOADING') {
       if (abortRef.current) abortRef.current.abort();
+      const id = uploadIdRef.current;
+      if (id) {
+        api.cancelChunkedUpload(id).catch(() => {});
+      }
       return;
     }
 

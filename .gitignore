@@ -69,3 +69,5 @@ Thumbs.db
 
 # Evaluation results
 backend/eval_data/results/
+qshala-quiz-intelligence/
+frontend/public/static/slides/memtest-*/
