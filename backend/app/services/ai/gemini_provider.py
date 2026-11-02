@@ -225,13 +225,41 @@ class GeminiLLMProvider(LLMProvider):
         return await self.generate_multimodal(prompt, [{"mime_type": mime_type, "data": b64_data}])
 
 class GeminiEmbeddingProvider(EmbeddingProvider):
+    """Google deprecated text-embedding-004 and embedding-001 (confirmed by a Google staff
+    reply on the AI developer forum, Nov 2026) -- both now 404 on v1beta's embedContent, with
+    no outage window or warning period, and every call was silently falling back to the local
+    deterministic embedding (see except block below) instead of a real semantic vector. This
+    degraded search/dedup quality for however long the deprecation has been in effect, for
+    every question ingested in that window -- a one-time re-embedding backfill of existing
+    rows is worth doing once this is confirmed working (see QSHALA_PRIORITY_PLAN_STATUS.md).
+
+    Replacement is gemini-embedding-001, Google's recommended successor. Its default output is
+    3072-dim (already L2-normalized), not this app's fixed 768-dim pgvector column
+    (settings.EMBEDDING_DIM), so every request asks for a truncated 768-dim output via
+    embedContentConfig.outputDimensionality -- and per Google's docs, anything other than the
+    3072-dim default comes back NOT normalized and must be normalized by hand, which
+    _normalize() below does. taskType is set per call site: RETRIEVAL_QUERY for a search query
+    (get_embedding, called from hybrid_retriever.py) vs RETRIEVAL_DOCUMENT for content being
+    indexed (get_embeddings, called from pipeline.py during ingestion) -- asymmetric embeddings
+    perform meaningfully better for retrieval than embedding both sides the same way.
+    """
     def __init__(self, api_key: Optional[str] = None):
         key = api_key or settings.GEMINI_API_KEY or ""
         key = key.strip()
         if (key.startswith('"') and key.endswith('"')) or (key.startswith("'") and key.endswith("'")):
             key = key[1:-1].strip()
         self.api_key = key
-        self.model = "text-embedding-004"
+        self.model = "gemini-embedding-001"
+
+    @staticmethod
+    def _normalize(values: List[float]) -> List[float]:
+        """gemini-embedding-001 only auto-normalizes its native 3072-dim output; any truncated
+        outputDimensionality (768 here) comes back un-normalized and must be L2-normalized by
+        hand for cosine similarity (pgvector's distance op) to behave correctly."""
+        norm = sum(v * v for v in values) ** 0.5
+        if norm == 0:
+            return values
+        return [v / norm for v in values]
 
     async def get_embedding(self, text: str) -> List[float]:
         if not self.api_key:
@@ -240,7 +268,11 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:embedContent?key={self.api_key}"
         payload = {
             "model": f"models/{self.model}",
-            "content": {"parts": [{"text": text}]}
+            "content": {"parts": [{"text": text}]},
+            "embedContentConfig": {
+                "taskType": "RETRIEVAL_QUERY",
+                "outputDimensionality": settings.EMBEDDING_DIM,
+            },
         }
 
         try:
@@ -250,7 +282,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
                     logger.error(f"[GeminiEmbeddingProvider] API error ({resp.status_code}): {resp.text}")
                 resp.raise_for_status()
                 data = resp.json()
-                return data["embedding"]["values"]
+                return self._normalize(data["embedding"]["values"])
         except Exception as e:
             logger.warning(f"[GeminiEmbeddingProvider] API call failed ({e}), falling back to local deterministic embedding.")
             from backend.app.services.ai.local_provider import LocalEmbeddingProvider
@@ -275,7 +307,11 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
                 "requests": [
                     {
                         "model": f"models/{self.model}",
-                        "content": {"parts": [{"text": t}]}
+                        "content": {"parts": [{"text": t}]},
+                        "embedContentConfig": {
+                            "taskType": "RETRIEVAL_DOCUMENT",
+                            "outputDimensionality": settings.EMBEDDING_DIM,
+                        },
                     }
                     for t in chunk
                 ]
@@ -291,7 +327,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
                         data = resp.json()
                         embs = data.get("embeddings", [])
                         for e in embs:
-                            results.append(e["values"])
+                            results.append(self._normalize(e["values"]))
             except Exception as batch_err:
                 logger.warning(f"[GeminiEmbeddingProvider] batchEmbedContents failed ({batch_err}), falling back to serial")
                 for t in chunk:
