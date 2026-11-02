@@ -29,6 +29,7 @@ for _k, _v in list(os.environ.items()):
 
 # Handle Vercel serverless environment (/tmp is the only writable directory)
 is_vercel = bool(os.environ.get("VERCEL"))
+is_cloud_run = bool(os.environ.get("K_SERVICE"))
 if is_vercel:
     STORAGE_DIR = Path("/tmp/storage")
     default_db_url = "sqlite:////tmp/qshala.db"
@@ -137,10 +138,10 @@ class Settings(BaseSettings):
     R2_ACCOUNT_ID: Optional[str] = None
     R2_ACCESS_KEY_ID: Optional[str] = None
     R2_SECRET_ACCESS_KEY: Optional[str] = None
-    R2_BUCKET_NAME: Optional[str] = None
+    R2_BUCKET_NAME: Optional[str] = "qshala-media" if is_cloud_run else None
     # Public base URL for the bucket (R2.dev dev URL or a custom domain). Required to
     # construct a servable https URL for uploaded media.
-    R2_PUBLIC_BASE_URL: Optional[str] = None
+    R2_PUBLIC_BASE_URL: Optional[str] = "https://pub-28be9e6008594981b9cfe7390dfa2eed.r2.dev" if is_cloud_run else None
 
     # Azure AD / Microsoft Graph / SharePoint Integration
     AZURE_TENANT_ID: Optional[str] = None
@@ -230,10 +231,10 @@ class Settings(BaseSettings):
     # GCP_PROJECT_ID, GCP_REGION and INGESTION_JOB_NAME to also be set, and the API service's
     # service account needs run.jobs.run on that job (see deployment docs).
     INGESTION_MAX_CONCURRENCY: int = 1
-    INGESTION_MODE: str = "in_process"
-    GCP_PROJECT_ID: Optional[str] = None
-    GCP_REGION: Optional[str] = None
-    INGESTION_JOB_NAME: Optional[str] = None
+    INGESTION_MODE: str = "cloud_run_job" if is_cloud_run else "in_process"
+    GCP_PROJECT_ID: Optional[str] = "qshala-quiz" if is_cloud_run else None
+    GCP_REGION: Optional[str] = "asia-south1" if is_cloud_run else None
+    INGESTION_JOB_NAME: Optional[str] = "qshala-ingestion-worker" if is_cloud_run else None
 
     @field_validator("INGESTION_MAX_CONCURRENCY", mode="before")
     @classmethod
