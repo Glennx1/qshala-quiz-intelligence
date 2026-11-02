@@ -5,7 +5,7 @@ import logging
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from backend.app.models.document import Document, Slide
-from backend.app.models.question import Question
+from backend.app.models.question import Question, generate_uuid
 from backend.app.models.qshala_tag import QshalaTag
 from backend.app.database import short_session
 from backend.app.config import settings
@@ -499,7 +499,22 @@ class IngestionPipeline:
                     final_subtopic = raw_sub
                 final_tags = list(dict.fromkeys((q_data.get("tags") or []) + rule_keywords))
 
+                # deduplicator.py pre-assigns a stable id to every candidate (tier1_passed loop,
+                # and again for any brand-new intra-batch match target) and uses THAT id as the
+                # duplicate_of_id value when one question in this batch is flagged as a likely
+                # duplicate of another question *also in this batch*. If we let SQLAlchemy's
+                # Question.id column default (generate_uuid, applied at flush when id is unset)
+                # mint a fresh id here instead of reusing q_data["id"], the two ids diverge: the
+                # row actually gets a brand-new random id, while the *other* row's duplicate_of_id
+                # still points at the id the deduplicator invented and never persisted anywhere --
+                # a dangling FK the INSERT violates immediately. Passing id=q_data["id"] here makes
+                # the persisted primary key match exactly what the deduplicator already decided on,
+                # so an intra-batch duplicate_of_id always resolves. (Confirmed in production,
+                # Nov 2 2026: psycopg.errors.ForeignKeyViolation on questions_duplicate_of_id_fkey,
+                # "Key (duplicate_of_id)=(...) is not present in table questions" -- that id was
+                # exactly a sibling candidate in the same deck's batch.)
                 q_obj = Question(
+                    id=q_data.get("id") or generate_uuid(),
                     content_hash=q_data["content_hash"],
                     document_id=doc.id,
                     slide_id=q_data.get("slide_id"),
