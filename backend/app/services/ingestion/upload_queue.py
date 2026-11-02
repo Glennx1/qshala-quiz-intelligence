@@ -125,30 +125,127 @@ def purge_artifacts(db: Session, document_id: str) -> None:
 
 # A deck should finish well within this; a job PROCESSING longer than this had its worker die
 # (crash, or the host slept mid-run). Such a job is reclaimed so it can no longer block the queue.
-STALE_PROCESSING_MINUTES = 30
+STALE_PROCESSING_MINUTES = 8
 _ADVISORY_LOCK_KEY = 778201  # arbitrary, stable; serialises claiming across every process
+_EXECUTION_LAST_CHECK: dict = {}
+
+
+def _check_cloud_run_execution(job_id: str, execution_name: str) -> "str | None":
+    """Check Cloud Run execution state at most once per 30s per job."""
+    import time
+    now_ts = time.time()
+    last_ts, last_status = _EXECUTION_LAST_CHECK.get(job_id, (0.0, None))
+    if now_ts - last_ts < 30.0 and last_status is not None:
+        return last_status
+    try:
+        from google.cloud import run_v2
+        client = run_v2.ExecutionsClient()
+        execution = client.get_execution(name=execution_name)
+        status = "RUNNING"
+        if getattr(execution, "succeeded_count", 0) > 0:
+            status = "SUCCEEDED"
+        elif getattr(execution, "failed_count", 0) > 0:
+            status = "FAILED"
+        elif getattr(execution, "cancelled_count", 0) > 0:
+            status = "CANCELLED"
+        _EXECUTION_LAST_CHECK[job_id] = (now_ts, status)
+        return status
+    except Exception as e:
+        logger.debug("[QUEUE] get_execution check failed for %s: %s", execution_name, e)
+        return None
+
+
+def _sweep_expired_upload_sessions(db: Session, max_age_hours: int = 24) -> int:
+    from datetime import timedelta
+    try:
+        from backend.app.models.upload_session import UploadSession
+        cutoff = _now() - timedelta(hours=max_age_hours)
+        expired = db.query(UploadSession).filter(
+            UploadSession.status == "OPEN",
+            UploadSession.updated_at < cutoff
+        ).all()
+        if not expired:
+            return 0
+        from backend.app.services.storage.r2_storage import get_r2_service
+        r2 = get_r2_service()
+        for sess in expired:
+            if r2.is_configured and sess.r2_upload_id and sess.raw_key:
+                try:
+                    r2.abort_multipart_upload(sess.raw_key, sess.r2_upload_id)
+                except Exception:
+                    pass
+            sess.status = "CANCELLED"
+        db.commit()
+        return len(expired)
+    except Exception:
+        return 0
 
 
 def _reclaim_stale(db: Session) -> None:
-    """Mark any PROCESSING job whose worker clearly died as FAILED, so it stops blocking the queue."""
+    """Check and reconcile stale or terminated PROCESSING jobs, so they stop blocking the queue."""
     from datetime import timedelta
     cutoff = _now() - timedelta(minutes=STALE_PROCESSING_MINUTES)
-    stale = (db.query(IngestionJob)
-             .filter(IngestionJob.source_type == SOURCE, IngestionJob.status == "PROCESSING",
-                     IngestionJob.updated_at < cutoff)
+    processing_jobs = (db.query(IngestionJob)
+             .filter(IngestionJob.source_type == SOURCE, IngestionJob.status == "PROCESSING")
              .all())
-    for job in stale:
-        job.status = "FAILED"
-        job.error_message = (f"No progress for over {STALE_PROCESSING_MINUTES} min — the worker "
-                             f"likely died or the server slept mid-ingestion. Retry to re-process.")
-        job.updated_at = _now()
-        doc = db.query(Document).filter(Document.id == job.document_id).first()
-        if doc is not None and doc.processing_status not in ("COMPLETED",):
-            doc.processing_status = "FAILED"
-            doc.processing_error = job.error_message
-    if stale:
+
+    reclaimed = 0
+    for job in processing_jobs:
+        if job.execution_name:
+            c_status = _check_cloud_run_execution(job.id, job.execution_name)
+            if c_status == "SUCCEEDED":
+                job.status = "COMPLETED"
+                job.current_step = "DONE"
+                job.completed_at = _now()
+                job.updated_at = _now()
+                doc = db.query(Document).filter(Document.id == job.document_id).first()
+                if doc is not None:
+                    doc.processing_status = "COMPLETED"
+                reclaimed += 1
+                continue
+            elif c_status in ("FAILED", "CANCELLED"):
+                is_cancelling = (job.current_step == "CANCELLING")
+                job.status = "CANCELLED" if is_cancelling else "FAILED"
+                job.current_step = "CANCELLED" if is_cancelling else "FAILED"
+                job.error_message = "Cancelled by user" if is_cancelling else "Worker container terminated with failure"
+                job.completed_at = _now()
+                job.updated_at = _now()
+                doc = db.query(Document).filter(Document.id == job.document_id).first()
+                if doc is not None:
+                    doc.processing_status = job.status
+                    doc.processing_error = job.error_message
+                if job.document_id:
+                    purge_artifacts(db, job.document_id)
+                reclaimed += 1
+                continue
+            elif c_status == "RUNNING":
+                job.updated_at = _now()
+                continue
+
+        j_updated = job.updated_at
+        if j_updated is not None and j_updated.tzinfo is None:
+            from datetime import timezone
+            j_updated = j_updated.replace(tzinfo=timezone.utc)
+        if j_updated and j_updated < cutoff:
+            is_cancelling = (job.current_step == "CANCELLING")
+            job.status = "CANCELLED" if is_cancelling else "FAILED"
+            job.current_step = "CANCELLED" if is_cancelling else "FAILED"
+            job.error_message = ("Cancelled by user" if is_cancelling else
+                                 f"No progress for over {STALE_PROCESSING_MINUTES} min — the worker likely died.")
+            job.completed_at = _now()
+            job.updated_at = _now()
+            doc = db.query(Document).filter(Document.id == job.document_id).first()
+            if doc is not None and doc.processing_status not in ("COMPLETED",):
+                doc.processing_status = job.status
+                doc.processing_error = job.error_message
+            if job.document_id:
+                purge_artifacts(db, job.document_id)
+            reclaimed += 1
+
+    _sweep_expired_upload_sessions(db)
+    if reclaimed:
         db.commit()
-        logger.warning("[QUEUE] reclaimed %d stale PROCESSING job(s)", len(stale))
+        logger.warning("[QUEUE] reclaimed %d stale/terminated PROCESSING job(s)", reclaimed)
 
 
 def claim_next(db: Session) -> "IngestionJob | None":
@@ -172,18 +269,37 @@ def claim_next(db: Session) -> "IngestionJob | None":
         db.commit()      # release the advisory lock; capacity reached
         return None
 
-    job = (db.query(IngestionJob)
+    pending_jobs = (db.query(IngestionJob)
            .filter(IngestionJob.source_type == SOURCE, IngestionJob.status == "PENDING")
            .order_by(IngestionJob.created_at)
-           .first())
-    if job is None:
+           .all())
+
+    # Backoff schedule: 15s, 30s, 60s, 120s, 300s
+    BACKOFF_DELAYS = [0, 15, 30, 60, 120, 300]
+    selected_job = None
+    for j in pending_jobs:
+        if not j.retry_count or j.retry_count == 0:
+            selected_job = j
+            break
+        delay_sec = BACKOFF_DELAYS[min(j.retry_count, len(BACKOFF_DELAYS) - 1)]
+        ref_dt = j.updated_at or j.created_at
+        if ref_dt is not None and ref_dt.tzinfo is None:
+            from datetime import timezone
+            ref_dt = ref_dt.replace(tzinfo=timezone.utc)
+        elapsed = (_now() - ref_dt).total_seconds() if ref_dt else 999999
+        if elapsed >= delay_sec:
+            selected_job = j
+            break
+
+    if selected_job is None:
         db.commit()
         return None
-    job.status = "PROCESSING"
-    job.current_step = "INGESTING"
-    job.updated_at = _now()
+
+    selected_job.status = "PROCESSING"
+    selected_job.current_step = "INGESTING"
+    selected_job.updated_at = _now()
     db.commit()          # sets PROCESSING and releases the lock atomically
-    return job
+    return selected_job
 
 
 async def _run_job(job_id: str, document_id: str) -> None:
@@ -213,6 +329,10 @@ async def _run_job(job_id: str, document_id: str) -> None:
         db.close()
 
 
+_dispatch_lock = asyncio.Lock()
+_last_dispatch_time: float = 0.0
+
+
 async def dispatch_available(max_decks: int = 200, force_cloud_run_job: bool = False) -> int:
     """Loop claiming jobs while capacity remains.
     - If INGESTION_MODE == "cloud_run_job" (or force_cloud_run_job=True): triggers a Cloud Run
@@ -234,47 +354,94 @@ async def dispatch_available(max_decks: int = 200, force_cloud_run_job: bool = F
     it forces that branch rather than trusting its own process's possibly-unset config.
     Returns the number of jobs dispatched in this invocation.
     """
-    dispatched = 0
-    while dispatched < max_decks:
-        db = SessionLocal()
-        try:
-            job = claim_next(db)
-            if job is None:
-                break
-            job_id, document_id = job.id, job.document_id
-        finally:
-            db.close()
+    global _last_dispatch_time
+    import time
+    if _dispatch_lock.locked():
+        return 0
 
-        dispatched += 1
-        if force_cloud_run_job or settings.INGESTION_MODE == "cloud_run_job":
-            from backend.app.services.ingestion.job_trigger import (
-                trigger_ingestion_job,
-                IngestionJobTriggerError,
-            )
+    async with _dispatch_lock:
+        _last_dispatch_time = time.time()
+        dispatched = 0
+        while dispatched < max_decks:
+            db = SessionLocal()
             try:
-                trigger_ingestion_job(document_id)
-                logger.info("[QUEUE] triggered Cloud Run Job for doc_id=%s (job=%s)", document_id, job_id)
-            except Exception as e:
-                err_msg = str(e)
-                logger.error("[QUEUE] failed to trigger Cloud Run Job for doc_id=%s (job=%s): %s", document_id, job_id, err_msg)
-                fail_db = SessionLocal()
-                try:
-                    f_job = fail_db.query(IngestionJob).filter(IngestionJob.id == job_id).first()
-                    f_doc = fail_db.query(Document).filter(Document.id == document_id).first()
-                    if f_job:
-                        f_job.status = "FAILED"
-                        f_job.error_message = err_msg
-                        f_job.updated_at = _now()
-                    if f_doc and f_doc.processing_status not in ("COMPLETED",):
-                        f_doc.processing_status = "FAILED"
-                        f_doc.processing_error = err_msg
-                    fail_db.commit()
-                finally:
-                    fail_db.close()
-        else:
-            await _run_job(job_id, document_id)
+                job = claim_next(db)
+                if job is None:
+                    break
+                job_id, document_id = job.id, job.document_id
+            finally:
+                db.close()
 
-    return dispatched
+            dispatched += 1
+            if force_cloud_run_job or settings.INGESTION_MODE == "cloud_run_job":
+                from backend.app.services.ingestion.job_trigger import (
+                    trigger_ingestion_job,
+                    IngestionJobTriggerError,
+                )
+                try:
+                    # Non-blocking async thread execution
+                    execution_name = await asyncio.to_thread(trigger_ingestion_job, document_id)
+                    logger.info("[QUEUE] triggered Cloud Run Job for doc_id=%s (job=%s execution=%s)", document_id, job_id, execution_name)
+                    succ_db = SessionLocal()
+                    try:
+                        s_job = succ_db.query(IngestionJob).filter(IngestionJob.id == job_id).first()
+                        if s_job:
+                            s_job.execution_name = execution_name
+                            s_job.updated_at = _now()
+                            succ_db.commit()
+                    finally:
+                        succ_db.close()
+                except IngestionJobTriggerError as e:
+                    err_msg = str(e)
+                    logger.error("[QUEUE] failed to trigger Cloud Run Job for doc_id=%s (job=%s transient=%s): %s", document_id, job_id, e.transient, err_msg)
+                    fail_db = SessionLocal()
+                    try:
+                        f_job = fail_db.query(IngestionJob).filter(IngestionJob.id == job_id).first()
+                        f_doc = fail_db.query(Document).filter(Document.id == document_id).first()
+                        if f_job:
+                            if e.transient and (f_job.retry_count or 0) < 5:
+                                f_job.status = "PENDING"
+                                f_job.current_step = "QUEUED"
+                                f_job.retry_count = (f_job.retry_count or 0) + 1
+                                f_job.error_message = f"Transient trigger error (attempt {f_job.retry_count}/5): {err_msg}"
+                                f_job.updated_at = _now()
+                                if f_doc and f_doc.processing_status not in ("COMPLETED", "CANCELLED"):
+                                    f_doc.processing_status = "QUEUED"
+                                    f_doc.processing_error = f_job.error_message
+                                fail_db.commit()
+                                # F2 FIX: Stop dispatch loop immediately on transient API failure!
+                                break
+                            else:
+                                f_job.status = "FAILED"
+                                f_job.error_message = err_msg
+                                f_job.updated_at = _now()
+                                if f_doc and f_doc.processing_status not in ("COMPLETED", "CANCELLED"):
+                                    f_doc.processing_status = "FAILED"
+                                    f_doc.processing_error = err_msg
+                                fail_db.commit()
+                    finally:
+                        fail_db.close()
+                except Exception as e:
+                    err_msg = str(e)
+                    logger.error("[QUEUE] unexpected error triggering Cloud Run Job for doc_id=%s: %s", document_id, err_msg)
+                    fail_db = SessionLocal()
+                    try:
+                        f_job = fail_db.query(IngestionJob).filter(IngestionJob.id == job_id).first()
+                        f_doc = fail_db.query(Document).filter(Document.id == document_id).first()
+                        if f_job:
+                            f_job.status = "FAILED"
+                            f_job.error_message = err_msg
+                            f_job.updated_at = _now()
+                        if f_doc and f_doc.processing_status not in ("COMPLETED", "CANCELLED"):
+                            f_doc.processing_status = "FAILED"
+                            f_doc.processing_error = err_msg
+                        fail_db.commit()
+                    finally:
+                        fail_db.close()
+            else:
+                await _run_job(job_id, document_id)
+
+        return dispatched
 
 
 async def process_one() -> bool:

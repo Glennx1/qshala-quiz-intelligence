@@ -263,49 +263,90 @@ async def _upload_chunk_direct_to_r2(
     r2, db: Session, background_tasks: BackgroundTasks,
     batch_id: Optional[str] = None, client_item_id: Optional[str] = None,
 ):
-    """The cloud_run_job+R2 path for /upload-chunk: every slice goes straight into an R2
-    multipart upload (one part per slice -- the frontend's 24 MB slices are already well above
-    S3/R2's 5 MB minimum part size, and the last part is exempt from that minimum anyway).
-
-    State (the doc id, R2's own multipart UploadId, and the ETag of each part received so far)
-    lives in a small JSON file under the same tmp_chunks/<upload_id> directory the old local-disk
-    path used for its .part files -- that's a few hundred bytes of bookkeeping, not the deck
-    itself, and `remove_chunk_dir` already cleans it up on completion or cancellation. Keyed by
-    part number rather than assumed-sequential, since retries or concurrent requests could land
-    parts out of order; R2/S3 multipart doesn't require them in order either.
-
-    Carries over the same MAX_FILE_SIZE_BYTES ceiling the old stitch-then-check path enforced,
-    checked cumulatively per part instead of once at the end (there's no final stitched file to
-    measure here).
+    """The cloud_run_job+R2 path for /upload-chunk using DB-backed upload_sessions table.
+    Every slice goes straight into an R2 multipart upload. Serializes concurrent writes
+    cleanly with row locking (SELECT ... FOR UPDATE on Postgres).
     """
-    state_path = chunk_dir / _MULTIPART_STATE_FILE
+    from backend.app.models.upload_session import UploadSession
+    from backend.app.database import is_postgres
 
-    if not state_path.exists():
+    # Query upload session; lock row on Postgres
+    query = db.query(UploadSession).filter(UploadSession.upload_id == upload_id)
+    if is_postgres:
+        query = query.with_for_update()
+    session_rec = query.first()
+
+    # 1. Idempotency: if already COMPLETED, return the created document
+    if session_rec and session_rec.status == "COMPLETED":
+        doc_id = session_rec.document_id or session_rec.doc_id
+        doc = db.query(Document).filter(Document.id == doc_id).first()
+        if doc:
+            return {
+                "status": "COMPLETED",
+                "document": {
+                    "id": doc.id,
+                    "filename": doc.filename,
+                    "title": doc.title,
+                    "year": doc.year,
+                    "file_type": doc.file_type,
+                    "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
+                    "storage_path": doc.storage_path,
+                    "file_size_bytes": doc.file_size_bytes,
+                    "slide_count": doc.slide_count,
+                    "question_count": doc.question_count,
+                    "processing_status": doc.processing_status,
+                    "processing_error": doc.processing_error,
+                },
+            }
+
+    # 2. Check cancellation
+    if (session_rec and session_rec.status == "CANCELLED") or upload_cancel_requested(upload_id):
+        if session_rec and session_rec.status != "CANCELLED":
+            session_rec.status = "CANCELLED"
+            db.commit()
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "upload_cancelled", "detail": "Upload was cancelled."}
+        )
+
+    # 3. Missing session
+    if not session_rec:
         if chunk_index != 0:
-            # The chunk that would have created this state (index 0) hasn't landed here yet --
-            # most likely still in flight, or it landed on a different Cloud Run instance (the
-            # old local-disk path has this exact same single-instance assumption, so this isn't
-            # a new limitation). The frontend's chunk upload already retries on failure.
+            # Chunk 0 has not yet initialized the session. HTTP 425 informs client to retry with backoff.
             raise HTTPException(
-                status_code=409,
-                detail="Upload not yet initialized for this slice; retrying should resolve it.",
+                status_code=425,
+                detail={"code": "slice_not_ready", "detail": "Upload session not initialised; retrying slice should succeed"}
             )
         doc_id = str(uuid.uuid4())
         raw_key = f"raw-uploads/{doc_id}{ext}"
         r2_upload_id = r2.create_multipart_upload(raw_key)
-        state = {
-            "doc_id": doc_id, "raw_key": raw_key, "r2_upload_id": r2_upload_id,
-            "filename": filename, "title": title, "year": year,
-            "batch_id": batch_id, "client_item_id": client_item_id,
-            "parts": {}, "total_bytes": 0,
-        }
-    else:
-        state = json.loads(state_path.read_text())
+        session_rec = UploadSession(
+            upload_id=upload_id,
+            doc_id=doc_id,
+            raw_key=raw_key,
+            r2_upload_id=r2_upload_id,
+            parts={},
+            total_bytes=0,
+            filename=filename,
+            title=title,
+            year=year,
+            batch_id=batch_id,
+            client_item_id=client_item_id,
+            status="OPEN",
+        )
+        db.add(session_rec)
+        db.commit()
+        db.refresh(session_rec)
 
     body = await chunk.read()
-    new_total = state["total_bytes"] + len(body)
+    new_total = (session_rec.total_bytes or 0) + len(body)
     if new_total > MAX_FILE_SIZE_BYTES:
-        r2.abort_multipart_upload(state["raw_key"], state["r2_upload_id"])
+        try:
+            r2.abort_multipart_upload(session_rec.raw_key, session_rec.r2_upload_id)
+        except Exception:
+            pass
+        session_rec.status = "CANCELLED"
+        db.commit()
         remove_chunk_dir(upload_id)
         raise HTTPException(
             status_code=413,
@@ -313,38 +354,39 @@ async def _upload_chunk_direct_to_r2(
                     f"upload size ({MAX_FILE_SIZE_MB:.0f} MB). Raise MAX_UPLOAD_MB on the backend."),
         )
 
-    etag = r2.upload_part(state["raw_key"], state["r2_upload_id"], chunk_index + 1, body)
-    state["parts"][str(chunk_index + 1)] = etag
-    state["total_bytes"] = new_total
-    state_path.write_text(json.dumps(state))
+    etag = r2.upload_part(session_rec.raw_key, session_rec.r2_upload_id, chunk_index + 1, body)
+    parts_map = dict(session_rec.parts or {})
+    parts_map[str(chunk_index + 1)] = etag
+    session_rec.parts = parts_map
+    session_rec.total_bytes = new_total
+    session_rec.updated_at = datetime.now(timezone.utc)
+    db.commit()
 
-    # A cancel may have landed while this slice was still uploading: discard everything.
-    if upload_cancel_requested(upload_id):
-        r2.abort_multipart_upload(state["raw_key"], state["r2_upload_id"])
+    if (session_rec.status == "CANCELLED") or upload_cancel_requested(upload_id):
+        try:
+            r2.abort_multipart_upload(session_rec.raw_key, session_rec.r2_upload_id)
+        except Exception:
+            pass
+        session_rec.status = "CANCELLED"
+        db.commit()
         remove_chunk_dir(upload_id)
-        raise HTTPException(status_code=409, detail="Upload was cancelled.")
+        raise HTTPException(status_code=409, detail={"code": "upload_cancelled", "detail": "Upload was cancelled."})
 
-    if len(state["parts"]) < total_chunks:
+    if len(parts_map) < total_chunks:
         return {
             "status": "CHUNK_RECEIVED",
             "chunk_index": chunk_index,
             "total_chunks": total_chunks,
-            "progress_percentage": round((len(state["parts"]) / total_chunks) * 100),
+            "progress_percentage": round((len(parts_map) / total_chunks) * 100),
         }
 
-    # All parts received -- finish the multipart upload. The raw deck now exists in R2 and
-    # nothing was ever written to local disk.
-    parts = [{"PartNumber": int(pn), "ETag": tag} for pn, tag in state["parts"].items()]
-    r2.complete_multipart_upload(state["raw_key"], state["r2_upload_id"], parts)
+    # All parts received -- finish multipart upload
+    sorted_parts = [{"PartNumber": int(pn), "ETag": tag} for pn, tag in sorted(parts_map.items(), key=lambda x: int(x[0]))]
+    r2.complete_multipart_upload(session_rec.raw_key, session_rec.r2_upload_id, sorted_parts)
 
-    doc_id = state["doc_id"]
+    doc_id = session_rec.doc_id
     save_filename = f"{doc_id}{ext}"
     settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    # Never actually written here -- worker.py's _fetch_raw_deck downloads the R2 object to this
-    # exact local path before ingestion runs, same as it already does for a cancelled-mid-way
-    # local upload. Kept as the same path shape as the local-disk path purely so every other
-    # piece of code that reads doc.storage_path (extension sniffing, cleanup on delete, etc.)
-    # keeps working unchanged.
     storage_path = str(settings.UPLOAD_DIR / save_filename)
 
     try:
@@ -352,20 +394,22 @@ async def _upload_chunk_direct_to_r2(
     except Exception as e:
         logger.warning(f"[UPLOAD-CHUNK] failed to remove temporary state dir {chunk_dir}: {e}")
 
-    clean_title = state.get("title") or os.path.splitext(state["filename"])[0].replace("_", " ").title()
+    clean_title = session_rec.title or os.path.splitext(session_rec.filename)[0].replace("_", " ").title()
 
     try:
         doc = Document(
             id=doc_id,
-            filename=state["filename"],
+            filename=session_rec.filename,
             title=clean_title,
-            year=state.get("year") or datetime.now().year,
+            year=session_rec.year or datetime.now().year,
             file_type=ext.replace(".", ""),
             storage_path=storage_path,
-            file_size_bytes=state["total_bytes"],
+            file_size_bytes=session_rec.total_bytes,
             processing_status="PROCESSING",
         )
         db.add(doc)
+        session_rec.status = "COMPLETED"
+        session_rec.document_id = doc_id
         db.commit()
         db.refresh(doc)
     except Exception as e:
@@ -373,11 +417,11 @@ async def _upload_chunk_direct_to_r2(
         db.rollback()
         raise HTTPException(status_code=500, detail="Database error while registering document.")
 
-    logger.info(f"[UPLOAD-CHUNK] file streamed directly to R2: doc_id={doc_id} key={state['raw_key']}")
+    logger.info(f"[UPLOAD-CHUNK] file streamed directly to R2: doc_id={doc_id} key={session_rec.raw_key}")
 
     _schedule_ingestion(
         doc, db, background_tasks, raw_already_in_r2=True,
-        batch_id=state.get("batch_id"), client_item_id=state.get("client_item_id")
+        batch_id=session_rec.batch_id, client_item_id=session_rec.client_item_id
     )
 
     return {
@@ -397,7 +441,6 @@ async def _upload_chunk_direct_to_r2(
             "processing_error": doc.processing_error,
         },
     }
-
 
 @router.post("/upload-chunk")
 async def upload_document_chunk(
@@ -576,7 +619,7 @@ async def upload_document_chunk(
     }
 
 @router.delete("/upload-chunk/{upload_id}")
-def cancel_chunked_upload(upload_id: str):
+def cancel_chunked_upload(upload_id: str, db: Session = Depends(get_db)):
     """Cancel an in-progress chunked upload: refuse any further slices and delete what arrived."""
     if not valid_upload_id(upload_id):
         raise HTTPException(status_code=400, detail="Invalid upload_id.")
@@ -585,14 +628,17 @@ def cancel_chunked_upload(upload_id: str):
     # If this upload was streaming straight into an R2 multipart upload (cloud_run_job mode),
     # abort that too -- otherwise the parts already received linger in R2 as billable incomplete
     # storage forever, since nothing else ever completes or expires them.
-    state_path = settings.STORAGE_DIR / "tmp_chunks" / upload_id / _MULTIPART_STATE_FILE
-    if state_path.exists():
-        try:
-            state = json.loads(state_path.read_text())
-            from backend.app.services.storage.r2_storage import get_r2_service
-            get_r2_service().abort_multipart_upload(state["raw_key"], state["r2_upload_id"])
-        except Exception as e:
-            logger.warning(f"[UPLOAD-CHUNK] failed to abort R2 multipart upload for {upload_id}: {e}")
+    from backend.app.models.upload_session import UploadSession
+    from backend.app.services.storage.r2_storage import get_r2_service
+    session_rec = db.query(UploadSession).filter(UploadSession.upload_id == upload_id).first()
+    if session_rec:
+        if session_rec.status == "OPEN" and session_rec.r2_upload_id:
+            try:
+                get_r2_service().abort_multipart_upload(session_rec.raw_key, session_rec.r2_upload_id)
+            except Exception as e:
+                logger.warning(f"[UPLOAD-CHUNK] failed to abort R2 multipart upload for {upload_id}: {e}")
+        session_rec.status = "CANCELLED"
+        db.commit()
 
     remove_chunk_dir(upload_id)
     logger.info(f"[UPLOAD-CHUNK] upload {upload_id} cancelled by user, slices removed")

@@ -262,7 +262,8 @@ def ensure_schema_columns():
             if job_table_check:
                 job_cols = [
                     ("batch_id", "VARCHAR(36)"),
-                    ("client_item_id", "VARCHAR(64)")
+                    ("client_item_id", "VARCHAR(64)"),
+                    ("execution_name", "VARCHAR(255)")
                 ]
                 for col_name, col_type in job_cols:
                     try:
@@ -316,6 +317,66 @@ def ensure_schema_columns():
                             conn.exec_driver_sql(f"ALTER TABLE quizzes ADD COLUMN {col_name} {col_type};")
                     except Exception:
                         pass
+
+            # Check if upload_batches table exists
+            batch_table_check = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='upload_batches';").fetchone() if not is_postgres else True
+            if batch_table_check:
+                try:
+                    if is_postgres:
+                        conn.exec_driver_sql("ALTER TABLE upload_batches ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP WITH TIME ZONE;")
+                    else:
+                        conn.exec_driver_sql("ALTER TABLE upload_batches ADD COLUMN last_seen_at DATETIME;")
+                except Exception:
+                    pass
+
+            # Ensure upload_sessions table exists
+            try:
+                if is_postgres:
+                    conn.exec_driver_sql("""
+                        CREATE TABLE IF NOT EXISTS upload_sessions (
+                            upload_id VARCHAR(64) PRIMARY KEY,
+                            doc_id VARCHAR(64) NOT NULL,
+                            raw_key VARCHAR(512) NOT NULL,
+                            r2_upload_id VARCHAR(256) NOT NULL,
+                            parts JSON,
+                            total_bytes BIGINT DEFAULT 0,
+                            filename VARCHAR(255) NOT NULL,
+                            title VARCHAR(255),
+                            year INTEGER,
+                            batch_id VARCHAR(64),
+                            client_item_id VARCHAR(64),
+                            status VARCHAR(32) DEFAULT 'OPEN',
+                            document_id VARCHAR(64),
+                            created_at TIMESTAMP WITH TIME ZONE,
+                            updated_at TIMESTAMP WITH TIME ZONE
+                        );
+                        CREATE INDEX IF NOT EXISTS ix_upload_sessions_batch_id ON upload_sessions (batch_id);
+                        CREATE INDEX IF NOT EXISTS ix_upload_sessions_status ON upload_sessions (status);
+                    """)
+                else:
+                    conn.exec_driver_sql("""
+                        CREATE TABLE IF NOT EXISTS upload_sessions (
+                            upload_id VARCHAR(64) PRIMARY KEY,
+                            doc_id VARCHAR(64) NOT NULL,
+                            raw_key VARCHAR(512) NOT NULL,
+                            r2_upload_id VARCHAR(256) NOT NULL,
+                            parts JSON,
+                            total_bytes BIGINT DEFAULT 0,
+                            filename VARCHAR(255) NOT NULL,
+                            title VARCHAR(255),
+                            year INTEGER,
+                            batch_id VARCHAR(64),
+                            client_item_id VARCHAR(64),
+                            status VARCHAR(32) DEFAULT 'OPEN',
+                            document_id VARCHAR(64),
+                            created_at DATETIME,
+                            updated_at DATETIME
+                        );
+                        CREATE INDEX IF NOT EXISTS ix_upload_sessions_batch_id ON upload_sessions (batch_id);
+                        CREATE INDEX IF NOT EXISTS ix_upload_sessions_status ON upload_sessions (status);
+                    """)
+            except Exception as e:
+                logger.debug(f"upload_sessions table creation notice: {e}")
 
             # Check if documents table exists
             doc_table_check = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='documents';").fetchone() if not is_postgres else True

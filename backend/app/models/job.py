@@ -24,6 +24,7 @@ class IngestionJob(Base):
     document_id = Column(String(36), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
     batch_id = Column(String(36), index=True, nullable=True)
     client_item_id = Column(String(64), nullable=True)
+    execution_name = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime(timezone=True), nullable=True)

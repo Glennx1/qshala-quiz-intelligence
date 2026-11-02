@@ -116,13 +116,7 @@ def get_active_upload_batch(db: Session = Depends(get_db)):
 
 @router.get("/upload-batch/{batch_id}")
 async def get_upload_batch_status(batch_id: str, db: Session = Depends(get_db)):
-    """Get merged status and totals for an upload batch, calling dispatch_available() opportunistically."""
-    from backend.app.services.ingestion import upload_queue
-    try:
-        await upload_queue.dispatch_available()
-    except Exception as e:
-        logger.warning("[BATCH] opportunistic dispatch_available failed: %s", e)
-
+    """Get merged status and totals for an upload batch (read-only query)."""
     batch = db.query(UploadBatch).filter(UploadBatch.id == batch_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail="Upload batch not found")
@@ -152,6 +146,7 @@ async def get_upload_batch_status(batch_id: str, db: Session = Depends(get_db)):
         "total": len(registered_items),
         "completed": 0,
         "processing": 0,
+        "cancelling": 0,
         "queued": 0,
         "waiting": 0,
         "failed": 0,
@@ -166,7 +161,10 @@ async def get_upload_batch_status(batch_id: str, db: Session = Depends(get_db)):
             if job.status == "PENDING":
                 st = "QUEUED"
             elif job.status == "PROCESSING":
-                st = "PROCESSING"
+                if job.current_step == "CANCELLING":
+                    st = "CANCELLING"
+                else:
+                    st = "PROCESSING"
             elif job.status == "COMPLETED":
                 st = "COMPLETED"
             elif job.status == "CANCELLED":
@@ -184,7 +182,9 @@ async def get_upload_batch_status(batch_id: str, db: Session = Depends(get_db)):
 
             pct = 0
             step_text = job.current_step
-            if st == "PROCESSING":
+            if st == "CANCELLING":
+                step_text = "Cancelling..."
+            elif st == "PROCESSING":
                 if doc and doc.progress_detail:
                     pct = doc.progress_detail.get("progress_percentage", 0)
                     step_text = (
@@ -326,6 +326,14 @@ def cancel_entire_batch(batch_id: str, db: Session = Depends(get_db)):
         job.updated_at = now
         job.error_message = "Cancelled by user"
 
+        if job.execution_name:
+            try:
+                from google.cloud import run_v2
+                client = run_v2.ExecutionsClient()
+                client.cancel_execution(name=job.execution_name)
+            except Exception as e:
+                logger.warning("[BATCH-CANCEL] failed to cancel Cloud Run execution %s: %s", job.execution_name, e)
+
         if job.document_id:
             request_doc_cancel(job.document_id)
             doc = db.query(Document).filter(Document.id == job.document_id).first()
@@ -336,7 +344,7 @@ def cancel_entire_batch(batch_id: str, db: Session = Depends(get_db)):
                     ext = os.path.splitext(doc.storage_path or doc.filename or "")[1]
                     raw_key = f"raw-uploads/{doc.id}{ext}"
                     try:
-                        r2.delete_object(raw_key)
+                        r2.delete(raw_key)
                         logger.info("[BATCH-CANCEL] removed raw R2 key %s for doc %s", raw_key, doc.id)
                     except Exception as e:
                         logger.warning("[BATCH-CANCEL] failed to delete R2 object %s: %s", raw_key, e)
@@ -499,6 +507,30 @@ def cancel_job(job_id: str, db: Session = Depends(get_db)):
         return {"message": "Job already in terminal status", "job": to_job_dict(job)}
 
     now = datetime.now(timezone.utc)
+
+    if job.status == "PROCESSING":
+        job.current_step = "CANCELLING"
+        job.error_message = "Cancelled by user"
+        job.updated_at = now
+        if job.document_id:
+            request_doc_cancel(job.document_id)
+            doc = db.query(Document).filter(Document.id == job.document_id).first()
+            if doc:
+                doc.cancel_requested = True
+
+        if job.execution_name:
+            try:
+                from google.cloud import run_v2
+                client = run_v2.ExecutionsClient()
+                client.cancel_execution(name=job.execution_name)
+                logger.info("[CANCEL] cancelled Cloud Run execution %s", job.execution_name)
+            except Exception as e:
+                logger.warning("[CANCEL] failed to cancel Cloud Run execution %s: %s", job.execution_name, e)
+
+        db.commit()
+        db.refresh(job)
+        return {"message": "Job cancellation requested", "job": to_job_dict(job)}
+
     job.status = "CANCELLED"
     job.current_step = "CANCELLED"
     job.completed_at = now

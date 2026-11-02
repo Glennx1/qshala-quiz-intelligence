@@ -14,4 +14,5 @@ class UploadBatch(Base):
     id = Column(String(36), primary_key=True, default=generate_uuid)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     total_expected = Column(Integer, nullable=False)
-    items = Column(JSON, default=list)  # list of {client_item_id, filename, size_bytes}
+    items = Column(JSON, default=list)  # list of {client_item_id, filename, size_bytes}
+    last_seen_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

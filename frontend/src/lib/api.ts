@@ -322,11 +322,13 @@ export const api = {
       if (options?.batchId) formData.append('batch_id', options.batchId);
       if (options?.clientItemId) formData.append('client_item_id', options.clientItemId);
 
-      // Attempt upload with up to 3 retries against intermittent network fluctuations.
-      // A cancel (abort, or the server answering 409 "cancelled") is never retried.
+      // Attempt upload with exponential backoff (0.8s, 2s, 4s, 8s, 15s, 30s) up to 6 attempts.
+      // A true cancellation (abort signal, or 409 {"code": "upload_cancelled"}) is never retried.
+      // 425 ("slice_not_ready") or 5xx/network errors retry with backoff.
+      const BACKOFF_DELAYS = [800, 2000, 4000, 8000, 15000, 30000];
       let res: Response | null = null;
       let lastError: any = null;
-      for (let attempt = 0; attempt < 3; attempt++) {
+      for (let attempt = 0; attempt < BACKOFF_DELAYS.length; attempt++) {
         try {
           res = await xhrPost(`${getApiBase()}/documents/upload-chunk`, formData, {
             signal,
@@ -334,18 +336,29 @@ export const api = {
           });
           if (res.ok) break;
           const errText = await res.text();
-          if (res.status === 409) throw makeAbortError();
+          if (res.status === 409) {
+            let isCancelled = false;
+            try {
+              const parsed = JSON.parse(errText);
+              if (parsed.code === 'upload_cancelled' || (parsed.detail && (parsed.detail.code === 'upload_cancelled' || parsed.detail === 'Upload was cancelled.'))) {
+                isCancelled = true;
+              }
+            } catch {
+              if (errText.includes('upload_cancelled') || errText.includes('cancelled')) isCancelled = true;
+            }
+            if (isCancelled) throw makeAbortError();
+          }
           lastError = new Error(errText || `HTTP ${res.status}`);
         } catch (netErr) {
           if (isAbortError(netErr)) throw netErr;
           lastError = netErr;
         }
-        await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+        await new Promise((r) => setTimeout(r, BACKOFF_DELAYS[attempt]));
         if (signal?.aborted) throw makeAbortError();
       }
 
       if (!res || !res.ok) {
-        throw lastError || new Error(`Failed to upload chunk ${chunkIndex + 1} after 3 attempts`);
+        throw lastError || new Error(`Failed to upload chunk ${chunkIndex + 1} after ${BACKOFF_DELAYS.length} attempts`);
       }
 
       const data = await res.json();

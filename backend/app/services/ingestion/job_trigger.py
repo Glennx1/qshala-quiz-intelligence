@@ -1,17 +1,4 @@
-"""Triggers a Cloud Run Job execution to process one deck, instead of running ingestion inside
-the API process (QShala priority plan: split ingestion out of the monolith so a heavy deck can't
-starve dashboard/search traffic or exhaust the API service's memory).
-
-Only used when settings.INGESTION_MODE == "cloud_run_job". The in-process and upload-queue paths
-in documents.py._schedule_ingestion are completely untouched by this module.
-
-Auth: uses Application Default Credentials. On Cloud Run, that's automatic -- no key file needed,
-just grant the API service's runtime service account `roles/run.developer` (or a custom role with
-run.jobs.run) on the ingestion job resource. Locally (e.g. testing this path from a dev machine),
-`gcloud auth application-default login` provides equivalent credentials.
-"""
 import logging
-
 from backend.app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -19,17 +6,17 @@ logger = logging.getLogger(__name__)
 
 class IngestionJobTriggerError(Exception):
     """Raised when the Cloud Run Job execution couldn't be started."""
+    def __init__(self, message: str, transient: bool = False):
+        super().__init__(message)
+        self.transient = transient
 
 
 def trigger_ingestion_job(document_id: str) -> str:
     """Starts one execution of the configured ingestion job, passing DOCUMENT_ID as an env var
     override so worker.py knows which deck to process. Returns the execution name on success.
 
-    Raises IngestionJobTriggerError (not silently) if INGESTION_MODE=cloud_run_job but the
-    required GCP_PROJECT_ID/GCP_REGION/INGESTION_JOB_NAME settings are missing, or if the API
-    call itself fails -- a silent no-op here would mean an upload that never processes, with no
-    indication why, which is exactly the class of bug the rest of this priority plan exists to
-    eliminate.
+    Raises IngestionJobTriggerError with transient=True for retryable API limits/errors (429, 503,
+    network timeouts), or transient=False for misconfiguration / permission failures (403, 404).
     """
     missing = [name for name, val in (
         ("GCP_PROJECT_ID", settings.GCP_PROJECT_ID),
@@ -39,14 +26,16 @@ def trigger_ingestion_job(document_id: str) -> str:
     if missing:
         raise IngestionJobTriggerError(
             f"INGESTION_MODE=cloud_run_job but {', '.join(missing)} not set. "
-            "See the deployment docs for the Cloud Run Job setup steps."
+            "See the deployment docs for the Cloud Run Job setup steps.",
+            transient=False,
         )
 
     try:
         from google.cloud import run_v2
     except ImportError as e:
         raise IngestionJobTriggerError(
-            "google-cloud-run is not installed (should be in backend/requirements.txt)"
+            "google-cloud-run is not installed (should be in backend/requirements.txt)",
+            transient=False,
         ) from e
 
     job_name = (
@@ -71,5 +60,31 @@ def trigger_ingestion_job(document_id: str) -> str:
         execution_name = getattr(execution_name, "name", None) or "unknown"
         logger.info("[INGESTION_JOB] triggered execution=%s for doc_id=%s", execution_name, document_id)
         return execution_name
+    except IngestionJobTriggerError:
+        raise
     except Exception as e:
-        raise IngestionJobTriggerError(f"Failed to start ingestion job for doc_id={document_id}: {e}") from e
+        err_str = str(e).lower()
+        transient = False
+        # Check for transient status signals
+        if any(term in err_str for term in [
+            "429", "503", "504", "500", "502", "resourceexhausted", "unavailable",
+            "deadline exceeded", "timeout", "connection reset", "broken pipe", "temporary failure"
+        ]):
+            transient = True
+        elif hasattr(e, "grpc_status_code"):
+            # StatusCode: UNAVAILABLE=14, DEADLINE_EXCEEDED=4, RESOURCE_EXHAUSTED=8, INTERNAL=13
+            val = getattr(e.grpc_status_code, "value", None)
+            if val in (4, 8, 13, 14):
+                transient = True
+        elif hasattr(e, "code"):
+            try:
+                c = e.code() if callable(e.code) else e.code
+                if c in (4, 8, 13, 14, 429, 503, 504, 500, 502):
+                    transient = True
+            except Exception:
+                pass
+
+        raise IngestionJobTriggerError(
+            f"Failed to start ingestion job for doc_id={document_id}: {e}",
+            transient=transient,
+        ) from e
