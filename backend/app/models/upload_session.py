@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Integer, BigInteger, DateTime, JSON
+from sqlalchemy import Column, String, Text, Integer, BigInteger, DateTime, JSON
 from backend.app.database import Base
 
 
@@ -13,8 +13,8 @@ class UploadSession(Base):
 
     upload_id = Column(String(64), primary_key=True)
     doc_id = Column(String(64), nullable=False)
-    raw_key = Column(String(512), nullable=False)
-    r2_upload_id = Column(String(256), nullable=False)
+    raw_key = Column(Text, nullable=False)
+    r2_upload_id = Column(Text, nullable=False)
     parts = Column(JSON, default=dict)
     total_bytes = Column(BigInteger, default=0)
     filename = Column(String(255), nullable=False)

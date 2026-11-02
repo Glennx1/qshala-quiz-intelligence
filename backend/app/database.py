@@ -336,8 +336,8 @@ def ensure_schema_columns():
                         CREATE TABLE IF NOT EXISTS upload_sessions (
                             upload_id VARCHAR(64) PRIMARY KEY,
                             doc_id VARCHAR(64) NOT NULL,
-                            raw_key VARCHAR(512) NOT NULL,
-                            r2_upload_id VARCHAR(256) NOT NULL,
+                            raw_key TEXT NOT NULL,
+                            r2_upload_id TEXT NOT NULL,
                             parts JSON,
                             total_bytes BIGINT DEFAULT 0,
                             filename VARCHAR(255) NOT NULL,
@@ -353,13 +353,18 @@ def ensure_schema_columns():
                         CREATE INDEX IF NOT EXISTS ix_upload_sessions_batch_id ON upload_sessions (batch_id);
                         CREATE INDEX IF NOT EXISTS ix_upload_sessions_status ON upload_sessions (status);
                     """)
+                    try:
+                        conn.exec_driver_sql('ALTER TABLE upload_sessions ALTER COLUMN r2_upload_id TYPE TEXT;')
+                        conn.exec_driver_sql('ALTER TABLE upload_sessions ALTER COLUMN raw_key TYPE TEXT;')
+                    except Exception:
+                        pass
                 else:
                     conn.exec_driver_sql("""
                         CREATE TABLE IF NOT EXISTS upload_sessions (
                             upload_id VARCHAR(64) PRIMARY KEY,
                             doc_id VARCHAR(64) NOT NULL,
-                            raw_key VARCHAR(512) NOT NULL,
-                            r2_upload_id VARCHAR(256) NOT NULL,
+                            raw_key TEXT NOT NULL,
+                            r2_upload_id TEXT NOT NULL,
                             parts JSON,
                             total_bytes BIGINT DEFAULT 0,
                             filename VARCHAR(255) NOT NULL,
