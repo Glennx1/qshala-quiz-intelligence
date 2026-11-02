@@ -103,10 +103,19 @@ def _sync_progress_once(document_id: str) -> None:
 
     db = SessionLocal()
     try:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
         doc = db.query(Document).filter(Document.id == document_id).first()
         if doc is not None:
             doc.progress_detail = safe_snapshot
-            db.commit()
+        from backend.app.models.job import IngestionJob
+        job = db.query(IngestionJob).filter(
+            IngestionJob.document_id == document_id,
+            IngestionJob.status == "PROCESSING"
+        ).first()
+        if job is not None:
+            job.updated_at = now
+        db.commit()
     except Exception as e:
         logger.warning("[WORKER] progress sync failed (continuing): %s", e)
     finally:
@@ -155,6 +164,61 @@ def _fetch_raw_deck(document_id: str) -> None:
         db.close()
 
 
+def _write_terminal_job_status(document_id: str, error: "str | None" = None) -> None:
+    """Finds the IngestionJob for this document in PROCESSING status and marks it with the terminal outcome."""
+    from datetime import datetime, timezone
+    from backend.app.database import SessionLocal
+    from backend.app.models.document import Document
+    from backend.app.models.job import IngestionJob
+
+    now = datetime.now(timezone.utc)
+    try:
+        db = SessionLocal()
+        try:
+            job = (
+                db.query(IngestionJob)
+                .filter(IngestionJob.document_id == document_id, IngestionJob.status == "PROCESSING")
+                .order_by(IngestionJob.created_at.desc())
+                .first()
+            )
+            if job is None:
+                return  # No matching job (legacy direct trigger) = no-op
+            doc = db.query(Document).filter(Document.id == document_id).first()
+            doc_status = doc.processing_status if doc else None
+            if doc_status == "COMPLETED":
+                job.status = "COMPLETED"
+                job.current_step = "DONE"
+                job.completed_at = now
+            elif doc_status == "CANCELLED" or (doc and doc.cancel_requested):
+                job.status = "CANCELLED"
+                job.current_step = "CANCELLED"
+                job.completed_at = now
+                job.error_message = "Cancelled by user"
+            else:
+                job.status = "FAILED"
+                job.error_message = error or (doc.processing_error if doc else None) or "Ingestion did not complete"
+            job.updated_at = now
+            db.commit()
+            logger.info("[WORKER] wrote terminal status %s for job %s (doc=%s)", job.status, job.id, document_id)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("[WORKER] failed to write terminal job status for doc_id=%s: %s", document_id, e)
+
+
+def _best_effort_dispatch_next() -> None:
+    try:
+        from backend.app.config import settings
+        if settings.UPLOAD_QUEUE_ENABLED:
+            from backend.app.services.ingestion.upload_queue import dispatch_available
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(dispatch_available())
+            finally:
+                loop.close()
+    except Exception as e:
+        logger.debug("[WORKER] best-effort dispatch next skipped: %s", e)
+
 async def _run(document_id: str) -> None:
     from backend.app.services.ingestion.pipeline import IngestionPipeline
 
@@ -181,6 +245,8 @@ async def _run(document_id: str) -> None:
         # One last sync so the final "Finishing up" / completion detail and activity log entries
         # the pipeline wrote in its last moments aren't lost to the PROGRESS_SYNC_INTERVAL_S gap.
         await asyncio.to_thread(_sync_progress_once, document_id)
+        await asyncio.to_thread(_write_terminal_job_status, document_id)
+        await asyncio.to_thread(_best_effort_dispatch_next)
 
 
 def main() -> int:
@@ -197,6 +263,10 @@ def main() -> int:
         # truly unexpected crash (e.g. a DB connection the pipeline couldn't reach at all) still
         # shows up as a failed Cloud Run Job execution instead of silently exiting 0.
         logger.exception("[WORKER] unhandled error processing doc_id=%s: %s", document_id, e)
+        try:
+            _write_terminal_job_status(document_id, error=str(e))
+        except Exception:
+            pass
         return 1
 
 

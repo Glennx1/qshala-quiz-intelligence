@@ -229,10 +229,22 @@ class Settings(BaseSettings):
     # so a heavy deck can't starve the API's own request handling or exhaust its memory. Requires
     # GCP_PROJECT_ID, GCP_REGION and INGESTION_JOB_NAME to also be set, and the API service's
     # service account needs run.jobs.run on that job (see deployment docs).
+    INGESTION_MAX_CONCURRENCY: int = 1
     INGESTION_MODE: str = "in_process"
     GCP_PROJECT_ID: Optional[str] = None
     GCP_REGION: Optional[str] = None
     INGESTION_JOB_NAME: Optional[str] = None
+
+    @field_validator("INGESTION_MAX_CONCURRENCY", mode="before")
+    @classmethod
+    def _parse_ingestion_max_concurrency(cls, v, info):
+        if v == "" or v is None:
+            return 1
+        try:
+            val = int(v)
+            return max(1, val)
+        except (ValueError, TypeError):
+            return 1
 
     @field_validator("UPLOAD_QUEUE_ENABLED", mode="before")
     @classmethod

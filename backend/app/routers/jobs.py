@@ -13,13 +13,12 @@ router = APIRouter(prefix="/jobs", tags=["Ingestion Jobs"])
 
 @router.post("/process-upload-next")
 async def process_upload_next():
-    """Process ONE queued deck upload if the queue isn't already busy. Safe to call from an external
-    cron (e.g. every 1-2 min) as a reliable driver that doesn't depend on the in-process worker and
-    also keeps a sleepy free-tier host awake. Serial: it never starts a second deck while one runs."""
+    """Process or dispatch queued deck uploads up to capacity. Safe to call from an external
+    cron as a reliable driver that doesn't depend on the in-process worker."""
     from backend.app.services.ingestion import upload_queue
     try:
-        processed = await upload_queue.process_one()
-        return {"status": "SUCCESS" if processed else "IDLE", "processed": processed}
+        dispatched = await upload_queue.dispatch_available()
+        return {"status": "SUCCESS" if dispatched else "IDLE", "processed": dispatched, "dispatched": dispatched}
     except Exception as e:
         logger.exception("process-upload-next failed: %s", e)
         return {"status": "ERROR", "error": str(e)[:300]}
@@ -128,8 +127,12 @@ async def retry_job(job_id: str, db: Session = Depends(get_db)):
     # Manual-upload jobs re-run the full pipeline, which would duplicate slides/questions if any
     # partial output from the failed attempt is still around — so purge the deck's artifacts first.
     if job.source_type == "MANUAL_UPLOAD":
-        from backend.app.services.ingestion.upload_queue import requeue_job
+        from backend.app.services.ingestion.upload_queue import requeue_job, dispatch_available
         requeue_job(db, job)
+        try:
+            await dispatch_available()
+        except Exception as e:
+            logger.warning("dispatch_available after retry failed: %s", e)
     else:
         job.status = "PENDING"
         job.retry_count = 0

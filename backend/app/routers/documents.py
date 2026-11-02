@@ -89,6 +89,13 @@ def _schedule_ingestion(doc, db: Session, background_tasks: BackgroundTasks, raw
                 db.commit()
                 return
 
+        if settings.UPLOAD_QUEUE_ENABLED:
+            from backend.app.services.ingestion import upload_queue
+            job = upload_queue.enqueue_upload(db, document_id=doc.id, filename=doc.filename)
+            background_tasks.add_task(upload_queue.dispatch_available)
+            logger.info("[UPLOAD] queued for cloud_run_job doc_id=%s (job=%s)", doc.id, job.id)
+            return
+
         try:
             trigger_ingestion_job(doc.id)
             logger.info("[UPLOAD] Cloud Run Job triggered for doc_id=%s", doc.id)

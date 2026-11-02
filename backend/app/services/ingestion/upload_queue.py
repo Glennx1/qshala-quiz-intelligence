@@ -150,8 +150,9 @@ def claim_next(db: Session) -> "IngestionJob | None":
     busy = (db.query(IngestionJob)
             .filter(IngestionJob.source_type == SOURCE, IngestionJob.status == "PROCESSING")
             .count())
-    if busy:
-        db.commit()      # release the advisory lock; someone else is working
+    max_concurrency = max(1, getattr(settings, "INGESTION_MAX_CONCURRENCY", 1))
+    if busy >= max_concurrency:
+        db.commit()      # release the advisory lock; capacity reached
         return None
 
     job = (db.query(IngestionJob)
@@ -195,49 +196,82 @@ async def _run_job(job_id: str, document_id: str) -> None:
         db.close()
 
 
+async def dispatch_available(max_decks: int = 200) -> int:
+    """Loop claiming jobs while capacity remains.
+    - If INGESTION_MODE == "cloud_run_job": triggers a Cloud Run Job execution (worker.py)
+      for each claimed job. The job stays PROCESSING until the worker closes it. On
+      trigger failure, marks job and document FAILED immediately and continues.
+    - If INGESTION_MODE == "in_process": runs IngestionPipeline().run() for each claimed job.
+    Returns the number of jobs dispatched in this invocation.
+    """
+    dispatched = 0
+    while dispatched < max_decks:
+        db = SessionLocal()
+        try:
+            job = claim_next(db)
+            if job is None:
+                break
+            job_id, document_id = job.id, job.document_id
+        finally:
+            db.close()
+
+        dispatched += 1
+        if settings.INGESTION_MODE == "cloud_run_job":
+            from backend.app.services.ingestion.job_trigger import (
+                trigger_ingestion_job,
+                IngestionJobTriggerError,
+            )
+            try:
+                trigger_ingestion_job(document_id)
+                logger.info("[QUEUE] triggered Cloud Run Job for doc_id=%s (job=%s)", document_id, job_id)
+            except Exception as e:
+                err_msg = str(e)
+                logger.error("[QUEUE] failed to trigger Cloud Run Job for doc_id=%s (job=%s): %s", document_id, job_id, err_msg)
+                fail_db = SessionLocal()
+                try:
+                    f_job = fail_db.query(IngestionJob).filter(IngestionJob.id == job_id).first()
+                    f_doc = fail_db.query(Document).filter(Document.id == document_id).first()
+                    if f_job:
+                        f_job.status = "FAILED"
+                        f_job.error_message = err_msg
+                        f_job.updated_at = _now()
+                    if f_doc and f_doc.processing_status not in ("COMPLETED",):
+                        f_doc.processing_status = "FAILED"
+                        f_doc.processing_error = err_msg
+                    fail_db.commit()
+                finally:
+                    fail_db.close()
+        else:
+            await _run_job(job_id, document_id)
+
+    return dispatched
+
+
 async def process_one() -> bool:
-    """Claim and run a single queued deck if one is available. Returns True if it processed one.
-    Exposed for tests and for a cron/HTTP trigger; the loop below just calls it on a timer."""
-    db = SessionLocal()
-    try:
-        job = claim_next(db)
-        if job is None:
-            return False
-        job_id, document_id = job.id, job.document_id
-    finally:
-        db.close()
-    await _run_job(job_id, document_id)
-    return True
+    """Claim and run/dispatch queued deck(s) if capacity is available. Returns True if at least one was dispatched."""
+    dispatched = await dispatch_available(max_decks=1)
+    return dispatched > 0
 
 
 _draining = False
 
 
 async def drain(max_decks: int = 200) -> int:
-    """Process queued decks one after another until the queue is empty (or this process is already
-    draining, or another process holds the serial lock). Kicked from each upload so processing does
-    NOT depend on the long-lived background worker running — the common reason decks "just queue".
-    Serial: process_one() returns False when another worker is busy, so this exits instead of
-    piling on. Returns how many decks it processed."""
+    """Process or dispatch queued decks.
+    In cloud_run_job mode, dispatch_available() triggers executions for all available capacity slots.
+    In in_process mode, processes decks sequentially until queue empty or busy.
+    """
     global _draining
     if _draining:                 # this process is already draining; don't start a second drainer
         return 0
     _draining = True
     done = 0
     try:
-        for _ in range(max_decks):
-            try:
-                did = await process_one()
-            except Exception as e:
-                logger.exception("[QUEUE] drain tick error: %s", e)
-                break
-            if not did:           # queue empty, or another worker is handling it
-                break
-            done += 1
+        done = await dispatch_available(max_decks=max_decks)
     finally:
         _draining = False
     if done:
-        logger.info("[QUEUE] drain processed %d deck(s)", done)
+        logger.info("[QUEUE] drain processed/dispatched %d deck(s)", done)
     return done
 
 

@@ -73,15 +73,19 @@ async def lifespan(app: FastAPI):
     try:
         db = SessionLocal()
         doc_count = db.query(Document).count()
-        # Nothing can still be processing right after a start: those uploads died with the old process.
-        stuck = db.query(Document).filter(Document.processing_status == "PROCESSING").all()
-        for d in stuck:
-            d.processing_status = "FAILED"
-            d.processing_error = ("Processing stopped because the server restarted, most likely because the deck is "
-                                  "too large for the server's memory. Compress the pictures and upload it again.")
-        if stuck:
-            db.commit()
-            logger.warning(f"Marked {len(stuck)} interrupted upload(s) as FAILED")
+        # In cloud_run_job mode, the worker is a separate container that survives API restarts/deploys,
+        # so skip marking PROCESSING as FAILED on startup (stale detection via heartbeat is the safety net).
+        if settings.INGESTION_MODE != "cloud_run_job":
+            stuck = db.query(Document).filter(Document.processing_status == "PROCESSING").all()
+            for d in stuck:
+                d.processing_status = "FAILED"
+                d.processing_error = ("Processing stopped because the server restarted, most likely because the deck is "
+                                      "too large for the server's memory. Compress the pictures and upload it again.")
+            if stuck:
+                db.commit()
+                logger.warning(f"Marked {len(stuck)} interrupted upload(s) as FAILED")
+        else:
+            logger.info("INGESTION_MODE=cloud_run_job: skipping startup PROCESSING -> FAILED mark for documents; worker container runs independently")
         db.close()
         if doc_count == 0:
             logger.info("Knowledge base is empty. Running automatic seeding of sample decks...")
@@ -96,11 +100,14 @@ async def lifespan(app: FastAPI):
         from backend.app.config import settings as _settings
         if _settings.UPLOAD_QUEUE_ENABLED:
             from backend.app.services.ingestion import upload_queue
-            _db = SessionLocal()
-            try:
-                upload_queue.reconcile_on_startup(_db)
-            finally:
-                _db.close()
+            if _settings.INGESTION_MODE != "cloud_run_job":
+                _db = SessionLocal()
+                try:
+                    upload_queue.reconcile_on_startup(_db)
+                finally:
+                    _db.close()
+            else:
+                logger.info("INGESTION_MODE=cloud_run_job: skipping startup reconcile for upload queue jobs")
             upload_queue.start_worker()
             logger.info("Upload queue worker started")
     except Exception as e:
