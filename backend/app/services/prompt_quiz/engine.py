@@ -65,8 +65,9 @@ class Brief:
 
 # ---------- Interpreter ----------
 def _bias_from_text(p: str) -> Optional[str]:
-    return "hard" if re.search(r"\b(hard(?:er)?|tough(?:er)?|difficult|finals?)\b", p) else \
-           "easy" if re.search(r"\b(easy|easier|warm-?up|beginner|gentle)\b", p) else None
+    return "hard" if re.search(r"\b(hard(?:er)?|tough(?:er)?|difficult|finals?|killer|spicy|spicier|mushkil)\b", p) else \
+           "easy" if re.search(r"\b(easy|easier|warm-?up|beginner|gentle|aasan|saral|tone\s+it\s+down)\b", p) else \
+           "medium" if re.search(r"\b(balanced|medium|not\s+too\s+hard|not\s+too\s+easy)\b", p) else None
 
 
 def _brief_from_gemini(prompt: str, gem: Dict[str, Any], count: Optional[int],
@@ -171,12 +172,27 @@ def _brief_from_regex(prompt: str, count: Optional[int],
     )
 
     # Relative count expansion (e.g. "5 more", "give me 5 more questions")
-    more_m = re.search(r"\b(?:add|give\s+me\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+more\b", p)
+    more_m = re.search(r"\b(?:add|give\s+me\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|couple|few)\s+more\b", p)
+    fewer_m = re.search(r"\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+fewer\b", p)
+    double_m = re.search(r"\bdouble\s+it\b", p)
+    halve_m = re.search(r"\bhalve\s+it\b", p)
+    cut_to_m = re.search(r"\bcut\s+(?:it\s+)?down\s+to\s+(\d{1,2}|one|two|three|four|five)\b", p)
+
     if partial_m and previous_brief:
-        # Crucial: changing N questions in an existing quiz must NOT shrink the quiz to N questions!
         final_n = previous_brief.get("count") or 10
+    elif double_m and previous_brief:
+        final_n = min(50, (previous_brief.get("count") or 10) * 2)
+    elif halve_m and previous_brief:
+        final_n = max(1, (previous_brief.get("count") or 10) // 2)
+    elif cut_to_m and previous_brief:
+        val = cut_to_m.group(1).lower()
+        final_n = int(WORD_NUMS.get(val, val))
+    elif fewer_m and previous_brief:
+        val = fewer_m.group(1).lower()
+        sub_n = int(WORD_NUMS.get(val, val))
+        final_n = max(1, (previous_brief.get("count") or 10) - sub_n)
     elif more_m and previous_brief:
-        raw_val = more_m.group(1)
+        raw_val = more_m.group(1).lower()
         val = int(WORD_NUMS.get(raw_val, raw_val))
         final_n = min(50, (previous_brief.get("count") or 10) + val)
     else:

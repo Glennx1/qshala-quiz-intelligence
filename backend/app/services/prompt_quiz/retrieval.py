@@ -97,6 +97,9 @@ SYNONYMS: Dict[str, List[str]] = {
 }
 
 WORD_NUMS: Dict[str, int] = {
+    "zero": 0,
+    "a couple of": 2, "a couple": 2, "couple": 2,
+    "a few": 3, "few": 3,
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
     "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
@@ -295,6 +298,9 @@ _FORMAT_PATTERNS = {
     "ARRANGE_ORDER": re.compile(
         r"\b(arrange|chronolog|ticker\s+tangle|correct\s+order)\b", re.I
     ),
+    "STANDARD_QA": re.compile(
+        r"\b(plain\s+qa|standard\s+qa|regular\s+qa|standard\s+format)\b", re.I
+    ),
 }
 
 def parse_prompt(prompt: str):
@@ -307,7 +313,7 @@ def parse_prompt(prompt: str):
             break
     if re.search(r"\bevergreen|timeless|any year\b", p):
         filters["evergreen_only"] = True
-    if re.search(r"\bschool|kids|children|family|safe\b", p):
+    if re.search(r"\bschool|kids|children|family|safe|non-?political|no politics\b", p):
         filters["school_safe"] = True
     if re.search(r"\bno image|text only|without images?|non-?image\b", p):
         filters["exclude_image"] = True

@@ -23,7 +23,7 @@ STARTERS = [
 
 class DraftReq(BaseModel):
     prompt: str = Field(..., min_length=2, max_length=600)
-    count: Optional[int] = Field(default=None, ge=1, le=50)
+    count: Optional[int] = Field(default=None, ge=0, le=50)
     options: Dict[str, Any] = {}
     # Refinement: pass the `brief` from a prior /draft response alongside a follow-up prompt
     # ("make it harder", "swap cricket for tech", "give me 5 more") to refine instead of restart.
@@ -107,6 +107,21 @@ def starters():
 
 @router.post("/draft")
 def draft(req: DraftReq, db: Session = Depends(get_db)):
+    # 0 questions check:
+    if re.search(r"\b(?:0|zero)\s+questions?\b", req.prompt, re.I) or req.count == 0:
+        return {
+            "brief": {"prompt": req.prompt, "count": 0, "query": ""},
+            "questions": [],
+            "message": "Cannot create a quiz with 0 questions. Please specify at least 1 question.",
+            "bank_size": len(engine._load_bank(db)),
+            "stages": ["Interpreter"],
+            "fulfillment": {
+                "requested": 0,
+                "delivered": 0,
+                "short": False,
+                "note": "Cannot create a quiz with 0 questions."
+            }
+        }
     # 1. Single slot targeted replacement check:
     # e.g., "replace question 3 with fintech", "change card 10 to tech", "swap question 5", "replace #4 with cricket"
     slot_match = re.search(
