@@ -374,6 +374,13 @@ def _load_bank(db: Session) -> List[Dict[str, Any]]:
         except Exception:
             meta = {}
 
+    docs_map = {}
+    try:
+        from backend.app.models.document import Document
+        docs_map = {d.id: (d.title or d.filename or "") for d in db.query(Document.id, Document.title, Document.filename).all()}
+    except Exception:
+        docs_map = {}
+
     bank = []
     for q in qs:
         # Exclude questions with empty text unless they have valid visual clues
@@ -402,6 +409,7 @@ def _load_bank(db: Session) -> List[Dict[str, Any]]:
             "difficulty": (q.difficulty or "Medium"),
             "difficulty_score": q.difficulty_score if q.difficulty_score is not None else 0.5,
             "document_id": q.document_id,
+            "document_title": docs_map.get(q.document_id, ""),
             "tagged": bool(t),
             "question_format": getattr(q, 'question_format', None) or getattr(q, 'question_type', 'STANDARD_QA'),
             "city_name": (getattr(t, 'city_name', None) if t else None) or (getattr(m, 'city_name', None) if m else None),

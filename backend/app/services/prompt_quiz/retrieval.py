@@ -174,11 +174,11 @@ class Index:
             parts = [item.get("question_text", ""), item.get("answer", ""),
                      " ".join(_kw(item)), item.get("subtopic_l2") or "",
                      " ".join(item.get("secondary_l2") or []), item.get("search_summary") or "",
-                     item.get("topic_l1") or ""]  # topic_l1 added to index
+                     item.get("topic_l1") or "", item.get("document_title") or ""]
             # keywords/answer/subtopic/topic repeated so they weigh more than body prose
             toks = tokenize(" ".join(parts)) + tokenize(" ".join(_kw(item))) \
                    + tokenize(item.get("answer", "")) + tokenize(item.get("subtopic_l2") or "") \
-                   + tokenize(item.get("topic_l1") or "")
+                   + tokenize(item.get("topic_l1") or "") + tokenize(item.get("document_title") or "")
             c = Counter(toks)
             self.docs.append(c)
             self.len.append(sum(c.values()))
