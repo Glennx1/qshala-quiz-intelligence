@@ -142,9 +142,13 @@ _cors_origins = (
     if settings.CORS_ORIGINS
     else ["http://localhost:3000", "http://127.0.0.1:3000"]
 )
+_cors_origin_regex = (
+    r"^https://.*\.vercel\.app$|^https://.*\.run\.app$|^http://localhost(:\d+)?$|^http://127\.0\.0\.1(:\d+)?$"
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
+    allow_origin_regex=_cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
