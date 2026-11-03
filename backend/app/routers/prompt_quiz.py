@@ -47,6 +47,59 @@ class SaveReq(BaseModel):
     brief: Optional[Dict[str, Any]] = None
 
 
+WORD_MAP = {
+    'a': 1, 'an': 1, 'another': 1, 'one': 1, 'two': 2, 'three': 3, 'four': 4,
+    'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10
+}
+STOP_WORDS = {
+    'a', 'an', 'another', 'more', 'extra', 'additional', 'new', 'questions',
+    'question', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight',
+    'nine', 'ten'
+}
+
+
+def parse_add_intent(prompt: str) -> Optional[Dict[str, Any]]:
+    p = prompt.strip()
+    if re.search(r'\b(?:replace|swap|change|remove|delete|drop)\b', p, re.I):
+        return None
+    has_verb = bool(re.search(r'\b(?:add|give\s+me|include|append|insert)\b', p, re.I))
+    has_more = bool(re.search(r'\bmore\b', p, re.I))
+    if not (has_verb or has_more):
+        return None
+
+    cnt = 1
+    cnt_m = re.search(r'\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|another|a|an)\b', p, re.I)
+    if cnt_m:
+        raw = cnt_m.group(1).lower()
+        cnt = int(WORD_MAP.get(raw, raw if raw.isdigit() else 1))
+
+    topic = None
+    # 1. '... question(s) [based on/about/on/from/in/for/of/related to] <topic>'
+    topic_m = re.search(r'(?:questions?|qs?|more)\s+(?:based\s+on|about|on|from|in|for|of|related\s+to)\s+(.+)$', p, re.I)
+    if topic_m:
+        topic = topic_m.group(1).strip()
+    else:
+        # 2. 'add [cnt] <topic> question(s)'
+        topic_m2 = re.search(r'\b(?:add|give\s+me|include|append|insert)\s+(?:(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|another|a|an)\s+)?(.+?)\s+(?:questions?|qs?)\b', p, re.I)
+        if topic_m2:
+            candidate = topic_m2.group(1).strip()
+            cleaned = re.sub(r'\b(?:more|extra|additional|new)\b', '', candidate, flags=re.I).strip()
+            if cleaned.lower() not in STOP_WORDS and not cleaned.isdigit() and len(cleaned) > 1:
+                topic = cleaned
+        else:
+            # 3. 'add 1 more on <topic>' without word question
+            topic_m3 = re.search(r'\b(?:more|add)\s+(?:based\s+on|about|on|from|in|for|of|related\s+to)\s+(.+)$', p, re.I)
+            if topic_m3:
+                topic = topic_m3.group(1).strip()
+
+    if topic:
+        topic = re.sub(r'[\.\?!]+$', '', topic).strip()
+        if topic.lower() in STOP_WORDS or topic.isdigit() or len(topic) <= 1:
+            topic = None
+
+    return {'count': cnt, 'topic': topic}
+
+
 @router.get("/starters")
 def starters():
     return {"starters": STARTERS}
@@ -204,6 +257,108 @@ def draft(req: DraftReq, db: Session = Depends(get_db)):
             }
         }
 
+    # 1c. Slot removal check: e.g. "remove question 3", "delete slot 2", "drop card 4"
+    del_match = re.search(
+        r"\b(?:remove|delete|drop)\s+(?:(?:question|slot|card|#)\s*(\d{1,2})|(\d{1,2})(?:st|nd|rd|th)\s+(?:question|slot|card))\b",
+        req.prompt,
+        re.I
+    )
+    if del_match and req.current_questions and len(req.current_questions) > 1:
+        slot_num = int(del_match.group(1) or del_match.group(2))
+        if 1 <= slot_num <= len(req.current_questions):
+            bank = engine._load_bank(db)
+            bank_by_id = {b["id"]: engine._view(b) for b in bank}
+            updated_questions = [
+                bank_by_id.get(q["id"], q)
+                for i, q in enumerate(req.current_questions)
+                if i != slot_num - 1 and "id" in q
+            ]
+            prev_b = dict(req.previous_brief or {"query": "general", "count": len(updated_questions)})
+            prev_b["count"] = len(updated_questions)
+            return {
+                "brief": prev_b,
+                "questions": updated_questions,
+                "message": f"Removed question {slot_num} while keeping the rest of the quiz.",
+                "bank_size": len(bank),
+                "stages": ["Interpreter", "Librarian", "Guardian", "Editor", "Host"],
+                "fulfillment": {
+                    "requested": len(updated_questions),
+                    "delivered": len(updated_questions),
+                    "short": False,
+                    "note": f"Removed question {slot_num}."
+                }
+            }
+
+    # 1d. Add/append questions intent: e.g. "add 1 question based on bengaluru", "add 2 questions about history", "add 1 more question"
+    add_intent = parse_add_intent(req.prompt)
+    if add_intent and req.current_questions:
+        add_cnt = min(add_intent["count"], 20)
+        add_topic = add_intent.get("topic")
+
+        curr_ids = {q["id"] for q in req.current_questions if "id" in q}
+        effective_exclude = curr_ids | set(req.exclude_ids or [])
+
+        add_options = dict(req.options or {})
+        prev_b = req.previous_brief or {}
+        if prev_b.get("hard_bias") and "hard_bias" not in add_options:
+            add_options["hard_bias"] = prev_b.get("hard_bias")
+        prev_filters = prev_b.get("filters") or {}
+        for k in ("audience", "school_safe", "evergreen", "no_images", "india_focused"):
+            if k in prev_filters and k not in add_options:
+                add_options[k] = prev_filters[k]
+
+        search_prompt = add_topic if add_topic else (prev_b.get("query") or "general knowledge")
+        brief_to_pass = None if add_topic else req.previous_brief
+
+        sub_res = engine.build_draft(
+            db,
+            search_prompt,
+            count=add_cnt,
+            options=add_options,
+            previous_brief=brief_to_pass,
+            exclude_ids=effective_exclude,
+        )
+
+        fresh_questions = sub_res.get("questions") or []
+        bank = engine._load_bank(db)
+        bank_by_id = {b["id"]: engine._view(b) for b in bank}
+        existing_qs = [bank_by_id.get(q["id"], q) for q in req.current_questions if "id" in q]
+
+        if not fresh_questions:
+            topic_desc = f" matching '{add_topic}'" if add_topic else ""
+            return {
+                "brief": prev_b or {"query": search_prompt, "count": len(existing_qs)},
+                "questions": existing_qs,
+                "message": f"Could not find additional questions{topic_desc}. Kept your current {len(existing_qs)} questions.",
+                "bank_size": len(bank),
+                "stages": ["Interpreter", "Librarian", "Guardian", "Editor", "Host"],
+                "fulfillment": {
+                    "requested": len(existing_qs) + add_cnt,
+                    "delivered": len(existing_qs),
+                    "short": True,
+                    "note": f"No additional questions found{topic_desc}."
+                }
+            }
+
+        final_questions = existing_qs + fresh_questions
+        new_brief = dict(prev_b or sub_res.get("brief") or {})
+        new_brief["count"] = len(final_questions)
+
+        topic_desc = f" based on {add_topic}" if add_topic else ""
+        return {
+            "brief": new_brief,
+            "questions": final_questions,
+            "message": f"Added {len(fresh_questions)} question{'s' if len(fresh_questions) != 1 else ''}{topic_desc} while keeping the rest of your quiz.",
+            "bank_size": len(bank),
+            "stages": ["Interpreter", "Librarian", "Guardian", "Editor", "Host"],
+            "fulfillment": {
+                "requested": len(final_questions),
+                "delivered": len(final_questions),
+                "short": len(fresh_questions) < add_cnt,
+                "note": f"Added {len(fresh_questions)} question{'s' if len(fresh_questions) != 1 else ''}{topic_desc}."
+            }
+        }
+
     # 2. General refinement or new draft:
     effective_exclude = set(req.keep_ids) | set(req.exclude_ids or [])
     res = engine.build_draft(
@@ -250,19 +405,7 @@ def draft(req: DraftReq, db: Session = Depends(get_db)):
         res["message"] = f"Refined quiz: kept {kept_len} locked question{'s' if kept_len != 1 else ''} and updated {replaced_len}."
 
     elif req.previous_brief:
-        # Refinement without explicit locks: check if count addition was requested
-        p_lower = req.prompt.lower()
-        more_m = re.search(r"\b(?:add|give\s+me\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+more\b", p_lower)
-        if more_m and req.current_questions:
-            # Append new questions to the current quiz
-            curr_ids = {q["id"] for q in req.current_questions if "id" in q}
-            curr_qs = [bank_by_id.get(q["id"], q) for q in req.current_questions if "id" in q]
-            fresh = [q for q in new_candidates if q["id"] not in curr_ids]
-            combined = (curr_qs + fresh)[:target_count]
-            res["questions"] = combined
-            res["message"] = f"Expanded quiz to {len(combined)} questions."
-        else:
-            res["message"] = f"Refined quiz: updated questions based on '{req.prompt}'."
+        res["message"] = f"Refined quiz: updated questions based on '{req.prompt}'."
 
     if "fulfillment" in res:
         res["fulfillment"]["delivered"] = len(res["questions"])
