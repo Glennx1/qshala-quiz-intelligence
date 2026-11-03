@@ -35,6 +35,19 @@ def _enrich(db: Session, responses: List[QuestionResponse]) -> List[QuestionResp
         r.topic_paths = paths.get(r.id, [])
         r.repeated = reps.get(r.id, [])
         r.repeated_count = len(r.repeated)
+
+    dup_ids = list({r.duplicate_of_id for r in responses if r.duplicate_of_id and not r.duplicate_of_text})
+    if dup_ids:
+        orig_map = {
+            q[0]: (q[1], q[2]) for q in db.query(Question.id, Question.question_text, Question.answer)
+            .filter(Question.id.in_(dup_ids)).all()
+        }
+        for r in responses:
+            if r.duplicate_of_id and r.duplicate_of_id in orig_map:
+                txt, ans = orig_map[r.duplicate_of_id]
+                r.duplicate_of_text = txt
+                r.duplicate_of_answer = ans
+
     return responses
 
 

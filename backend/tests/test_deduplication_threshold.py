@@ -247,3 +247,66 @@ def test_intra_batch_duplicate_vector_matching(test_db):
     assert final_candidates[1]["duplicate_of_id"] == final_candidates[0]["id"]
     assert len(final_candidates[1]["duplicate_of_id"]) == 36 # Valid UUID length, not 64-char hash
     assert final_candidates[1]["duplicate_similarity"] >= 0.92
+
+
+def test_sparse_symbolic_and_disjoint_answers_not_flagged(test_db):
+    """
+    Guards against false positives on sparse symbolic/math slides and disjoint answers:
+    - Candidate '_ _ _ _ L+2 L-2 A+1 F+2' (Answer: SKIN) matched against an existing visual
+      slide with empty question text and answer 'Zohran Mamdani'.
+      Even with high vector similarity, this must NOT be flagged as duplicate.
+    - Candidate '_ _ _ _ R+1 G+2 P-4 C-2' (Answer: CUBE) matched against a Google question.
+      Must NOT be flagged as duplicate.
+    """
+    dedup = Deduplicator()
+    doc_id = "doc_test_100"
+    v = generate_normalized_vector(303, noise_scale=0.0)
+
+    # Existing question 1: visual slide with no question text and unrelated answer
+    existing_visual = Question(
+        id="q_visual_001",
+        document_id=doc_id,
+        question_text="",
+        answer="Zohran Mamdani - New York City's mayor",
+        content_hash="dummy_hash_001",
+        topic="General Knowledge",
+        embedding=v
+    )
+    # Existing question 2: Google products question
+    existing_google = Question(
+        id="q_google_002",
+        document_id=doc_id,
+        question_text="Which of these are products owned by Google?",
+        answer="Which of these logos belong to products owned by Google?",
+        content_hash="dummy_hash_002",
+        topic="Technology",
+        embedding=v
+    )
+    test_db.add_all([existing_visual, existing_google])
+    test_db.commit()
+
+    cand_skin = {
+        "question_text": "_ _ _ _ L+2 L-2 A+1 F+2",
+        "answer": "SKIN",
+        "primary_topic": "Mathematics"
+    }
+    cand_cube = {
+        "question_text": "_ _ _ _ R+1 G+2 P-4 C-2",
+        "answer": "CUBE",
+        "primary_topic": "Mathematics"
+    }
+
+    final_candidates, _ = dedup.deduplicate_batch(
+        db=test_db,
+        candidates=[cand_skin, cand_cube],
+        candidate_embeddings=[v, v],
+        doc_id="doc_math_deck",
+        threshold=0.85 # Even with a low threshold!
+    )
+
+    assert len(final_candidates) == 2
+    # Both must be UNIQUE!
+    assert final_candidates[0]["duplicate_status"] == "UNIQUE"
+    assert final_candidates[0]["duplicate_of_id"] is None
+    assert final_candidates[1]["duplicate_status"] == "UNIQUE"
+    assert final_candidates[1]["duplicate_of_id"] is None

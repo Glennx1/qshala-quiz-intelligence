@@ -102,14 +102,26 @@ export default function DuplicateReviewModal({
               <div>
                 <span className="text-[11px] font-semibold text-slate-500 uppercase">Question</span>
                 <p className="text-[13.5px] font-medium text-slate-900 mt-0.5">
-                  {selectedDuplicateForReview.duplicate_of_text || selectedDuplicateForReview.question_text}
+                  {selectedDuplicateForReview.duplicate_of_text ? (
+                    selectedDuplicateForReview.duplicate_of_text
+                  ) : (
+                    <span className="italic text-slate-400 font-normal">
+                      [Visual or media-only slide with no question text extracted]
+                    </span>
+                  )}
                 </p>
               </div>
 
               <div>
                 <span className="text-[11px] font-semibold text-slate-500 uppercase">Answer</span>
                 <p className="text-[13.5px] font-bold text-slate-800 mt-0.5">
-                  {selectedDuplicateForReview.duplicate_of_answer || selectedDuplicateForReview.answer}
+                  {selectedDuplicateForReview.duplicate_of_answer ? (
+                    selectedDuplicateForReview.duplicate_of_answer
+                  ) : (
+                    <span className="italic text-slate-400 font-normal">
+                      [No answer recorded]
+                    </span>
+                  )}
                 </p>
               </div>
 

@@ -40,6 +40,81 @@ class Deduplicator:
         payload = f"{q_norm}|||{a_norm}".encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
 
+    @classmethod
+    def is_plausible_semantic_duplicate(
+        cls,
+        cand_text: str,
+        cand_ans: str,
+        match_text: str,
+        match_ans: str,
+        similarity: float,
+        threshold: float
+    ) -> bool:
+        """
+        Guards against false positives in semantic vector duplicate detection:
+        1. Cosine similarity must meet threshold.
+        2. Match text must not be empty (an image-only slide with no extracted question
+           text cannot be a semantic duplicate of a text question).
+        3. Short / symbolic questions (< 15 chars or < 3 substantive words, such as math
+           puzzle grids '_ _ _ _ L+2 L-2 A+1 F+2') collapse into generic vector space and
+           must not be flagged unless the question text itself matches.
+        4. Answer divergence guard: If both candidate and match have answers, they must share
+           at least some semantic/lexical overlap or cross question-answer overlap.
+           If answers are completely disjoint (e.g. 'SKIN' vs "Zohran Mamdani - New York City's mayor"),
+           they cannot be duplicates unless question text similarity is virtually identical (> 0.97).
+        """
+        if similarity < threshold:
+            return False
+
+        c_q = (cand_text or "").strip()
+        m_q = (match_text or "").strip()
+        c_a = (cand_ans or "").strip()
+        m_a = (match_ans or "").strip()
+
+        # Matched record has no question text (e.g. image-only slide)
+        if not m_q:
+            return False
+
+        # Sparse or symbolic candidate (puzzles, math symbols, single words)
+        c_words = re.findall(r"[a-zA-Z]{3,}", c_q)
+        if len(c_q) < 15 or len(c_words) < 3:
+            q_norm_c = cls.canonicalize_text(c_q)
+            q_norm_m = cls.canonicalize_text(m_q)
+            if q_norm_c != q_norm_m:
+                return False
+
+        # Answer divergence check
+        if c_a and m_a:
+            a_norm_c = cls.canonicalize_text(c_a)
+            a_norm_m = cls.canonicalize_text(m_a)
+
+            # Direct equality or substring containment (e.g. 'koala' in 'the koala bear')
+            if a_norm_c == a_norm_m or a_norm_c in a_norm_m or a_norm_m in a_norm_c:
+                return True
+
+            tokens_c = set(re.findall(r"\w+", a_norm_c))
+            tokens_m = set(re.findall(r"\w+", a_norm_m))
+            stopwords = {"the", "a", "an", "of", "and", "in", "on", "at", "to", "for", "is", "by", "or"}
+            meaningful_c = tokens_c - stopwords
+            meaningful_m = tokens_m - stopwords
+
+            # Shared meaningful tokens in answers
+            if meaningful_c and meaningful_m and (meaningful_c & meaningful_m):
+                return True
+
+            # Cross question-answer overlap
+            q_norm_c = cls.canonicalize_text(c_q)
+            q_norm_m = cls.canonicalize_text(m_q)
+            if (a_norm_c and a_norm_c in q_norm_m) or (a_norm_m and a_norm_m in q_norm_c):
+                return True
+
+            # If answers are completely disjoint, reject duplicate unless similarity is near-exact (> 0.97)
+            if similarity < 0.97:
+                return False
+
+        return True
+
+
     def deduplicate_batch(
         self,
         db: Session,
@@ -119,17 +194,21 @@ class Deduplicator:
         existing_matrix = []
 
         # Only load in-memory matrix if not running on native pgvector
+        existing_records_cache = {}
+        # Only load in-memory matrix if not running on native pgvector
         if not (is_postgres and PG_VECTOR_AVAILABLE):
-            query = db.query(Question.id, Question.embedding).filter(Question.embedding.isnot(None))
+            query = db.query(Question.id, Question.question_text, Question.answer, Question.embedding).filter(Question.embedding.isnot(None))
             if batch_topics and len(batch_topics) <= 4:
                 query = query.filter(Question.topic.in_(list(batch_topics)))
 
             existing_vec_records = query.all()
             if not existing_vec_records:
-                existing_vec_records = db.query(Question.id, Question.embedding).filter(Question.embedding.isnot(None)).limit(1000).all()
+                existing_vec_records = db.query(Question.id, Question.question_text, Question.answer, Question.embedding).filter(Question.embedding.isnot(None)).limit(1000).all()
 
-            existing_ids = [q_id for q_id, q_emb in existing_vec_records if q_emb and len(q_emb) > 0]
-            existing_matrix = [q_emb for q_id, q_emb in existing_vec_records if q_emb and len(q_emb) > 0]
+            existing_ids = [r[0] for r in existing_vec_records if r[3] and len(r[3]) > 0]
+            existing_matrix = [r[3] for r in existing_vec_records if r[3] and len(r[3]) > 0]
+            for r in existing_vec_records:
+                existing_records_cache[r[0]] = (r[1] or "", r[2] or "")
 
         final_candidates: List[Dict[str, Any]] = []
         final_candidates_embeddings: List[List[float]] = []
@@ -146,43 +225,79 @@ class Deduplicator:
                     try:
                         q_query = db.query(
                             Question.id,
+                            Question.question_text,
+                            Question.answer,
                             Question.embedding.cosine_distance(item_emb).label("distance")
                         ).filter(Question.embedding.isnot(None))
                         if batch_topics and len(batch_topics) <= 4:
                             q_query = q_query.filter(Question.topic.in_(list(batch_topics)))
-                        nn_rec = q_query.order_by("distance").first()
-                        if nn_rec and nn_rec.distance is not None:
-                            pg_sim = float(1.0 - nn_rec.distance)
-                            if pg_sim >= thresh and pg_sim > best_sim:
-                                best_sim = pg_sim
-                                best_matched_id = nn_rec.id
-                                is_possible_dup = True
+                        nn_recs = q_query.order_by("distance").limit(5).all()
+                        for nn_rec in nn_recs:
+                            if nn_rec and nn_rec.distance is not None:
+                                pg_sim = float(1.0 - nn_rec.distance)
+                                if self.is_plausible_semantic_duplicate(
+                                    item.get("question_text", ""),
+                                    item.get("answer", ""),
+                                    nn_rec.question_text or "",
+                                    nn_rec.answer or "",
+                                    pg_sim,
+                                    thresh
+                                ):
+                                    if pg_sim > best_sim:
+                                        best_sim = pg_sim
+                                        best_matched_id = nn_rec.id
+                                        is_possible_dup = True
+                                        break
                     except Exception as e:
                         logger.warning(f"pgvector query error ({e}), falling back")
 
                 if not is_possible_dup and existing_matrix:
                     sims = batch_cosine_similarities(item_emb, existing_matrix)
                     if len(sims) > 0:
-                        best_idx = int(np.argmax(sims))
-                        sim = float(sims[best_idx])
-                        if sim >= thresh and sim > best_sim:
-                            best_sim = sim
-                            best_matched_id = existing_ids[best_idx]
-                            is_possible_dup = True
+                        above_indices = np.where(sims >= thresh)[0]
+                        if len(above_indices) > 0:
+                            sorted_indices = above_indices[np.argsort(sims[above_indices])[::-1]]
+                            for match_idx in sorted_indices:
+                                match_id = existing_ids[match_idx]
+                                match_q, match_a = existing_records_cache.get(match_id, ("", ""))
+                                sim = float(sims[match_idx])
+                                if self.is_plausible_semantic_duplicate(
+                                    item.get("question_text", ""),
+                                    item.get("answer", ""),
+                                    match_q,
+                                    match_a,
+                                    sim,
+                                    thresh
+                                ):
+                                    best_sim = sim
+                                    best_matched_id = match_id
+                                    is_possible_dup = True
+                                    break
 
             # Intra-batch comparison against previously accepted items in this batch
             if not is_possible_dup and item_emb and final_candidates_embeddings:
                 intra_sims = batch_cosine_similarities(item_emb, final_candidates_embeddings)
                 if len(intra_sims) > 0:
-                    best_intra_idx = int(np.argmax(intra_sims))
-                    best_intra_sim = float(intra_sims[best_intra_idx])
-                    if best_intra_sim >= thresh:
-                        best_sim = best_intra_sim
-                        matched_cand = final_candidates[best_intra_idx]
-                        if not matched_cand.get("id"):
-                            matched_cand["id"] = str(uuid.uuid4())
-                        best_matched_id = matched_cand["id"]
-                        is_possible_dup = True
+                    above_indices = np.where(intra_sims >= thresh)[0]
+                    if len(above_indices) > 0:
+                        sorted_indices = above_indices[np.argsort(intra_sims[above_indices])[::-1]]
+                        for b_idx in sorted_indices:
+                            matched_cand = final_candidates[b_idx]
+                            b_sim = float(intra_sims[b_idx])
+                            if self.is_plausible_semantic_duplicate(
+                                item.get("question_text", ""),
+                                item.get("answer", ""),
+                                matched_cand.get("question_text", ""),
+                                matched_cand.get("answer", ""),
+                                b_sim,
+                                thresh
+                            ):
+                                if not matched_cand.get("id"):
+                                    matched_cand["id"] = str(uuid.uuid4())
+                                best_matched_id = matched_cand["id"]
+                                best_sim = b_sim
+                                is_possible_dup = True
+                                break
 
             if is_possible_dup:
                 item["duplicate_status"] = "POSSIBLE_DUPLICATE"
