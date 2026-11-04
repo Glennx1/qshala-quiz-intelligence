@@ -360,7 +360,7 @@ def cancel_entire_batch(batch_id: str, db: Session = Depends(get_db)):
                     ext = os.path.splitext(doc.storage_path or doc.filename or "")[1]
                     raw_key = f"raw-uploads/{doc.id}{ext}"
                     try:
-                        r2.delete(raw_key)
+                        r2.delete_object(raw_key)
                         logger.info("[BATCH-CANCEL] removed raw R2 key %s for doc %s", raw_key, doc.id)
                     except Exception as e:
                         logger.warning("[BATCH-CANCEL] failed to delete R2 object %s: %s", raw_key, e)

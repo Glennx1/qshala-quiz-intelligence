@@ -109,6 +109,9 @@ def purge_document(db, document_id: str) -> None:
         r2 = get_media_storage()
         if r2 is not None:
             r2.delete_prefix(f"slides/{document_id}/")
+            if storage_path:
+                # The deck itself, staged in R2 for the worker under a deterministic key (documents.py).
+                r2.delete_object(f"raw-uploads/{document_id}{os.path.splitext(storage_path)[1]}")
     except Exception as e:
         logger.warning(f"[CANCEL] R2 cleanup failed for {document_id}: {e}")
 

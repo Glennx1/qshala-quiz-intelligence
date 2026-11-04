@@ -210,6 +210,16 @@ class CloudflareR2Service:
             except Exception as e:
                 logger.warning(f"[CloudflareR2Service] Failed to delete {clean_key}: {e}")
 
+    def delete_object(self, key: str) -> None:
+        """Delete one object by key (or public URL). Unlike delete(), a failure is raised so the caller can tell.
+        Deleting a key that does not exist is not an error (S3 semantics)."""
+        if not self.is_configured or self._client is None or not key:
+            return
+        clean_key = key
+        if self.public_base_url and key.startswith(self.public_base_url):
+            clean_key = key[len(self.public_base_url):].lstrip("/")
+        self._client.delete_object(Bucket=self.bucket_name, Key=clean_key)
+
     def delete_prefix(self, prefix: str) -> int:
         """Delete every object whose key starts with `prefix`. Returns how many were removed."""
         if not self.is_configured or self._client is None:
