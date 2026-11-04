@@ -18,6 +18,7 @@ from backend.app.services.ingestion.cancellation import (
     upload_cancel_requested,
     remove_chunk_dir,
     request_doc_cancel,
+    worker_is_alive,
     purge_document,
 )
 
@@ -163,10 +164,6 @@ MAX_FILE_SIZE_BYTES = _max_upload_bytes()
 MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024)
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
-
-# A Cloud Run Job worker refreshes its job row every ~2 s while it runs. A PROCESSING job refreshed within this
-# many seconds means a live worker owns the document, so cancel must not purge it from under the worker.
-WORKER_ALIVE_WINDOW_S: float = float(os.getenv("WORKER_ALIVE_WINDOW_S", "90"))
 
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
@@ -683,7 +680,7 @@ def cancel_ingestion(document_id: str, db: Session = Depends(get_db)):
     # the document and its media out from under it: it would keep calling Gemini, then fail on the missing
     # row and leave orphaned uploads. Leave cancel_requested set; the worker's poller sees it, stops at its next
     # checkpoint and purges the document itself.
-    if _worker_is_alive(db, document_id):
+    if worker_is_alive(db, document_id):
         return {"status": "CANCELLING", "document_id": document_id}
 
     # Nothing is actively running for this id (e.g. server restarted mid-ingest): clean up now.
@@ -693,19 +690,6 @@ def cancel_ingestion(document_id: str, db: Session = Depends(get_db)):
         "current_step": "Upload cancelled", "slides_processed": 0, "questions_extracted": 0, "error": None,
     }
     return {"status": "CANCELLED", "document_id": document_id}
-
-def _worker_is_alive(db: Session, document_id: str) -> bool:
-    """True when an ingestion job for this document is PROCESSING and its worker refreshed the row recently."""
-    from datetime import datetime, timezone
-    from backend.app.models.job import IngestionJob
-    job = (db.query(IngestionJob)
-           .filter(IngestionJob.document_id == document_id, IngestionJob.status == "PROCESSING")
-           .order_by(IngestionJob.created_at.desc()).first())
-    if job is None or job.updated_at is None:
-        return False
-    stamp = job.updated_at if job.updated_at.tzinfo else job.updated_at.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - stamp).total_seconds() < WORKER_ALIVE_WINDOW_S
-
 
 @router.get("", response_model=List[DocumentResponse])
 def list_documents(db: Session = Depends(get_db)):
@@ -770,6 +754,14 @@ def delete_document(document_id: str, db: Session = Depends(get_db)):
     reg = INGESTION_STATUS_REGISTRY.get(document_id)
     if reg and reg.get("status") == "PROCESSING":
         request_doc_cancel(document_id)  # stop the running pipeline instead of orphaning it
+
+    # A Cloud Run Job worker in another container owns this deck: deleting the rows now would pull them out from
+    # under it. Flag it; the worker stops at its next checkpoint and removes the document itself.
+    if worker_is_alive(db, document_id):
+        request_doc_cancel(document_id)
+        doc.cancel_requested = True
+        db.commit()
+        return {"message": "Deletion requested: the running worker is being stopped and will remove the document"}
 
     if os.path.exists(doc.storage_path):
         try:

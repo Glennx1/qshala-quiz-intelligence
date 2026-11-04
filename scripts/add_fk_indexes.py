@@ -21,7 +21,7 @@ Usage, from the repo root (it uses whatever DATABASE_URL points at, so check tha
 """
 import argparse
 import sys
-from typing import List, Tuple
+from typing import List, Set, Tuple
 
 from sqlalchemy import inspect, text
 
@@ -35,16 +35,34 @@ INDEXES: List[Tuple[str, str, str]] = [
 ]
 
 
+def invalid_indexes(engine) -> Set[str]:
+    """Postgres only: our indexes that exist but are INVALID, which is what an interrupted or failed
+    CREATE INDEX CONCURRENTLY leaves behind. The planner ignores them, and IF NOT EXISTS would skip them."""
+    if engine.dialect.name != "postgresql":
+        return set()
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+                 "WHERE NOT i.indisvalid AND c.relname = ANY(:names)"),
+            {"names": [name for name, _t, _c in INDEXES]},
+        ).fetchall()
+        conn.rollback()
+    return {r[0] for r in rows}
+
+
 def missing_indexes(engine) -> List[Tuple[str, str, str]]:
-    """Indexes from INDEXES that are not on the database yet (table must exist)."""
+    """Indexes from INDEXES that are not usable on the database yet (table must exist). An index counts as present
+    when a valid one with that name exists, or any other valid index already leads with that column."""
     insp = inspect(engine)
     tables = set(insp.get_table_names())
+    bad = invalid_indexes(engine)
     out = []
     for name, table, column in INDEXES:
         if table not in tables:
             continue
-        have = {ix["name"] for ix in insp.get_indexes(table)}
-        if name not in have:
+        valid = [ix for ix in insp.get_indexes(table) if ix["name"] not in bad]
+        present = any(ix["name"] == name or (ix.get("column_names") or [])[:1] == [column] for ix in valid)
+        if not present:
             out.append((name, table, column))
     return out
 
@@ -59,16 +77,27 @@ def drop_sql(engine, name: str) -> str:
     return f"DROP INDEX{concurrently} IF EXISTS {name}"
 
 
+def statements(engine) -> List[str]:
+    """What --apply would run: a broken (INVALID) index is dropped first, then every missing one is created."""
+    bad = invalid_indexes(engine)
+    out: List[str] = []
+    for ix in missing_indexes(engine):
+        if ix[0] in bad:
+            out.append(drop_sql(engine, ix[0]))
+        out.append(create_sql(engine, *ix))
+    return out
+
+
 def plan(engine) -> List[str]:
-    return [create_sql(engine, *ix) for ix in missing_indexes(engine)]
+    return statements(engine)
 
 
 def apply(engine) -> List[str]:
     """Create the missing indexes. CONCURRENTLY cannot run inside a transaction, hence AUTOCOMMIT."""
     done = []
+    todo = statements(engine)
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-        for ix in missing_indexes(engine):
-            sql = create_sql(engine, *ix)
+        for sql in todo:
             conn.execute(text(sql))
             done.append(sql)
     return done

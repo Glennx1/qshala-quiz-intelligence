@@ -40,6 +40,20 @@ class Deduplicator:
         payload = f"{q_norm}|||{a_norm}".encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
 
+    @staticmethod
+    def tier1_exact_indices(hashes: List[str], in_vault: Set[str]) -> Set[int]:
+        """Positions whose content hash is an exact repeat: already in the vault, or seen earlier in this batch.
+        The single definition of the tier-1 rule, used by deduplicate_batch and by the ingestion pipeline's
+        pre-AI check so the two can never disagree."""
+        repeats: Set[int] = set()
+        seen: Set[str] = set()
+        for i, h in enumerate(hashes):
+            if h in in_vault or h in seen:
+                repeats.add(i)
+            else:
+                seen.add(h)
+        return repeats
+
     @classmethod
     def is_plausible_semantic_duplicate(
         cls,
@@ -151,11 +165,11 @@ class Deduplicator:
         tier1_passed_embeddings: List[List[float]] = []
         exact_duplicates: List[Dict[str, Any]] = []
         provenance_updates: List[Tuple[Question, Optional[str], Dict[str, Any]]] = []
-        seen_in_batch_hashes: Set[str] = set()
+        exact_idx = self.tier1_exact_indices(candidate_hashes, set(existing_hash_map))
 
         for i, c in enumerate(candidates):
             chash = c["content_hash"]
-            if chash in existing_hash_map:
+            if i in exact_idx and chash in existing_hash_map:
                 existing = existing_hash_map[chash]
                 provenance_updates.append((existing, c.get("slide_id"), c))
                 exact_duplicates.append({
@@ -164,14 +178,13 @@ class Deduplicator:
                     "duplicate_type": "EXACT_HASH",
                     "similarity": 1.0
                 })
-            elif chash in seen_in_batch_hashes:
+            elif i in exact_idx:
                 exact_duplicates.append({
                     "candidate_question": c["question_text"],
                     "duplicate_type": "INTRA_BATCH_EXACT",
                     "similarity": 1.0
                 })
             else:
-                seen_in_batch_hashes.add(chash)
                 tier1_passed.append(c)
                 if i < len(candidate_embeddings):
                     tier1_passed_embeddings.append(candidate_embeddings[i])
@@ -212,6 +225,9 @@ class Deduplicator:
 
         final_candidates: List[Dict[str, Any]] = []
         final_candidates_embeddings: List[List[float]] = []
+        # final_candidates_embeddings only holds candidates that HAVE a vector, so position k in it is not position k
+        # in final_candidates. This maps one to the other.
+        final_candidates_emb_idx: List[int] = []
 
         for idx, item in enumerate(tier1_passed):
             item_emb = tier1_passed_embeddings[idx] if idx < len(tier1_passed_embeddings) else None
@@ -282,7 +298,7 @@ class Deduplicator:
                     if len(above_indices) > 0:
                         sorted_indices = above_indices[np.argsort(intra_sims[above_indices])[::-1]]
                         for b_idx in sorted_indices:
-                            matched_cand = final_candidates[b_idx]
+                            matched_cand = final_candidates[final_candidates_emb_idx[b_idx]]
                             b_sim = float(intra_sims[b_idx])
                             if self.is_plausible_semantic_duplicate(
                                 item.get("question_text", ""),
@@ -311,6 +327,7 @@ class Deduplicator:
             final_candidates.append(item)
             if item_emb:
                 final_candidates_embeddings.append(item_emb)
+                final_candidates_emb_idx.append(len(final_candidates) - 1)
 
         # Commit provenance for exact hash matches
         self._batch_commit_provenance(db, provenance_updates, doc_id)

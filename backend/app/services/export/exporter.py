@@ -6,7 +6,7 @@ import logging
 import tempfile
 import shutil
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Tuple, Union
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -16,9 +16,27 @@ logger = logging.getLogger(__name__)
 # POST /quizzes/export takes media references straight from the request body, so the exporter must not be a way
 # to make the server fetch internal URLs or embed arbitrary local files into the returned deck.
 
+_HOST_CACHE: Dict[str, Tuple[float, bool]] = {}
+_HOST_CACHE_TTL_S = 60.0
+
+
 def _host_is_public(host: str) -> bool:
-    """True when every address `host` resolves to is a normal public one (not loopback, private, link-local such as
-    the cloud metadata address, reserved, multicast or unspecified)."""
+    """_resolve_host_is_public, remembered for a minute: an export checks the same few media hosts for every image
+    (and getaddrinfo blocks with no timeout), so one lookup per host per minute instead of two per picture."""
+    import time
+    key = host.lower()
+    now = time.monotonic()
+    hit = _HOST_CACHE.get(key)
+    if hit is not None and now - hit[0] < _HOST_CACHE_TTL_S:
+        return hit[1]
+    result = _resolve_host_is_public(host)
+    _HOST_CACHE[key] = (now, result)
+    return result
+
+
+def _resolve_host_is_public(host: str) -> bool:
+    """True when every address `host` resolves to is globally routable. Anything else (loopback, private,
+    link-local such as the cloud metadata address, shared 100.64.0.0/10, reserved, multicast, unspecified) is not."""
     import ipaddress
     import socket
     try:
@@ -32,8 +50,9 @@ def _host_is_public(host: str) -> bool:
             ip = ipaddress.ip_address(info[4][0].split("%")[0])
         except ValueError:
             return False
-        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
-                or ip.is_multicast or ip.is_unspecified):
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped                      # ::ffff:127.0.0.1 is judged as 127.0.0.1
+        if not ip.is_global or ip.is_multicast:
             return False
     return True
 

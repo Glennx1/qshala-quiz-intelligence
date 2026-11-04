@@ -148,15 +148,19 @@ def _retry_wait_seconds(resp: Optional[httpx.Response], attempt: int) -> float:
 
 async def _post_with_retry(
     client: httpx.AsyncClient, url: str, payload: Dict[str, Any], api_key: str, max_retries: int = 3,
-    timeout: Optional[float] = None,
+    timeout: Optional[float] = None, retry_transport: bool = True,
 ) -> httpx.Response:
+    """POST with retries on 429/503. Timeouts and dropped connections are retried too unless retry_transport is
+    False, which interactive callers (search, quiz generation) use so a hanging Gemini fails in one timeout
+    instead of holding the request through several."""
     headers = {"x-goog-api-key": api_key} if api_key else {}
     extra = {"timeout": timeout} if timeout is not None else {}
     for attempt in range(max_retries + 1):
         try:
             resp = await client.post(url, json=payload, headers=headers, **extra)
-        except (httpx.TimeoutException, httpx.TransportError) as e:
-            if RETRY_ON_TRANSPORT_ERROR and attempt < max_retries:
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
+            # Transient network trouble only; configuration errors (ProxyError, UnsupportedProtocol) are not retried.
+            if RETRY_ON_TRANSPORT_ERROR and retry_transport and attempt < max_retries:
                 wait_sec = _retry_wait_seconds(None, attempt)
                 logger.warning(
                     f"[GeminiProvider] {type(e).__name__}. Retrying in {wait_sec:.2f}s (attempt {attempt+1}/{max_retries})..."
@@ -227,7 +231,7 @@ class GeminiLLMProvider(LLMProvider):
             payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
 
         async with _shared_client(60.0) as client:
-            resp = await _post_with_retry(client, url, payload, self.api_key)
+            resp = await _post_with_retry(client, url, payload, self.api_key, retry_transport=False)
             if resp.is_error:
                 logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
             resp.raise_for_status()
@@ -250,7 +254,7 @@ class GeminiLLMProvider(LLMProvider):
 
         logger.info(f"[GeminiLLMProvider] Sending generate_json request to model '{self.model}'")
         async with _shared_client(60.0) as client:
-            resp = await _post_with_retry(client, url, payload, self.api_key)
+            resp = await _post_with_retry(client, url, payload, self.api_key, retry_transport=False)
             if resp.is_error:
                 logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
             resp.raise_for_status()
@@ -456,6 +460,12 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         self.api_key = key
         self.model = "gemini-embedding-001"
 
+    @property
+    def may_substitute_local(self) -> bool:
+        """True when this provider can hand back a local hash vector instead of a Gemini one (fallback switched on,
+        or no API key), so a stored vector cannot be assumed to come from self.model."""
+        return ALLOW_LOCAL_EMBEDDING_FALLBACK or not self.api_key
+
     @staticmethod
     def _normalize(values: List[float]) -> List[float]:
         """gemini-embedding-001 only auto-normalizes its native 3072-dim output; any truncated
@@ -513,7 +523,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
 
         try:
             async with _shared_client(30.0) as client:
-                resp = await _post_with_retry(client, url, payload, self.api_key)
+                resp = await _post_with_retry(client, url, payload, self.api_key, retry_transport=False)
                 if resp.is_error:
                     logger.error(f"[GeminiEmbeddingProvider] API error ({resp.status_code}): {resp.text}")
                 resp.raise_for_status()

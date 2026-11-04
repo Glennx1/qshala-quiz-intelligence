@@ -87,6 +87,43 @@ def test_timeout_retry_can_be_switched_off(sleeps, monkeypatch):
     assert client.calls == 1
 
 
+def test_interactive_callers_can_opt_out_of_timeout_retries(sleeps):
+    client = FakeClient([httpx.ReadTimeout("slow"), _resp(200)])
+    with pytest.raises(httpx.ReadTimeout):
+        run(client, retry_transport=False)
+    assert client.calls == 1
+    # 429/503 are still retried for them
+    client = FakeClient([_resp(503), _resp(200)])
+    assert run(client, retry_transport=False).status_code == 200 and client.calls == 2
+
+
+def test_configuration_errors_are_not_retried(sleeps):
+    for exc in (httpx.ProxyError("bad proxy"), httpx.UnsupportedProtocol("nope")):
+        client = FakeClient([exc, _resp(200)])
+        with pytest.raises(type(exc)):
+            run(client)
+        assert client.calls == 1
+
+
+def test_search_and_quiz_generation_calls_do_not_retry_timeouts(monkeypatch):
+    seen = []
+
+    async def fake_post(client, url, payload, api_key, *a, **k):
+        seen.append(k.get("retry_transport", True))
+        raise httpx.ReadTimeout("slow")
+
+    monkeypatch.setattr(gp, "_post_with_retry", fake_post)
+    llm = gp.GeminiLLMProvider(api_key="test-key-not-real")
+    emb = gp.GeminiEmbeddingProvider(api_key="test-key-not-real")
+    monkeypatch.setattr(gp, "ALLOW_LOCAL_EMBEDDING_FALLBACK", False)
+    for coro in (llm.generate_text("hi"), llm.generate_json("hi")):
+        with pytest.raises(httpx.ReadTimeout):
+            asyncio.run(coro)
+    with pytest.raises(gp.EmbeddingUnavailable):
+        asyncio.run(emb.get_embedding("hi"))
+    assert seen == [False, False, False]
+
+
 def test_other_errors_are_returned_immediately_without_retry(sleeps):
     for status in (400, 401, 404, 500):
         client = FakeClient([_resp(status)])

@@ -82,8 +82,11 @@ def _ensure_clean(db: Session, where: str) -> None:
             pass
 
 
-def embedding_model_label(provider) -> str:
-    """Short name stored in questions.embedding_model for vectors this provider produced."""
+def embedding_model_label(provider) -> Optional[str]:
+    """Short name stored in questions.embedding_model for vectors this provider produced, or None when the provider
+    may have substituted local vectors (so the label would not be trustworthy)."""
+    if getattr(provider, "may_substitute_local", False):
+        return None
     model = getattr(provider, "model", None)
     return str(model or type(provider).__name__)[:64]
 
@@ -126,21 +129,15 @@ def local_media_for_url(url: str, document_id: str) -> Optional["Path"]:
 def exact_duplicate_indices(db: Session, questions: list) -> set:
     """Indices of questions the deduplicator's tier-1 check would drop as exact repeats: the content hash
     already exists in the vault, or the same hash appeared earlier in this batch. Uses the same hash and the
-    same lookup as Deduplicator.deduplicate_batch, so the answer is identical to what it would decide later."""
+    same rule (Deduplicator.tier1_exact_indices) as Deduplicator.deduplicate_batch. deduplicate_batch still does its
+    own vault lookup afterwards on purpose: other decks can land while this one is in its AI stages."""
     hashes = [Deduplicator.compute_hash(q.get("question_text") or "", q.get("answer") or "") for q in questions]
     unique = list(dict.fromkeys(hashes))
     in_vault: set = set()
     for i in range(0, len(unique), 500):
         rows = db.query(Question.content_hash).filter(Question.content_hash.in_(unique[i:i + 500])).all()
         in_vault.update(r[0] for r in rows)
-    skip: set = set()
-    seen: set = set()
-    for idx, h in enumerate(hashes):
-        if h in in_vault or h in seen:
-            skip.add(idx)
-        else:
-            seen.add(h)
-    return skip
+    return Deduplicator.tier1_exact_indices(hashes, in_vault)
 
 
 def _stage_log(document_id: str, stage: str, t0: float) -> float:

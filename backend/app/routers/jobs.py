@@ -335,7 +335,20 @@ def cancel_entire_batch(batch_id: str, db: Session = Depends(get_db)):
     r2 = get_r2_service()
     cancelled_count = 0
 
+    from backend.app.services.ingestion.cancellation import worker_is_alive
+
     for job in active_jobs:
+        if job.status == "PROCESSING" and job.document_id and worker_is_alive(db, job.document_id):
+            # A live Cloud Run Job worker owns this deck. Purging its rows and files now would leave it calling
+            # Gemini and then failing on the missing document. Flag it instead: the worker stops at its next
+            # checkpoint, removes the document and marks the job CANCELLED itself.
+            request_doc_cancel(job.document_id)
+            live_doc = db.query(Document).filter(Document.id == job.document_id).first()
+            if live_doc:
+                live_doc.cancel_requested = True
+            cancelled_count += 1
+            continue
+
         job.status = "CANCELLED"
         job.current_step = "CANCELLED"
         job.completed_at = now

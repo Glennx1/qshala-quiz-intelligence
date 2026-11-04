@@ -44,6 +44,28 @@ def _remember(bucket: Set[str], item: str) -> None:
     bucket.add(item)
 
 
+# A Cloud Run Job worker refreshes its job row every ~2 s while it runs. A PROCESSING job refreshed within this
+# many seconds means a live worker owns the document, so a cancel/delete must not purge it from under the worker.
+WORKER_ALIVE_WINDOW_S: float = float(os.getenv("WORKER_ALIVE_WINDOW_S", "90"))
+
+
+def worker_is_alive(db, document_id: str) -> bool:
+    """True when a Cloud Run Job worker owns this document: INGESTION_MODE is cloud_run_job and the document's
+    ingestion job is PROCESSING with a row refreshed recently. In the other modes the pipeline runs inside this same
+    process (cancel is handled through the in-memory flag) and nothing refreshes the job row, so it is always False."""
+    if settings.INGESTION_MODE != "cloud_run_job":
+        return False
+    from datetime import datetime, timezone
+    from backend.app.models.job import IngestionJob
+    job = (db.query(IngestionJob)
+           .filter(IngestionJob.document_id == document_id, IngestionJob.status == "PROCESSING")
+           .order_by(IngestionJob.created_at.desc()).first())
+    if job is None or job.updated_at is None:
+        return False
+    stamp = job.updated_at if job.updated_at.tzinfo else job.updated_at.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - stamp).total_seconds() < WORKER_ALIVE_WINDOW_S
+
+
 def request_doc_cancel(document_id: str) -> None:
     _remember(CANCELLED_DOCS, document_id)
 

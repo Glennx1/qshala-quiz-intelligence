@@ -5,8 +5,10 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
+from backend.app.config import settings
 from backend.app.main import app
 from backend.app.database import SessionLocal
 from backend.app.models.document import Document
@@ -17,6 +19,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import worker  # noqa: E402  (backend/worker.py)
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _cloud_run_job_mode(monkeypatch):
+    """The live-worker guard only applies where a separate worker exists."""
+    monkeypatch.setattr(settings, "INGESTION_MODE", "cloud_run_job")
 
 
 def _doc_with_job(job_age_s=1, job_status="PROCESSING"):

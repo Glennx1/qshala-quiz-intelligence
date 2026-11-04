@@ -20,7 +20,10 @@ def dns(monkeypatch):
         "meta.example.test": ["169.254.169.254"],
         "v6.example.test": ["2606:4700:4700::1111"],
         "v6loop.example.test": ["::1"],
+        "cgnat.example.test": ["100.64.0.5"],            # shared address space: not private, not global
+        "mapped.example.test": ["::ffff:127.0.0.1"],     # IPv4-mapped loopback
     }
+    ex._HOST_CACHE.clear()                               # results are remembered for a minute: start clean
 
     def fake_getaddrinfo(host, port, *a, **k):
         if host in table:
@@ -39,6 +42,7 @@ def test_only_public_http_urls_are_allowed(dns):
         "http://127.0.0.1/a.png", "http://localhost/a.png", "http://[::1]/a.png",
         "http://169.254.169.254/latest/meta-data/", "http://meta.example.test/x",
         "http://internal.example.test/x", "http://rebind.example.test/x", "http://v6loop.example.test/x",
+        "http://cgnat.example.test/x", "http://100.64.0.5/x", "http://mapped.example.test/x",
         "http://0.0.0.0/x", "http://192.168.1.10/x", "file:///etc/passwd", "ftp://cdn.example.test/x",
         "https:///nohost", "gopher://cdn.example.test/", "http://unknown.example.test/x",
     ):
