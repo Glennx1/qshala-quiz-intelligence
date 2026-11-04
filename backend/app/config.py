@@ -141,7 +141,7 @@ class Settings(BaseSettings):
     R2_BUCKET_NAME: Optional[str] = "qshala-media" if is_cloud_run else None
     # Public base URL for the bucket (R2.dev dev URL or a custom domain). Required to
     # construct a servable https URL for uploaded media.
-    R2_PUBLIC_BASE_URL: Optional[str] = "https://pub-28be9e6008594981b9cfe7390dfa2eed.r2.dev" if is_cloud_run else None
+    R2_PUBLIC_BASE_URL: Optional[str] = "https://pub-e6b1fda94a4149298de10be6794417fc.r2.dev" if is_cloud_run else None
 
     # Azure AD / Microsoft Graph / SharePoint Integration
     AZURE_TENANT_ID: Optional[str] = None
