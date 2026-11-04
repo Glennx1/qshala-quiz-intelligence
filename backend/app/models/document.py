@@ -52,7 +52,7 @@ class Slide(Base):
     __tablename__ = "slides"
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
-    document_id = Column(String(36), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    document_id = Column(String(36), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
     slide_number = Column(Integer, nullable=False)
     slide_type = Column(String(50), default="CONTENT")  # QUESTION, ANSWER, TITLE, CONTENT, SCOREBOARD, RULES
     title = Column(Text, nullable=True)

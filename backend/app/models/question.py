@@ -13,8 +13,8 @@ class Question(Base):
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     content_hash = Column(String(64), index=True, nullable=True) # Canonical hash for O(1) deduplication
-    document_id = Column(String(36), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
-    slide_id = Column(String(36), ForeignKey("slides.id", ondelete="SET NULL"), nullable=True)
+    document_id = Column(String(36), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    slide_id = Column(String(36), ForeignKey("slides.id", ondelete="SET NULL"), nullable=True, index=True)
     answer_slide_id = Column(String(36), ForeignKey("slides.id", ondelete="SET NULL"), nullable=True)
     
     question_text = Column(Text, nullable=False)
@@ -79,13 +79,13 @@ class Question(Base):
     # Deduplication & Human Review
     duplicate_status = Column(String(50), default="UNIQUE", index=True) # UNIQUE, POSSIBLE_DUPLICATE, CONFIRMED_DUPLICATE, RESOLVED
     duplicate_similarity = Column(Float, nullable=True)
-    duplicate_of_id = Column(String(36), ForeignKey("questions.id", ondelete="SET NULL"), nullable=True)
+    duplicate_of_id = Column(String(36), ForeignKey("questions.id", ondelete="SET NULL"), nullable=True, index=True)
     
     embedding = Column(get_vector_column_type(settings.EMBEDDING_DIM), nullable=True)
     # Which model produced `embedding` (e.g. "gemini-embedding-001"), so vectors from different models can be
     # told apart. Null for rows embedded before this column existed.
     embedding_model = Column(String(64), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
     # Relationships
     document = relationship("Document", back_populates="questions")
