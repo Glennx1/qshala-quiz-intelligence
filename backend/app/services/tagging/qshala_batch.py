@@ -43,7 +43,10 @@ from backend.app.services.tagging.qshala_tagger import (
 
 logger = logging.getLogger(__name__)
 
-CHUNK_SIZE = 12          # questions per Gemini call; keeps the response JSON well under the token ceiling
+# Questions per Gemini call. Each question's answer is only ~200 output tokens, so 20 per call stays far below
+# the output ceiling while sending the (large, identical) taxonomy prompt 40% fewer times than 12 per call.
+# Any question the model skips in a chunk is re-asked on its own (see run_chunk), never silently dropped.
+CHUNK_SIZE = int(os.getenv("QSHALA_TAG_CHUNK_SIZE", "20"))
 # Chunks in flight at once. 8 assumes a paid-tier Gemini key (billing linked) -- on the free tier,
 # drop this back down via the env var. Retry/backoff below (MAX_CHUNK_RETRIES, is_rate_limit) still
 # protects against a 429 if this is set higher than the account's actual RPM allows.
@@ -119,7 +122,7 @@ def _batch_user_prompt(items: List[Dict[str, Any]], exemplars: List[Dict[str, st
 # --------------------------------------------------------------------- writing results
 
 def _write_item(db: Session, q: Dict[str, Any], llm_out: Dict[str, Any], model: str,
-                latency_ms: int, actor: str) -> QshalaTag:
+                latency_ms: int, actor: str, usage: Optional[Dict[str, int]] = None) -> QshalaTag:
     """Persist one routed result. Mirrors QshalaTagger._finish_v6 so draft/confirmed behaviour and
     topic-path writing are identical to the single-question path."""
     rules = q["rules"]
@@ -150,6 +153,10 @@ def _write_item(db: Session, q: Dict[str, Any], llm_out: Dict[str, Any], model: 
         relevant_year=_clean_year(llm_out.get("relevant_year")),
         fit=llm_out.get("fit"), search_summary=llm_out.get("search_summary"),
         confidence=confidence, status=status, latency_ms=latency_ms,
+        # A chunk's token usage is split evenly across the questions it returned, so per-row figures are
+        # an average share; summed over a chunk they equal what Gemini billed for that call.
+        tokens_in=(usage or {}).get("in"), tokens_out=(usage or {}).get("out"),
+        thinking_tokens=(usage or {}).get("think"),
         verification_notes=f"auto-routed (batch): {reason}",
     )
     db.add(row)
@@ -224,35 +231,55 @@ async def tag_questions_batched(db: Session, questions: List[Question], *, provi
     chunks = [items[i:i + CHUNK_SIZE] for i in range(0, len(items), CHUNK_SIZE)]
     schema, system = _batch_schema(), _system_prompt()
     sem = asyncio.Semaphore(CHUNK_CONCURRENCY)
-    stats = {"confirmed": 0, "draft": 0, "chunks": len(chunks), "failed_chunks": 0}
+    stats = {"confirmed": 0, "draft": 0, "chunks": len(chunks), "failed_chunks": 0,
+             "tokens_in": 0, "tokens_out": 0, "tokens_think": 0, "calls": 0}
 
     async def run_chunk(chunk: List[Dict[str, Any]]) -> Dict[int, Any]:
-        prompt = _batch_user_prompt(chunk, exemplars)
+        """Tags one chunk. Returns {n: (result, latency_ms, usage_share)}. If the model returns fewer
+        items than asked, only the missing ones are asked again (a few tokens) rather than the whole
+        chunk or parking them straight into review."""
+        got: Dict[int, Any] = {}
+        pending = list(chunk)
         async with sem:
             for attempt in range(MAX_CHUNK_RETRIES):
+                if not pending:
+                    break
                 try:
                     if rpm and rpm > 0:
                         await asyncio.sleep(60.0 / rpm)
+                    prompt = _batch_user_prompt(pending, exemplars)
                     t0 = time.perf_counter()
-                    data, _usage = await asyncio.wait_for(
+                    data, usage = await asyncio.wait_for(
                         provider.generate_json_schema(
                             prompt=prompt, schema=schema, system_instruction=system,
                             model=model, thinking_level=thinking_level, temperature=0.0),
                         timeout=CHUNK_TIMEOUT_S)
                     latency = int((time.perf_counter() - t0) * 1000)
-                    return {int(r["n"]): (r, latency) for r in (data.get("results") or [])
-                            if isinstance(r, dict) and "n" in r}
+                    asked = {it["n"] for it in pending}
+                    returned = {int(r["n"]): r for r in (data.get("results") or [])
+                                if isinstance(r, dict) and "n" in r and int(r["n"]) in asked}
+                    usage = usage or {}
+                    stats["calls"] += 1
+                    stats["tokens_in"] += int(usage.get("in", 0) or 0)
+                    stats["tokens_out"] += int(usage.get("out", 0) or 0)
+                    stats["tokens_think"] += int(usage.get("think", 0) or 0)
+                    k = max(1, len(returned))
+                    share = {"in": int(usage.get("in", 0) or 0) // k, "out": int(usage.get("out", 0) or 0) // k,
+                             "think": int(usage.get("think", 0) or 0) // k}
+                    for n, r in returned.items():
+                        got[n] = (r, latency, share)
+                    pending = [it for it in pending if it["n"] not in got]
                 except Exception as e:
                     if attempt == MAX_CHUNK_RETRIES - 1:
                         logger.error("batch chunk failed after %d attempts: %s",
                                      MAX_CHUNK_RETRIES, safe_error(e))
-                        return {}
+                        break
                     # Match the per-question tagger's proven 429 backoff: 6s, 12s, 24s (honour
                     # Retry-After when Google sends it). Non-rate-limit errors retry faster.
                     wait = (retry_after_seconds(e) or min(60, 6 * (2 ** attempt))) if is_rate_limit(e) \
                         else 1.5 * (attempt + 1)
                     await asyncio.sleep(wait)
-        return {}
+        return got
 
     results = await asyncio.gather(*[run_chunk(c) for c in chunks])
     for chunk, got in zip(chunks, results):
@@ -265,8 +292,8 @@ async def tag_questions_batched(db: Session, questions: List[Question], *, provi
                     _write_to_review(db, q, model, "batch chunk failed; parked for review")
                     stats["draft"] += 1
                 else:
-                    llm_out, latency = res
-                    row = _write_item(db, q, llm_out, model, latency, actor)
+                    llm_out, latency, usage_share = res
+                    row = _write_item(db, q, llm_out, model, latency, actor, usage=usage_share)
                     stats["confirmed" if row.status == "confirmed" else "draft"] += 1
             except Exception as e:
                 logger.error("tag write failed for %s: %s", q["question_id"], safe_error(e))

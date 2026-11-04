@@ -2,7 +2,9 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import random
+import threading
 import httpx
 from typing import List, Dict, Any, Optional
 from backend.app.services.ai.base import LLMProvider, EmbeddingProvider
@@ -10,12 +12,117 @@ from backend.app.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+# --------------------------------------------------------------------- shared HTTP client
+# Every Gemini call used to open (and TLS-handshake) its own httpx client. One long-lived client per
+# event loop keeps connections alive and pooled, which matters when a deck fires hundreds of calls.
+_CLIENT_STATE: Dict[str, Any] = {"entry": None}
+
+
+def get_shared_client() -> httpx.AsyncClient:
+    """The pooled client for the running event loop (a new one is made if the loop changed/closed)."""
+    loop = asyncio.get_running_loop()
+    entry = _CLIENT_STATE.get("entry")
+    if entry is not None and entry[0] is loop and not loop.is_closed() and not entry[1].is_closed:
+        return entry[1]
+    client = httpx.AsyncClient(
+        timeout=90.0,
+        limits=httpx.Limits(max_connections=64, max_keepalive_connections=32, keepalive_expiry=30.0),
+    )
+    _CLIENT_STATE["entry"] = (loop, client)
+    return client
+
+
+class _TimeoutView:
+    """The pooled client with a per-call timeout applied to every request made through it."""
+    def __init__(self, client: httpx.AsyncClient, timeout: float):
+        self._client = client
+        self._timeout = timeout
+
+    async def post(self, url, *, json=None, headers=None, **kw):
+        kw.setdefault("timeout", self._timeout)
+        return await self._client.post(url, json=json, headers=headers, **kw)
+
+
+class _shared_client:
+    """`async with _shared_client(60.0) as client:` hands out the pooled client and never closes it."""
+    def __init__(self, timeout: float = 60.0):
+        self._timeout = timeout
+
+    async def __aenter__(self) -> _TimeoutView:
+        return _TimeoutView(get_shared_client(), self._timeout)
+
+    async def __aexit__(self, *exc) -> bool:
+        return False
+
+
+# --------------------------------------------------------------------- token usage tracking
+# Running totals per call type so cost is visible: {label: {"calls", "in", "out", "think"}}.
+_USAGE_TOTALS: Dict[str, Dict[str, int]] = {}
+_USAGE_LOCK = threading.Lock()
+
+
+def record_usage(label: str, usage: Dict[str, int]) -> None:
+    with _USAGE_LOCK:
+        t = _USAGE_TOTALS.setdefault(label, {"calls": 0, "in": 0, "out": 0, "think": 0})
+        t["calls"] += 1
+        t["in"] += int(usage.get("in", 0) or 0)
+        t["out"] += int(usage.get("out", 0) or 0)
+        t["think"] += int(usage.get("think", 0) or 0)
+
+
+def usage_snapshot(reset: bool = False) -> Dict[str, Dict[str, int]]:
+    """Copy of the per-label totals since the process started (or since the last reset)."""
+    with _USAGE_LOCK:
+        snap = {k: dict(v) for k, v in _USAGE_TOTALS.items()}
+        if reset:
+            _USAGE_TOTALS.clear()
+        return snap
+
+
+def _usage_from_response(data: Dict[str, Any]) -> Dict[str, int]:
+    um = data.get("usageMetadata", {}) or {}
+    return {
+        "in": um.get("promptTokenCount", 0) or 0,
+        "out": um.get("candidatesTokenCount", 0) or 0,
+        "think": um.get("thoughtsTokenCount", 0) or 0,
+        "cached": um.get("cachedContentTokenCount", 0) or 0,
+    }
+
+
+def _thinking_config(model: str, level: str) -> Optional[Dict[str, Any]]:
+    """thinking_config for `model` at `level`. 'minimal' switches thinking off where the model allows it
+    (2.5 Flash family: budget 0) or sets the lowest level (3.x). None when the model has no such control."""
+    lvl = (level or "").lower()
+    if any(tag in model for tag in ("3.1", "3.5", "3.6", "3.8", "4-")):
+        return {"thinking_level": lvl.upper()}
+    if "2.5" in model:
+        if "pro" in model:                       # 2.5 Pro cannot turn thinking fully off
+            return {"thinking_budget": 128}
+        return {"thinking_budget": 0 if lvl == "minimal" else 128}
+    return None
+
+
+# Image descriptions: bounded length, no hidden reasoning tokens. The tagger reads only the first
+# 400-600 characters of a description, so a concise answer carries the same signal for far fewer tokens.
+VISION_MAX_OUTPUT_TOKENS: int = int(os.getenv("VISION_MAX_OUTPUT_TOKENS", "300"))
+VISION_THINKING_LEVEL: str = os.getenv("VISION_THINKING_LEVEL", "minimal")
+VISION_PROMPT = (
+    "Analyze this quiz presentation image. Reply in at most 70 words, plain text, no markdown, no preamble. "
+    "First transcribe any meaningful text visible on the image accurately (OCR). "
+    "Then describe the key visual content (person, monument, diagram, flag, animal, historical event, etc.) "
+    "and any visual clues relevant to a quiz question."
+)
+
+
 async def _post_with_retry(
-    client: httpx.AsyncClient, url: str, payload: Dict[str, Any], api_key: str, max_retries: int = 3
+    client: httpx.AsyncClient, url: str, payload: Dict[str, Any], api_key: str, max_retries: int = 3,
+    timeout: Optional[float] = None,
 ) -> httpx.Response:
     headers = {"x-goog-api-key": api_key} if api_key else {}
+    extra = {"timeout": timeout} if timeout is not None else {}
     for attempt in range(max_retries + 1):
-        resp = await client.post(url, json=payload, headers=headers)
+        resp = await client.post(url, json=payload, headers=headers, **extra)
         if resp.status_code in (429, 503) and attempt < max_retries:
             wait_sec = (attempt + 1) * 2.0 + random.uniform(0.1, 0.9)
             logger.warning(
@@ -78,7 +185,7 @@ class GeminiLLMProvider(LLMProvider):
         if system_instruction:
             payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with _shared_client(60.0) as client:
             resp = await _post_with_retry(client, url, payload, self.api_key)
             if resp.is_error:
                 logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
@@ -101,7 +208,7 @@ class GeminiLLMProvider(LLMProvider):
             payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
 
         logger.info(f"[GeminiLLMProvider] Sending generate_json request to model '{self.model}'")
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with _shared_client(60.0) as client:
             resp = await _post_with_retry(client, url, payload, self.api_key)
             if resp.is_error:
                 logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
@@ -160,7 +267,7 @@ class GeminiLLMProvider(LLMProvider):
             payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
 
         logger.info(f"[GeminiLLMProvider] generate_json_schema → {chosen_model}")
-        async with httpx.AsyncClient(timeout=90.0) as client:
+        async with _shared_client(90.0) as client:
             resp = await _post_with_retry(client, url, payload, self.api_key)
             if resp.is_error:
                 # If the model rejects thinking_config (older SDK/model), retry once without it.
@@ -182,21 +289,22 @@ class GeminiLLMProvider(LLMProvider):
             clean = clean[:-3]
         parsed = json.loads(clean.strip())
 
-        um = data.get("usageMetadata", {}) or {}
-        usage = {
-            "in": um.get("promptTokenCount", 0) or 0,
-            "out": um.get("candidatesTokenCount", 0) or 0,
-            "think": um.get("thoughtsTokenCount", 0) or 0,
-            "cached": um.get("cachedContentTokenCount", 0) or 0,
-        }
+        usage = _usage_from_response(data)
+        record_usage("tagging", usage)
         return parsed, usage
 
-    async def generate_multimodal(
+    async def generate_multimodal_ex(
         self,
         prompt: str,
         media_parts: List[Dict[str, str]],
-        system_instruction: Optional[str] = None
-    ) -> str:
+        system_instruction: Optional[str] = None,
+        max_output_tokens: Optional[int] = None,
+        thinking_level: Optional[str] = None,
+        usage_label: str = "multimodal",
+    ) -> tuple[str, Dict[str, int]]:
+        """Like generate_multimodal, but can cap the output length / reasoning and returns token usage.
+
+        With no max_output_tokens and no thinking_level the request is identical to the old one."""
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is not configured")
 
@@ -211,28 +319,63 @@ class GeminiLLMProvider(LLMProvider):
             })
         parts.append({"text": prompt})
 
-        payload = {"contents": [{"parts": parts}]}
+        payload: Dict[str, Any] = {"contents": [{"parts": parts}]}
+        gen_cfg: Dict[str, Any] = {}
+        if max_output_tokens:
+            gen_cfg["max_output_tokens"] = int(max_output_tokens)
+        if thinking_level:
+            tc = _thinking_config(self.model, thinking_level)
+            if tc:
+                gen_cfg["thinking_config"] = tc
+        if gen_cfg:
+            payload["generationConfig"] = gen_cfg
         if system_instruction:
             payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
 
-        async with httpx.AsyncClient(timeout=90.0) as client:
+        async with _shared_client(90.0) as client:
             resp = await _post_with_retry(client, url, payload, self.api_key)
+            if resp.is_error and "thinking" in resp.text.lower() and "thinking_config" in gen_cfg:
+                # The model rejected the thinking control (older model): retry once without it.
+                gen_cfg.pop("thinking_config", None)
+                if not gen_cfg:
+                    payload.pop("generationConfig", None)
+                resp = await _post_with_retry(client, url, payload, self.api_key)
             if resp.is_error:
                 logger.error(f"[GeminiLLMProvider] API error ({resp.status_code}): {resp.text}")
             resp.raise_for_status()
             data = resp.json()
-            return self._extract_text(data)
+        usage = _usage_from_response(data)
+        record_usage(usage_label, usage)
+        return self._extract_text(data), usage
+
+    async def generate_multimodal(
+        self,
+        prompt: str,
+        media_parts: List[Dict[str, str]],
+        system_instruction: Optional[str] = None
+    ) -> str:
+        text, _usage = await self.generate_multimodal_ex(
+            prompt, media_parts, system_instruction=system_instruction, usage_label="multimodal")
+        return text
 
     async def describe_image(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> str:
+        """OCR + short description of one slide image: capped length, minimal reasoning (see VISION_*)."""
         b64_data = base64.b64encode(image_bytes).decode("utf-8")
-        prompt = (
-            "Analyze this quiz presentation image. "
-            "1. Transcribe any text visible on the image accurately (OCR). "
-            "2. Describe the key visual content (person, monument, diagram, flag, animal, historical event, etc.) "
-            "and any visual clues relevant to a quiz question."
-        )
+        media = [{"mime_type": mime_type, "data": b64_data}]
         try:
-            return await self.generate_multimodal(prompt, [{"mime_type": mime_type, "data": b64_data}])
+            try:
+                text, _ = await self.generate_multimodal_ex(
+                    VISION_PROMPT, media, max_output_tokens=VISION_MAX_OUTPUT_TOKENS,
+                    thinking_level=VISION_THINKING_LEVEL, usage_label="vision")
+                return text
+            except ValueError as e:
+                # Output cut off before any text (finishReason MAX_TOKENS): give it one more, larger try.
+                if "MAX_TOKENS" not in str(e):
+                    raise
+                text, _ = await self.generate_multimodal_ex(
+                    VISION_PROMPT, media, max_output_tokens=VISION_MAX_OUTPUT_TOKENS * 3,
+                    thinking_level=VISION_THINKING_LEVEL, usage_label="vision")
+                return text
         finally:
             del b64_data
 
@@ -325,7 +468,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with _shared_client(30.0) as client:
                 resp = await _post_with_retry(client, url, payload, self.api_key)
                 if resp.is_error:
                     logger.error(f"[GeminiEmbeddingProvider] API error ({resp.status_code}): {resp.text}")
@@ -367,7 +510,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
                 ]
             }
             try:
-                async with httpx.AsyncClient(timeout=45.0) as client:
+                async with _shared_client(45.0) as client:
                     resp = await _post_with_retry(client, url, payload, self.api_key)
                     if resp.is_error:
                         logger.warning(f"[GeminiEmbeddingProvider] batchEmbedContents error ({resp.status_code}), falling back to serial")

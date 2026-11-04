@@ -36,7 +36,13 @@ from backend.app.services.tagging.difficulty_engine import DifficultyEngine
 
 # Feature toggle: set to False to revert to legacy AutoTagger writing topic tags on upload
 USE_QSHALA_TAGGER: bool = True
-VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "6"))   # bounded parallel image-description calls (scaled for 2048 MB Google Cloud Run budget)
+VISION_CONCURRENCY: int = int(os.getenv("VISION_CONCURRENCY", "12"))   # bounded parallel image-description calls (images are shrunk to <=1600px first, so 12 in flight fits the 2048 MB Cloud Run budget; set 6 on a 512 MB-1 GB host)
+# Safety caps on image-description text. A description is normally ~60-80 words; these only ever bite on a
+# runaway answer (one stored description was 69,000 characters). The tagger reads just the first 400-600
+# characters, and the embedding input uses at most EMBED_VISUAL_CLUES_CHARS of it.
+MAX_DESC_CHARS: int = int(os.getenv("MAX_DESC_CHARS", "1200"))             # per image
+MAX_CLUES_CHARS: int = int(os.getenv("MAX_CLUES_CHARS", "2400"))           # per question, all images together
+EMBED_VISUAL_CLUES_CHARS: int = int(os.getenv("EMBED_VISUAL_CLUES_CHARS", "500"))
 TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "16"))   # parallel Gemini tagging calls per deck
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
@@ -246,18 +252,31 @@ class IngestionPipeline:
             _vision_cache: Dict[str, asyncio.Future] = {}
             _vision_cache_lock = asyncio.Lock()
             _vision_reused = {"n": 0}
+            # Bounds the images being fetched/shrunk/described at once (each holds its bytes in memory).
+            vision_sem = asyncio.Semaphore(VISION_CONCURRENCY)
+            from backend.app.services.ai.gemini_provider import usage_snapshot
+            _usage_before = usage_snapshot()
 
             async def _describe_one_image(rel_img_path: str) -> Optional[str]:
                 async with _vision_cache_lock:
                     fut = _vision_cache.get(rel_img_path)
-                    if fut is not None:
+                    if fut is None:
+                        fut = asyncio.get_event_loop().create_future()
+                        _vision_cache[rel_img_path] = fut
+                        owner = True
+                    else:
                         _vision_reused["n"] += 1
-                        return await fut
-                    fut = asyncio.get_event_loop().create_future()
-                    _vision_cache[rel_img_path] = fut
+                        owner = False
+                if not owner:
+                    # Wait for the owner OUTSIDE the lock, so one slow shared picture never blocks
+                    # unrelated images from starting.
+                    return await fut
 
                 desc: Optional[str] = None
+                _holding = False
                 try:
+                    await vision_sem.acquire()
+                    _holding = True
                     disk_path = None
                     img_bytes = None
                     ext = None
@@ -306,39 +325,38 @@ class IngestionPipeline:
                             vision_bytes, mime = await asyncio.to_thread(shrink_for_vision, img_bytes, mime)
                             raw_desc = await self.llm_provider.describe_image(vision_bytes, mime_type=mime)
                             if raw_desc and raw_desc.strip():
-                                desc = raw_desc.strip()
+                                desc = raw_desc.strip()[:MAX_DESC_CHARS]
                         except Exception as vision_err:
                             logger.warning(f"Failed to describe image {rel_img_path}: {vision_err}")
                 finally:
+                    if _holding:
+                        vision_sem.release()
                     if not fut.done():
                         fut.set_result(desc)
                 return desc
 
             async def _describe_images(q):
-                visual_clues_list = []
                 target_imgs = list(q.get("question_images") or q.get("image_refs") or [])
-                for rel_img_path in target_imgs:
-                    desc = await _describe_one_image(rel_img_path)
-                    if desc:
-                        visual_clues_list.append(desc)
+                # A question's pictures are described in parallel (the semaphore above bounds the total);
+                # gather keeps them in their original order.
+                descs = await asyncio.gather(*[_describe_one_image(p) for p in target_imgs])
+                visual_clues_list = [d for d in descs if d]
 
-                visual_clues_str = "\n".join(visual_clues_list) if visual_clues_list else None
+                visual_clues_str = "\n".join(visual_clues_list)[:MAX_CLUES_CHARS] if visual_clues_list else None
                 q["visual_clues"] = visual_clues_str
                 return visual_clues_str
 
-            vision_sem = asyncio.Semaphore(VISION_CONCURRENCY)
             _img_total = sum(1 for _q in raw_questions if (_q.get("question_images") or _q.get("image_refs")))
             _img_done = {"n": 0}
 
             async def _describe_guarded(q):
-                async with vision_sem:
-                    raise_if_cancelled(document_id)
-                    out = await _describe_images(q)
-                    if q.get("question_images") or q.get("image_refs"):
-                        _img_done["n"] += 1
-                        progress.update(INGESTION_STATUS_REGISTRY[document_id],
-                                        detail=f"Describing question images with AI ({_img_done['n']}/{_img_total})")
-                    return out
+                raise_if_cancelled(document_id)
+                out = await _describe_images(q)
+                if q.get("question_images") or q.get("image_refs"):
+                    _img_done["n"] += 1
+                    progress.update(INGESTION_STATUS_REGISTRY[document_id],
+                                    detail=f"Describing question images with AI ({_img_done['n']}/{_img_total})")
+                return out
 
             INGESTION_STATUS_REGISTRY[document_id]["current_step"] = "5. Reading question images"
             if _img_total:
@@ -347,6 +365,13 @@ class IngestionPipeline:
             if _vision_reused["n"]:
                 progress.event(INGESTION_STATUS_REGISTRY[document_id],
                                f"{_vision_reused['n']} repeated pictures reused their earlier description (skipped the AI call)")
+            _vu = {k: usage_snapshot().get("vision", {}).get(k, 0) - _usage_before.get("vision", {}).get(k, 0)
+                   for k in ("calls", "in", "out", "think")}
+            if _vu["calls"]:
+                logger.info("vision usage for %s: %s", document_id, _vu)
+                progress.event(INGESTION_STATUS_REGISTRY[document_id],
+                               f"Image AI usage: {_vu['calls']} calls, {_vu['in']:,} input / {_vu['out']:,} output / "
+                               f"{_vu['think']:,} thinking tokens")
 
             enriched_questions = []
             for q in raw_questions:
@@ -428,7 +453,7 @@ class IngestionPipeline:
                 q["_emb_idx"] = idx
 
             texts_to_embed = [
-                f"{q.get('primary_topic') or ''} {' '.join(q.get('topics') or [])} {q['question_text']} {q['answer']} {q.get('visual_clues') or ''} {q.get('explanation') or ''}".strip()
+                f"{q.get('primary_topic') or ''} {' '.join(q.get('topics') or [])} {q['question_text']} {q['answer']} {(q.get('visual_clues') or '')[:EMBED_VISUAL_CLUES_CHARS]} {q.get('explanation') or ''}".strip()
                 for q in enriched_questions
             ]
 
@@ -606,6 +631,10 @@ class IngestionPipeline:
                         model=self.qshala_tagger.model,
                         actor="deck_upload",
                     )
+                    if tag_stats.get("calls"):
+                        progress.event(INGESTION_STATUS_REGISTRY[document_id],
+                                       f"Tagging AI usage: {tag_stats['calls']} calls, {tag_stats['tokens_in']:,} input / "
+                                       f"{tag_stats['tokens_out']:,} output / {tag_stats.get('tokens_think', 0):,} thinking tokens")
                     # Mirror each question's resulting tag onto its metadata row (geography, year, ...).
                     for q_m in question_models:
                         latest = (db.query(QshalaTag)
