@@ -840,10 +840,17 @@ def delete_all_questions_endpoint(
     """
     Remove questions from the question bank.
     If document_id is specified, removes all questions from that deck.
-    If all=True (or no document_id provided), purges all questions in the bank.
+    Purging the whole bank requires an explicit all=true: a bare DELETE with no parameters is refused.
     """
     from backend.app.models.qshala_tag import QshalaTag, QshalaTagChange, QshalaQuestionMetadata
     from backend.app.models.question_meta import QuestionTopicPath, QuestionEditHistory, QuestionRepeat
+
+    if not document_id and not all:
+        raise HTTPException(
+            status_code=400,
+            detail="Refusing to delete the whole question bank: pass document_id=<deck> to remove one deck, "
+                   "or all=true to purge everything.",
+        )
 
     q_query = db.query(Question)
     if document_id:
@@ -859,10 +866,7 @@ def delete_all_questions_endpoint(
     db.query(QuestionEditHistory).filter(QuestionEditHistory.question_id.in_(question_ids)).delete(synchronize_session=False)
     db.query(QshalaTag).filter(QshalaTag.question_id.in_(question_ids)).delete(synchronize_session=False)
     db.query(QshalaTagChange).filter(QshalaTagChange.question_id.in_(question_ids)).delete(synchronize_session=False)
-    db.query(QuestionRepeat).filter(
-        (QuestionRepeat.canonical_question_id.in_(question_ids)) |
-        (QuestionRepeat.repeated_question_id.in_(question_ids))
-    ).delete(synchronize_session=False)
+    db.query(QuestionRepeat).filter(QuestionRepeat.question_id.in_(question_ids)).delete(synchronize_session=False)
     
     deleted_n = db.query(Question).filter(Question.id.in_(question_ids)).delete(synchronize_session=False)
     db.commit()
@@ -892,10 +896,7 @@ def delete_question_endpoint(
     db.query(QuestionEditHistory).filter(QuestionEditHistory.question_id == question_id).delete(synchronize_session=False)
     db.query(QshalaTag).filter(QshalaTag.question_id == question_id).delete(synchronize_session=False)
     db.query(QshalaTagChange).filter(QshalaTagChange.question_id == question_id).delete(synchronize_session=False)
-    db.query(QuestionRepeat).filter(
-        (QuestionRepeat.canonical_question_id == question_id) |
-        (QuestionRepeat.repeated_question_id == question_id)
-    ).delete(synchronize_session=False)
+    db.query(QuestionRepeat).filter(QuestionRepeat.question_id == question_id).delete(synchronize_session=False)
 
     db.delete(q)
     db.commit()
