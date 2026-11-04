@@ -44,6 +44,10 @@ MAX_DESC_CHARS: int = int(os.getenv("MAX_DESC_CHARS", "1200"))             # per
 MAX_CLUES_CHARS: int = int(os.getenv("MAX_CLUES_CHARS", "2400"))           # per question, all images together
 EMBED_VISUAL_CLUES_CHARS: int = int(os.getenv("EMBED_VISUAL_CLUES_CHARS", "500"))
 TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "16"))   # parallel Gemini tagging calls per deck
+# Questions that are exact repeats (same canonical question+answer hash) of a question already in the vault, or of
+# an earlier question in this deck, are dropped by the deduplicator anyway. With this on (default) they skip the
+# vision/enrichment/embedding stages instead of paying for results nobody reads. Set 0 to restore the old order.
+DEDUP_BEFORE_AI: bool = os.getenv("DEDUP_BEFORE_AI", "1").strip().lower() not in ("0", "false", "no", "off")
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
 
@@ -68,6 +72,26 @@ def _ensure_clean(db: Session, where: str) -> None:
             db.rollback()
         except Exception:
             pass
+
+
+def exact_duplicate_indices(db: Session, questions: list) -> set:
+    """Indices of questions the deduplicator's tier-1 check would drop as exact repeats: the content hash
+    already exists in the vault, or the same hash appeared earlier in this batch. Uses the same hash and the
+    same lookup as Deduplicator.deduplicate_batch, so the answer is identical to what it would decide later."""
+    hashes = [Deduplicator.compute_hash(q.get("question_text") or "", q.get("answer") or "") for q in questions]
+    unique = list(dict.fromkeys(hashes))
+    in_vault: set = set()
+    for i in range(0, len(unique), 500):
+        rows = db.query(Question.content_hash).filter(Question.content_hash.in_(unique[i:i + 500])).all()
+        in_vault.update(r[0] for r in rows)
+    skip: set = set()
+    seen: set = set()
+    for idx, h in enumerate(hashes):
+        if h in in_vault or h in seen:
+            skip.add(idx)
+        else:
+            seen.add(h)
+    return skip
 
 
 def _stage_log(document_id: str, stage: str, t0: float) -> float:
@@ -249,6 +273,26 @@ class IngestionPipeline:
             # A picture reused across several questions (a round's title image, a repeated
             # logo or answer slide) is only described once: callers for the same path share
             # one in-flight future rather than each firing their own Gemini call.
+            # Exact repeats are dropped by the deduplicator later (their provenance is still recorded there), so
+            # they skip vision, enrichment and embedding. Everything kept sees exactly the same inputs as before.
+            skip_idx: set = set()
+            if DEDUP_BEFORE_AI and raw_questions:
+                try:
+                    skip_idx = exact_duplicate_indices(db, raw_questions)
+                except Exception as pre_err:
+                    logger.warning("pre-AI duplicate check failed, processing every question: %s", safe_error(pre_err))
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                    skip_idx = set()
+                _ensure_clean(db, "vision/embedding stage")
+                if skip_idx:
+                    progress.event(INGESTION_STATUS_REGISTRY[document_id],
+                                   f"{len(skip_idx)} repeated questions skip the AI stages (exact matches of questions already held)")
+            work_questions = [q for i, q in enumerate(raw_questions) if i not in skip_idx]
+            for _i, _q in enumerate(raw_questions):
+                _q["_emb_idx"] = _i
             _vision_cache: Dict[str, asyncio.Future] = {}
             _vision_cache_lock = asyncio.Lock()
             _vision_reused = {"n": 0}
@@ -346,7 +390,7 @@ class IngestionPipeline:
                 q["visual_clues"] = visual_clues_str
                 return visual_clues_str
 
-            _img_total = sum(1 for _q in raw_questions if (_q.get("question_images") or _q.get("image_refs")))
+            _img_total = sum(1 for _q in work_questions if (_q.get("question_images") or _q.get("image_refs")))
             _img_done = {"n": 0}
 
             async def _describe_guarded(q):
@@ -361,7 +405,7 @@ class IngestionPipeline:
             INGESTION_STATUS_REGISTRY[document_id]["current_step"] = "5. Reading question images"
             if _img_total:
                 progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Describing images for {_img_total} questions with AI")
-            await asyncio.gather(*[_describe_guarded(q) for q in raw_questions])
+            await asyncio.gather(*[_describe_guarded(q) for q in work_questions])
             if _vision_reused["n"]:
                 progress.event(INGESTION_STATUS_REGISTRY[document_id],
                                f"{_vision_reused['n']} repeated pictures reused their earlier description (skipped the AI call)")
@@ -374,7 +418,7 @@ class IngestionPipeline:
                                f"{_vu['think']:,} thinking tokens")
 
             enriched_questions = []
-            for q in raw_questions:
+            for q in work_questions:
                 raise_if_cancelled(document_id)
                 visual_clues_str = q.get("visual_clues")
 
@@ -449,9 +493,6 @@ class IngestionPipeline:
                 "current_step": "6. Generating semantic vector embeddings"
             })
 
-            for idx, q in enumerate(enriched_questions):
-                q["_emb_idx"] = idx
-
             texts_to_embed = [
                 f"{q.get('primary_topic') or ''} {' '.join(q.get('topics') or [])} {q['question_text']} {q['answer']} {(q.get('visual_clues') or '')[:EMBED_VISUAL_CLUES_CHARS]} {q.get('explanation') or ''}".strip()
                 for q in enriched_questions
@@ -464,6 +505,13 @@ class IngestionPipeline:
                 except Exception as e:
                     logger.warning(f"Embedding generation error ({e}), falling back to unit vectors")
                     embeddings = [[0.0] * 768 for _ in texts_to_embed]
+
+            # Re-align to the full question list: every question keeps its original position (_emb_idx), and the
+            # skipped exact repeats get an empty vector (the deduplicator never reads it for an exact match).
+            emb_by_idx = {q["_emb_idx"]: emb for q, emb in zip(enriched_questions, embeddings)}
+            embeddings = [emb_by_idx.get(i, []) for i in range(len(raw_questions))]
+            enriched_by_idx = {q["_emb_idx"]: q for q in enriched_questions}
+            enriched_questions = [enriched_by_idx.get(i, raw_questions[i]) for i in range(len(raw_questions))]
 
             raise_if_cancelled(document_id)
 
