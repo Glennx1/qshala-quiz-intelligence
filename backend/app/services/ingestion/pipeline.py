@@ -47,6 +47,9 @@ TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "16"))   # parallel Gemi
 # Questions that are exact repeats (same canonical question+answer hash) of a question already in the vault, or of
 # an earlier question in this deck, are dropped by the deduplicator anyway. With this on (default) they skip the
 # vision/enrichment/embedding stages instead of paying for results nobody reads. Set 0 to restore the old order.
+# The parser writes every extracted picture to disk (SLIDES_DIR/<doc>/media/) before uploading it to R2, so the
+# vision stage can read that local file instead of downloading the same bytes back over HTTP. Set 0 to always fetch.
+VISION_PREFER_LOCAL: bool = os.getenv("VISION_PREFER_LOCAL", "1").strip().lower() not in ("0", "false", "no", "off")
 DEDUP_BEFORE_AI: bool = os.getenv("DEDUP_BEFORE_AI", "1").strip().lower() not in ("0", "false", "no", "off")
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
@@ -72,6 +75,23 @@ def _ensure_clean(db: Session, where: str) -> None:
             db.rollback()
         except Exception:
             pass
+
+
+def local_media_for_url(url: str, document_id: str) -> Optional["Path"]:
+    """The on-disk copy of a media URL this deck's own parser stored, or None.
+
+    Only URLs of the form <base>/slides/<document_id>/media/<file> map to SLIDES_DIR/<document_id>/media/<file>,
+    and <file> must be a single plain name (no separators, no '..'), so a crafted URL can never point elsewhere."""
+    from pathlib import Path
+    marker = f"/slides/{document_id}/media/"
+    pos = url.find(marker)
+    if pos < 0:
+        return None
+    name = url[pos + len(marker):].split("?", 1)[0].split("#", 1)[0]
+    if not name or name != Path(name).name or name in (".", "..") or "\\" in name or "/" in name:
+        return None
+    candidate = settings.SLIDES_DIR / document_id / "media" / name
+    return candidate if candidate.is_file() else None
 
 
 def exact_duplicate_indices(db: Session, questions: list) -> set:
@@ -293,6 +313,10 @@ class IngestionPipeline:
             work_questions = [q for i, q in enumerate(raw_questions) if i not in skip_idx]
             for _i, _q in enumerate(raw_questions):
                 _q["_emb_idx"] = _i
+            import httpx as _httpx
+            _http = _httpx.AsyncClient(
+                timeout=30.0, headers={"User-Agent": "Mozilla/5.0 (compatible; QShalaIngestion/1.0)"},
+                limits=_httpx.Limits(max_connections=VISION_CONCURRENCY * 2, max_keepalive_connections=VISION_CONCURRENCY))
             _vision_cache: Dict[str, asyncio.Future] = {}
             _vision_cache_lock = asyncio.Lock()
             _vision_reused = {"n": 0}
@@ -326,22 +350,29 @@ class IngestionPipeline:
                     ext = None
 
                     if rel_img_path.startswith("http://") or rel_img_path.startswith("https://"):
-                        # Media stored in Cloudflare R2 (or any other remote object store) --
-                        # the local disk copy may not exist on this instance, so fetch over HTTP.
-                        try:
-                            import httpx as _httpx
-                            # Same fix as exporter.py's _download_url_to_file: a default
-                            # client User-Agent (httpx's is "python-httpx/x.x") can get a
-                            # blanket 403 from CDN/edge bot-protection on R2's public pub-*.r2.dev
-                            # URLs -- a normal browser-like UA avoids that class of failure.
-                            headers = {"User-Agent": "Mozilla/5.0 (compatible; QShalaIngestion/1.0)"}
-                            async with _httpx.AsyncClient(timeout=30.0, headers=headers) as client:
-                                resp = await client.get(rel_img_path)
+                        # Media stored in Cloudflare R2 (or any other remote object store). The parser just
+                        # wrote this very file to local disk before uploading it, so read that copy when it is
+                        # there (same bytes, no download); otherwise fetch it over HTTP.
+                        if VISION_PREFER_LOCAL:
+                            local_copy = local_media_for_url(rel_img_path, document_id)
+                            if local_copy is not None:
+                                try:
+                                    img_bytes = await asyncio.to_thread(local_copy.read_bytes)
+                                    ext = local_copy.suffix.lower()
+                                except Exception as local_err:
+                                    img_bytes = None
+                                    logger.warning(f"Failed to read local copy of {rel_img_path}: {local_err}")
+                        if img_bytes is None:
+                            try:
+                                # Same fix as exporter.py's _download_url_to_file: a default client
+                                # User-Agent can get a blanket 403 from CDN/edge bot-protection on R2's public
+                                # pub-*.r2.dev URLs. One pooled client serves the whole deck.
+                                resp = await _http.get(rel_img_path)
                                 resp.raise_for_status()
                                 img_bytes = resp.content
-                            ext = os.path.splitext(rel_img_path)[1].lower()
-                        except Exception as fetch_err:
-                            logger.warning(f"Failed to fetch remote image {rel_img_path}: {fetch_err}")
+                                ext = os.path.splitext(rel_img_path)[1].lower()
+                            except Exception as fetch_err:
+                                logger.warning(f"Failed to fetch remote image {rel_img_path}: {fetch_err}")
                     elif rel_img_path.startswith("/static/slides/"):
                         sub = rel_img_path[len("/static/slides/"):]
                         cand = settings.SLIDES_DIR / sub
@@ -405,7 +436,10 @@ class IngestionPipeline:
             INGESTION_STATUS_REGISTRY[document_id]["current_step"] = "5. Reading question images"
             if _img_total:
                 progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Describing images for {_img_total} questions with AI")
-            await asyncio.gather(*[_describe_guarded(q) for q in work_questions])
+            try:
+                await asyncio.gather(*[_describe_guarded(q) for q in work_questions])
+            finally:
+                await _http.aclose()
             if _vision_reused["n"]:
                 progress.event(INGESTION_STATUS_REGISTRY[document_id],
                                f"{_vision_reused['n']} repeated pictures reused their earlier description (skipped the AI call)")
