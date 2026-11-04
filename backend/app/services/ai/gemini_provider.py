@@ -609,7 +609,8 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
             missing = [k for k, v in enumerate(results) if v is None]
             if not missing:
                 break
-            await asyncio.sleep(EMBEDDING_RETRY_DELAY_S)
+            if EMBEDDING_RETRY_DELAY_S > 0:
+                await asyncio.sleep(EMBEDDING_RETRY_DELAY_S)
             for k in missing:
                 results[k] = await self._embed_one_or_none(texts[k])
         n_missing = sum(1 for v in results if v is None)

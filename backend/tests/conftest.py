@@ -17,6 +17,9 @@ if str(backend_dir) not in sys.path:
 _tmp_db = Path(tempfile.gettempdir()) / f"qshala_test_{os.getpid()}.db"
 os.environ["DATABASE_URL"] = f"sqlite:///{_tmp_db.resolve().as_posix()}"
 os.environ["REQUIRE_POSTGRES"] = "0"
+# Tests that ingest with an unusable Gemini key would otherwise sit through the 4 s pause before the embedding
+# retry pass (and tests that record asyncio.sleep calls would see it). The pause is for real rate limits only.
+os.environ.setdefault("EMBEDDING_RETRY_DELAY_S", "0")
 
 import pytest
 
