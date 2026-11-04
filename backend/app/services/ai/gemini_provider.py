@@ -13,6 +13,17 @@ from backend.app.config import settings
 logger = logging.getLogger(__name__)
 
 
+class EmbeddingUnavailable(RuntimeError):
+    """Gemini could not produce a real embedding (and the local-substitute fallback is switched off)."""
+
+
+# Old behaviour: any embedding failure silently returned a local hash vector, which was then stored in the same
+# column as real Gemini vectors (and cached for searches), quietly corrupting dedup and ranking. Off by default.
+ALLOW_LOCAL_EMBEDDING_FALLBACK: bool = os.getenv("EMBEDDING_ALLOW_LOCAL_FALLBACK", "0").strip().lower() in ("1", "true", "yes", "on")
+EMBEDDING_RETRY_PASSES: int = int(os.getenv("EMBEDDING_RETRY_PASSES", "1"))
+EMBEDDING_RETRY_DELAY_S: float = float(os.getenv("EMBEDDING_RETRY_DELAY_S", "4"))
+
+
 # --------------------------------------------------------------------- shared HTTP client
 # Every Gemini call used to open (and TLS-handshake) its own httpx client. One long-lived client per
 # event loop keeps connections alive and pooled, which matters when a deck fires hundreds of calls.
@@ -454,6 +465,9 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         raise ValueError(f"embedding shorter than EMBEDDING_DIM ({len(values)} < {dim})")
 
     async def get_embedding(self, text: str) -> List[float]:
+        """One query-style embedding. Raises EmbeddingUnavailable when Gemini cannot provide a real vector,
+        unless EMBEDDING_ALLOW_LOCAL_FALLBACK=1, which restores the old behaviour of silently substituting a
+        local hash vector (a different vector space from the stored Gemini vectors)."""
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is not configured")
 
@@ -477,11 +491,25 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
                 values = self._coerce_dim(data["embedding"]["values"], text)
                 return self._normalize(values)
         except Exception as e:
-            logger.warning(f"[GeminiEmbeddingProvider] API call failed ({e}), falling back to local deterministic embedding.")
-            from backend.app.services.ai.local_provider import LocalEmbeddingProvider
-            return await LocalEmbeddingProvider(dim=settings.EMBEDDING_DIM).get_embedding(text)
+            if ALLOW_LOCAL_EMBEDDING_FALLBACK:
+                logger.warning(f"[GeminiEmbeddingProvider] API call failed ({e}), falling back to local deterministic embedding.")
+                from backend.app.services.ai.local_provider import LocalEmbeddingProvider
+                return await LocalEmbeddingProvider(dim=settings.EMBEDDING_DIM).get_embedding(text)
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            reason = type(e).__name__ + (" " + str(status) if status else "")
+            logger.warning("[GeminiEmbeddingProvider] embedding unavailable (%s); not substituting a local vector", reason)
+            raise EmbeddingUnavailable(reason) from e
 
-    async def get_embeddings(self, texts: List[str]) -> List[List[float]]:
+    async def _embed_one_or_none(self, text: str) -> Optional[List[float]]:
+        try:
+            return await self.get_embedding(text)
+        except Exception:
+            return None
+
+    async def get_embeddings(self, texts: List[str]) -> List[Optional[List[float]]]:
+        """Document embeddings for `texts`, same order. An entry is None when Gemini could not embed that text
+        (after retries); the caller stores no vector for it rather than a local hash vector that would sit in the
+        same column as real Gemini vectors. EMBEDDING_ALLOW_LOCAL_FALLBACK=1 restores the old substitution."""
         if not texts:
             return []
         if not self.api_key:
@@ -491,7 +519,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
 
         # Use batchEmbedContents endpoint in chunks of up to 96
         chunk_size = 96
-        results: List[List[float]] = []
+        results: List[Optional[List[float]]] = []
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:batchEmbedContents"
 
         for i in range(0, len(texts), chunk_size):
@@ -515,7 +543,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
                     if resp.is_error:
                         logger.warning(f"[GeminiEmbeddingProvider] batchEmbedContents error ({resp.status_code}), falling back to serial")
                         for t in chunk:
-                            results.append(await self.get_embedding(t))
+                            results.append(await self._embed_one_or_none(t))
                     elif len(data := resp.json().get("embeddings", [])) != len(chunk):
                         # batchEmbedContents returned a different count than requested -- can't
                         # safely zip results back to texts by position, so re-fetch this whole
@@ -525,25 +553,37 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
                             "for %d texts, falling back to serial for this chunk", len(data), len(chunk),
                         )
                         for t in chunk:
-                            results.append(await self.get_embedding(t))
+                            results.append(await self._embed_one_or_none(t))
                     else:
                         for t, e in zip(chunk, data):
                             try:
                                 values = self._coerce_dim(e["values"], t)
                                 results.append(self._normalize(values))
-                            except ValueError:
+                            except (ValueError, KeyError, TypeError):
                                 # Too short to coerce (see _coerce_dim) -- fall back to a single
-                                # get_embedding() call for just this text, which has its own
-                                # fallback to the local deterministic embedding on failure. Never
-                                # let a wrong-length vector reach the questions.embedding INSERT.
+                                # get_embedding() call for just this text.
                                 logger.warning(
                                     "[GeminiEmbeddingProvider] batch item too short to coerce, "
                                     "refetching serially (text=%r)", t[:80],
                                 )
-                                results.append(await self.get_embedding(t))
+                                results.append(await self._embed_one_or_none(t))
             except Exception as batch_err:
-                logger.warning(f"[GeminiEmbeddingProvider] batchEmbedContents failed ({batch_err}), falling back to serial")
+                logger.warning(f"[GeminiEmbeddingProvider] batchEmbedContents failed ({type(batch_err).__name__}), falling back to serial")
+                # results may already hold part of this chunk if the failure came part-way through it
+                del results[i:]
                 for t in chunk:
-                    results.append(await self.get_embedding(t))
+                    results.append(await self._embed_one_or_none(t))
 
+        # Second chance for anything that failed: wait out a rate-limit window, then ask again one by one.
+        for _ in range(EMBEDDING_RETRY_PASSES):
+            missing = [k for k, v in enumerate(results) if v is None]
+            if not missing:
+                break
+            await asyncio.sleep(EMBEDDING_RETRY_DELAY_S)
+            for k in missing:
+                results[k] = await self._embed_one_or_none(texts[k])
+        n_missing = sum(1 for v in results if v is None)
+        if n_missing:
+            logger.warning("[GeminiEmbeddingProvider] %d of %d texts could not be embedded; storing no vector for them",
+                           n_missing, len(texts))
         return results

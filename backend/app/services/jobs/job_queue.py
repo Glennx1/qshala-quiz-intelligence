@@ -355,7 +355,8 @@ class JobQueueService:
         embeddings = []
         if texts_to_embed:
             try:
-                embeddings = await embedding_provider.get_embeddings(texts_to_embed)
+                embeddings = [e if e is not None else [0.0] * 768
+                              for e in await embedding_provider.get_embeddings(texts_to_embed)]
             except Exception as e:
                 logger.warning(f"Job {job.id} embedding generation warning ({e}), fallback zero vectors")
                 embeddings = [[0.0] * 768 for _ in texts_to_embed]

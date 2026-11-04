@@ -23,7 +23,10 @@ class DuplicateDetector:
         if not all_questions:
             return 0.0, None, False
 
-        q_emb = await self.embedding_provider.get_embedding(question_text)
+        try:
+            q_emb = await self.embedding_provider.get_embedding(question_text)
+        except Exception:
+            return 0.0, None, False        # no real embedding: cannot judge similarity, so don't flag a duplicate
 
         candidate_embs = []
         valid_questions = []

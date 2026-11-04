@@ -82,6 +82,9 @@ class Question(Base):
     duplicate_of_id = Column(String(36), ForeignKey("questions.id", ondelete="SET NULL"), nullable=True)
     
     embedding = Column(get_vector_column_type(settings.EMBEDDING_DIM), nullable=True)
+    # Which model produced `embedding` (e.g. "gemini-embedding-001"), so vectors from different models can be
+    # told apart. Null for rows embedded before this column existed.
+    embedding_model = Column(String(64), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships

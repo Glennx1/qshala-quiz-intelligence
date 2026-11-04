@@ -246,7 +246,8 @@ def ensure_schema_columns():
                     ("duplicate_of_id", "VARCHAR(36)"),
                     ("format_payload", "JSON"),
                     ("question_format", "VARCHAR(20) DEFAULT 'STANDARD_QA'"),
-                    ("format_data", "JSON")
+                    ("format_data", "JSON"),
+                    ("embedding_model", "VARCHAR(64)")
                 ]
                 for col_name, col_type in new_q_cols:
                     try:

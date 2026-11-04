@@ -82,6 +82,12 @@ def _ensure_clean(db: Session, where: str) -> None:
             pass
 
 
+def embedding_model_label(provider) -> str:
+    """Short name stored in questions.embedding_model for vectors this provider produced."""
+    model = getattr(provider, "model", None)
+    return str(model or type(provider).__name__)[:64]
+
+
 def sha256_file(path: str, chunk: int = 1 << 20) -> str:
     """Streaming SHA-256 of a file (1 MB at a time, so a 700 MB deck never sits in memory)."""
     import hashlib
@@ -589,8 +595,10 @@ class IngestionPipeline:
                 try:
                     embeddings = await self.embedding_provider.get_embeddings(texts_to_embed)
                 except Exception as e:
-                    logger.warning(f"Embedding generation error ({e}), falling back to unit vectors")
-                    embeddings = [[0.0] * 768 for _ in texts_to_embed]
+                    # No vector is better than a fake one: zero vectors have an undefined cosine distance and
+                    # never rank. The questions are stored without an embedding and can be re-embedded later.
+                    logger.warning(f"Embedding generation error ({e}); storing these questions without an embedding")
+                    embeddings = [None for _ in texts_to_embed]
 
             # Re-align to the full question list: every question keeps its original position (_emb_idx), and the
             # skipped exact repeats get an empty vector (the deduplicator never reads it for an exact match).
@@ -719,7 +727,8 @@ class IngestionPipeline:
                     duplicate_status=q_data.get("duplicate_status", "UNIQUE"),
                     duplicate_similarity=q_data.get("duplicate_similarity"),
                     duplicate_of_id=q_data.get("duplicate_of_id"),
-                    embedding=emb
+                    embedding=emb or None,
+                    embedding_model=embedding_model_label(self.embedding_provider) if emb else None,
                 )
                 db.add(q_obj)
                 question_models.append(q_obj)

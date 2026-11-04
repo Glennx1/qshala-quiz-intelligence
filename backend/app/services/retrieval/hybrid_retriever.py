@@ -45,7 +45,7 @@ class HybridRetriever:
         self.embedding_provider = get_embedding_provider()
         self.expansions = self._load_synonym_expansions()
 
-    async def _get_query_embedding(self, query: str) -> List[float]:
+    async def _get_query_embedding(self, query: str) -> Optional[List[float]]:
         """Embeds the query, reusing a recent result for the same text.
 
         Search is expected to be the dominant, latency-sensitive traffic on
@@ -59,7 +59,14 @@ class HybridRetriever:
             HybridRetriever._embedding_cache.move_to_end(cache_key)
             return cached
 
-        embedding = await self.embedding_provider.get_embedding(query)
+        try:
+            embedding = await self.embedding_provider.get_embedding(query)
+        except Exception as e:
+            # No real query vector: skip dense ranking for this request instead of comparing a made-up vector
+            # against the stored ones. Nothing is cached, so the next search tries again.
+            logger.warning("query embedding unavailable (%s); using keyword ranking only for this search",
+                           type(e).__name__)
+            return None
 
         HybridRetriever._embedding_cache[cache_key] = embedding
         HybridRetriever._embedding_cache.move_to_end(cache_key)
@@ -308,7 +315,11 @@ class HybridRetriever:
         expanded_keywords = self._expand_query(f"{query} {topic or ''} {tag_query_str}")
 
         # Path A: Dense Vector similarities
-        if candidate_distances:
+        if not query_emb:
+            # Query embedding unavailable: every candidate gets the same dense rank, so the order comes from
+            # the keyword/tag path alone.
+            dense_scores = np.zeros(len(candidates))
+        elif candidate_distances:
             # pgvector's cosine_distance is (1 - cosine_similarity); convert back.
             # A candidate with no stored embedding (no distance returned) scores
             # as fully dissimilar rather than being dropped -- it can still
@@ -324,8 +335,11 @@ class HybridRetriever:
                     candidate_embs.append([0.0] * len(query_emb))
             dense_scores = batch_cosine_similarities(query_emb, candidate_embs)
 
-        dense_ranked_indices = list(np.argsort(-dense_scores))
-        dense_rank_map = {idx: rank + 1 for rank, idx in enumerate(dense_ranked_indices)}
+        if query_emb:
+            dense_ranked_indices = list(np.argsort(-dense_scores))
+            dense_rank_map = {idx: rank + 1 for rank, idx in enumerate(dense_ranked_indices)}
+        else:
+            dense_rank_map = {idx: 1 for idx in range(len(candidates))}
 
         # Path B: Sparse Lexical & Keyword Matching + Tag Overlap
         sparse_scores = []
