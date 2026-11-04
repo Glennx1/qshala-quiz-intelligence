@@ -126,6 +126,26 @@ VISION_PROMPT = (
 )
 
 
+# Timeouts and dropped connections are retried like a 429/503 (set 0 to fail them straight away: a call that
+# timed out on our side may still have been billed, so each retry can cost one more call).
+RETRY_ON_TRANSPORT_ERROR: bool = os.getenv("GEMINI_RETRY_ON_TIMEOUT", "1").strip().lower() not in ("0", "false", "no", "off")
+RETRY_AFTER_CAP_S: float = float(os.getenv("GEMINI_RETRY_AFTER_CAP_S", "60"))
+RETRY_BACKOFF_CAP_S: float = float(os.getenv("GEMINI_RETRY_BACKOFF_CAP_S", "30"))
+
+
+def _retry_wait_seconds(resp: Optional[httpx.Response], attempt: int) -> float:
+    """Exponential backoff with jitter (2s, 4s, 8s ... capped), raised to Google's Retry-After when it sends one."""
+    wait = min(RETRY_BACKOFF_CAP_S, 2.0 * (2 ** attempt)) + random.uniform(0.1, 0.9)
+    if resp is not None:
+        try:
+            header = resp.headers.get("retry-after")
+            if header:
+                wait = max(wait, min(RETRY_AFTER_CAP_S, float(header)))
+        except Exception:
+            pass
+    return wait
+
+
 async def _post_with_retry(
     client: httpx.AsyncClient, url: str, payload: Dict[str, Any], api_key: str, max_retries: int = 3,
     timeout: Optional[float] = None,
@@ -133,9 +153,19 @@ async def _post_with_retry(
     headers = {"x-goog-api-key": api_key} if api_key else {}
     extra = {"timeout": timeout} if timeout is not None else {}
     for attempt in range(max_retries + 1):
-        resp = await client.post(url, json=payload, headers=headers, **extra)
+        try:
+            resp = await client.post(url, json=payload, headers=headers, **extra)
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            if RETRY_ON_TRANSPORT_ERROR and attempt < max_retries:
+                wait_sec = _retry_wait_seconds(None, attempt)
+                logger.warning(
+                    f"[GeminiProvider] {type(e).__name__}. Retrying in {wait_sec:.2f}s (attempt {attempt+1}/{max_retries})..."
+                )
+                await asyncio.sleep(wait_sec)
+                continue
+            raise
         if resp.status_code in (429, 503) and attempt < max_retries:
-            wait_sec = (attempt + 1) * 2.0 + random.uniform(0.1, 0.9)
+            wait_sec = _retry_wait_seconds(resp, attempt)
             logger.warning(
                 f"[GeminiProvider] Rate limit or busy ({resp.status_code}). Backing off {wait_sec:.2f}s (attempt {attempt+1}/{max_retries})..."
             )

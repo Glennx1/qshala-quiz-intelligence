@@ -51,7 +51,10 @@ CHUNK_SIZE = int(os.getenv("QSHALA_TAG_CHUNK_SIZE", "20"))
 # drop this back down via the env var. Retry/backoff below (MAX_CHUNK_RETRIES, is_rate_limit) still
 # protects against a 429 if this is set higher than the account's actual RPM allows.
 CHUNK_CONCURRENCY = int(os.getenv("QSHALA_TAG_CHUNK_CONCURRENCY", os.getenv("CHUNK_CONCURRENCY", "8")))
-CHUNK_TIMEOUT_S = 75.0   # a chunk slower than this is abandoned and its questions go to review
+# A chunk slower than this is abandoned and its questions go to review. It must be longer than the HTTP timeout of
+# a single Gemini request (90 s): the old 75 s limit gave up on a request that was still legitimately running (and
+# still being billed) and then re-sent the whole chunk.
+CHUNK_TIMEOUT_S = float(os.getenv("QSHALA_TAG_CHUNK_TIMEOUT_S", "120"))
 MAX_CHUNK_RETRIES = 3
 
 
