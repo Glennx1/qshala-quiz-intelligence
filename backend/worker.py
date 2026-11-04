@@ -58,7 +58,12 @@ async def _poll_cancel(document_id: str, stop_event: asyncio.Event) -> None:
             db = SessionLocal()
             try:
                 doc = db.query(Document).filter(Document.id == document_id).first()
-                if doc is not None and doc.cancel_requested:
+                if doc is None:
+                    # The row is gone (cancelled or deleted from the API side): nothing left to ingest into.
+                    logger.info("[WORKER] doc_id=%s no longer exists, stopping", document_id)
+                    request_doc_cancel(document_id)
+                    return
+                if doc.cancel_requested:
                     logger.info("[WORKER] cancel_requested detected for doc_id=%s", document_id)
                     request_doc_cancel(document_id)
                     return
@@ -189,7 +194,26 @@ def _fetch_raw_deck(document_id: str) -> None:
         db.close()
 
 
-def _write_terminal_job_status(document_id: str, error: "str | None" = None) -> None:
+def _find_processing_job_id(document_id: str) -> "str | None":
+    """The id of this document's PROCESSING job, captured before ingestion starts. Needed afterwards because
+    purging a cancelled document sets ingestion_jobs.document_id to NULL, so the job can no longer be found by it."""
+    from backend.app.database import SessionLocal
+    from backend.app.models.job import IngestionJob
+    try:
+        db = SessionLocal()
+        try:
+            job = (db.query(IngestionJob)
+                   .filter(IngestionJob.document_id == document_id, IngestionJob.status == "PROCESSING")
+                   .order_by(IngestionJob.created_at.desc()).first())
+            return job.id if job is not None else None
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("[WORKER] could not look up job for doc_id=%s: %s", document_id, e)
+        return None
+
+
+def _write_terminal_job_status(document_id: str, error: "str | None" = None, job_id: "str | None" = None) -> None:
     """Finds the IngestionJob for this document in PROCESSING status and marks it with the terminal outcome."""
     from datetime import datetime, timezone
     from backend.app.database import SessionLocal
@@ -200,17 +224,26 @@ def _write_terminal_job_status(document_id: str, error: "str | None" = None) -> 
     try:
         db = SessionLocal()
         try:
-            job = (
-                db.query(IngestionJob)
-                .filter(IngestionJob.document_id == document_id, IngestionJob.status == "PROCESSING")
-                .order_by(IngestionJob.created_at.desc())
-                .first()
-            )
+            if job_id:
+                job = db.query(IngestionJob).filter(IngestionJob.id == job_id).first()
+            else:
+                job = (
+                    db.query(IngestionJob)
+                    .filter(IngestionJob.document_id == document_id, IngestionJob.status == "PROCESSING")
+                    .order_by(IngestionJob.created_at.desc())
+                    .first()
+                )
             if job is None:
                 return  # No matching job (legacy direct trigger) = no-op
             doc = db.query(Document).filter(Document.id == document_id).first()
             doc_status = doc.processing_status if doc else None
-            if doc_status == "COMPLETED":
+            if doc is None and job_id:
+                # The document was purged while this worker ran: that is a cancellation, not a failure.
+                job.status = "CANCELLED"
+                job.current_step = "CANCELLED"
+                job.completed_at = now
+                job.error_message = "Cancelled by user"
+            elif doc_status == "COMPLETED":
                 job.status = "COMPLETED"
                 job.current_step = "DONE"
                 job.completed_at = now
@@ -251,6 +284,7 @@ async def _run(document_id: str) -> None:
     from backend.app.services.ingestion.pipeline import IngestionPipeline
 
     stop_event = asyncio.Event()
+    job_id = await asyncio.to_thread(_find_processing_job_id, document_id)
     poller = asyncio.create_task(_poll_cancel(document_id, stop_event))
     syncer = asyncio.create_task(_sync_progress_to_db(document_id, stop_event))
     try:
@@ -273,7 +307,7 @@ async def _run(document_id: str) -> None:
         # One last sync so the final "Finishing up" / completion detail and activity log entries
         # the pipeline wrote in its last moments aren't lost to the PROGRESS_SYNC_INTERVAL_S gap.
         await asyncio.to_thread(_sync_progress_once, document_id)
-        await asyncio.to_thread(_write_terminal_job_status, document_id)
+        await asyncio.to_thread(_write_terminal_job_status, document_id, None, job_id)
         await asyncio.to_thread(_best_effort_dispatch_next)
 
 

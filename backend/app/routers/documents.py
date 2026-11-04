@@ -164,6 +164,10 @@ MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024)
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
+# A Cloud Run Job worker refreshes its job row every ~2 s while it runs. A PROCESSING job refreshed within this
+# many seconds means a live worker owns the document, so cancel must not purge it from under the worker.
+WORKER_ALIVE_WINDOW_S: float = float(os.getenv("WORKER_ALIVE_WINDOW_S", "90"))
+
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
     background_tasks: BackgroundTasks,
@@ -674,6 +678,14 @@ def cancel_ingestion(document_id: str, db: Session = Depends(get_db)):
         reg["current_step"] = "Cancelling..."
         return {"status": "CANCELLING", "document_id": document_id}
 
+    # Cloud Run Job mode: this process never has a registry entry, because the pipeline runs in the worker's
+    # container. If that worker is alive (it refreshes its job row every few seconds) purging here would delete
+    # the document and its media out from under it: it would keep calling Gemini, then fail on the missing
+    # row and leave orphaned uploads. Leave cancel_requested set; the worker's poller sees it, stops at its next
+    # checkpoint and purges the document itself.
+    if _worker_is_alive(db, document_id):
+        return {"status": "CANCELLING", "document_id": document_id}
+
     # Nothing is actively running for this id (e.g. server restarted mid-ingest): clean up now.
     purge_document(db, document_id)
     INGESTION_STATUS_REGISTRY[document_id] = {
@@ -681,6 +693,19 @@ def cancel_ingestion(document_id: str, db: Session = Depends(get_db)):
         "current_step": "Upload cancelled", "slides_processed": 0, "questions_extracted": 0, "error": None,
     }
     return {"status": "CANCELLED", "document_id": document_id}
+
+def _worker_is_alive(db: Session, document_id: str) -> bool:
+    """True when an ingestion job for this document is PROCESSING and its worker refreshed the row recently."""
+    from datetime import datetime, timezone
+    from backend.app.models.job import IngestionJob
+    job = (db.query(IngestionJob)
+           .filter(IngestionJob.document_id == document_id, IngestionJob.status == "PROCESSING")
+           .order_by(IngestionJob.created_at.desc()).first())
+    if job is None or job.updated_at is None:
+        return False
+    stamp = job.updated_at if job.updated_at.tzinfo else job.updated_at.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - stamp).total_seconds() < WORKER_ALIVE_WINDOW_S
+
 
 @router.get("", response_model=List[DocumentResponse])
 def list_documents(db: Session = Depends(get_db)):
