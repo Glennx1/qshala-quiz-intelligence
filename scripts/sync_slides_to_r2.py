@@ -7,10 +7,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
 from botocore.config import Config
 
-account_id = os.environ.get("R2_ACCOUNT_ID", "2645378d746252bf15f26689feadc92a")
-access_key_id = os.environ.get("R2_ACCESS_KEY_ID", "8a98d96e8ab35fa98e940687a97dbdd4")
-secret_access_key = os.environ.get("R2_SECRET_ACCESS_KEY", "3b991993a8a7ef56eb1103c74743b1826982ed78af1ee3ddabf283cfbd880f5e")
-bucket_name = os.environ.get("R2_BUCKET_NAME", "qshala-media")
+def _require_env(name):
+    value = os.environ.get(name)
+    if not value:
+        print(f"Error: environment variable {name} is required (set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME).")
+        sys.exit(1)
+    return value
+
+
+account_id = _require_env("R2_ACCOUNT_ID")
+access_key_id = _require_env("R2_ACCESS_KEY_ID")
+secret_access_key = _require_env("R2_SECRET_ACCESS_KEY")
+bucket_name = _require_env("R2_BUCKET_NAME")
 endpoint_url = f"https://{account_id}.r2.cloudflarestorage.com"
 
 s3 = boto3.client(
