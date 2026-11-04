@@ -457,32 +457,72 @@ def save(req: SaveReq, db: Session = Depends(get_db)):
     if isinstance(topic, list):
         topic = ", ".join(str(t) for t in topic)
 
+    # The quiz is built from the stored question rows (the prompt-quiz bank view carries only a subset of their
+    # fields), so options, explanation and every kind of media come across, as they do for generated quizzes.
+    originals = {q.id: q for q in db.query(Question).filter(Question.id.in_([b["id"] for b in ordered])).all()}
+    doc_ids = {q.document_id for q in originals.values() if q.document_id}
+    doc_titles = {}
+    if doc_ids:
+        from backend.app.models.document import Document
+        doc_titles = {d.id: (d.title or d.filename) for d in db.query(Document).filter(Document.id.in_(doc_ids)).all()}
+
     quiz = Quiz(
-        title=title,
-        topic=str(topic),
-        difficulty=(req.brief or {}).get("hard_bias") or "Medium",
-        author="QShala Prompt Quizzer",
+        title=title[:255],
+        topic=str(topic)[:100],
+        difficulty=str((req.brief or {}).get("hard_bias") or "Medium")[:50],
+        raw_prompt=req.prompt,
+        question_count=len(ordered),
+        status="READY",
     )
     db.add(quiz)
     db.flush()
 
     for idx, b in enumerate(ordered):
-        orig_q = db.query(Question).filter(Question.id == b["id"]).first()
+        orig_q = originals.get(b["id"])
+
+        def field(name, default=None, bank_key=None):
+            value = getattr(orig_q, name, None) if orig_q is not None else None
+            if value in (None, "", []):
+                value = b.get(bank_key or name)
+            return default if value in (None, "") else value
+
         gq = GeneratedQuestion(
             quiz_id=quiz.id,
-            question_text=b["question_text"],
-            options=b.get("options") or [],
-            answer=b.get("answer") or "",
-            explanation=b.get("explanation") or "",
-            difficulty=b.get("difficulty") or "Medium",
             order_index=idx,
+            question_text=field("question_text", ""),
+            options=field("options") or [],
+            answer=field("answer", ""),
+            explanation=field("explanation", ""),
+            difficulty=b.get("difficulty") or field("difficulty", "Medium"),
+            grade_min=getattr(orig_q, "grade_min", None) or 3,
+            grade_max=getattr(orig_q, "grade_max", None) or 12,
+            topic=field("topic"),
+            question_type=field("question_type", "SLIDE_QA"),
+            format_payload=getattr(orig_q, "format_payload", None),
+            image_refs=list(getattr(orig_q, "image_refs", None) or []),
+            question_images=list(getattr(orig_q, "question_images", None) or []),
+            answer_images=list(getattr(orig_q, "answer_images", None) or []),
+            audio_refs=list(getattr(orig_q, "audio_refs", None) or []),
+            question_audio=list(getattr(orig_q, "question_audio", None) or []),
+            answer_audio=list(getattr(orig_q, "answer_audio", None) or []),
+            video_refs=list(getattr(orig_q, "video_refs", None) or []),
+            question_video=list(getattr(orig_q, "question_videos", None) or []),
+            raw_media_refs=list(getattr(orig_q, "raw_media_refs", None) or []),
+            visual_clues=getattr(orig_q, "visual_clues", None),
             is_approved=True,
-            retrieval_source=RetrievalSource.CURATED,
-            original_question_id=b["id"],
         )
-        if orig_q and orig_q.document_id:
-            gq.source_document_id = orig_q.document_id
         db.add(gq)
+        db.flush()
+        if orig_q is not None:
+            db.add(RetrievalSource(
+                generated_question_id=gq.id,
+                historical_question_id=orig_q.id,
+                document_id=orig_q.document_id,
+                slide_id=orig_q.slide_id,
+                document_title=doc_titles.get(orig_q.document_id),
+                relevance_score=1.0,
+                rationale="Picked from the vault in the Prompt Quizzer",
+            ))
 
     db.commit()
     return {"quiz_id": quiz.id, "title": quiz.title, "count": len(ordered)}
