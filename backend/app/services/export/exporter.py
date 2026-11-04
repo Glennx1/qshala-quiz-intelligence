@@ -11,6 +11,100 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------------------------- media safety
+# POST /quizzes/export takes media references straight from the request body, so the exporter must not be a way
+# to make the server fetch internal URLs or embed arbitrary local files into the returned deck.
+
+def _host_is_public(host: str) -> bool:
+    """True when every address `host` resolves to is a normal public one (not loopback, private, link-local such as
+    the cloud metadata address, reserved, multicast or unspecified)."""
+    import ipaddress
+    import socket
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        except ValueError:
+            return False
+        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                or ip.is_multicast or ip.is_unspecified):
+            return False
+    return True
+
+
+def _url_allowed(url: str) -> bool:
+    """Only http(s) URLs to public hosts. EXPORT_ALLOWED_MEDIA_HOSTS (comma separated) narrows this to exactly
+    those hosts, e.g. your R2 public domain."""
+    import os
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    allowed = [h.strip().lower() for h in os.getenv("EXPORT_ALLOWED_MEDIA_HOSTS", "").split(",") if h.strip()]
+    if allowed:
+        return parsed.hostname.lower() in allowed
+    return _host_is_public(parsed.hostname)
+
+
+def _make_safe_opener():
+    import urllib.error
+    import urllib.request
+
+    class _SafeRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            if not _url_allowed(newurl):
+                raise urllib.error.URLError(f"redirect to a non-public or disallowed host refused: {newurl[:120]}")
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    return urllib.request.build_opener(_SafeRedirect)
+
+
+_OPENER = _make_safe_opener()
+
+
+def _cache_name(url: str, filename: str) -> str:
+    """Temp-file name for a downloaded URL. The old cache was keyed by basename alone, so two decks that both have a
+    slide_3_img_1.png shared one file and the second deck's export got the first deck's picture."""
+    import hashlib
+    return f"{hashlib.sha1(url.encode('utf-8')).hexdigest()[:12]}_{filename}"
+
+
+def _safe_sub(sub: str) -> bool:
+    """A relative path below a media root must not climb out of it."""
+    from pathlib import PurePosixPath
+    parts = PurePosixPath(sub.replace("\\", "/")).parts
+    return bool(parts) and ".." not in parts and not PurePosixPath(sub.replace("\\", "/")).is_absolute()
+
+
+def _within_media_roots(path: Path) -> bool:
+    """A direct local path is only embedded when it sits inside the app's own storage / public media folders."""
+    from backend.app.config import settings
+    repo = Path(__file__).resolve().parents[4]
+    roots = [settings.STORAGE_DIR, settings.SLIDES_DIR, settings.UPLOAD_DIR,
+             repo / "frontend" / "public", repo / "backend" / "storage", repo / "storage"]
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError):
+        return False
+    for root in roots:
+        try:
+            r = Path(root).resolve()
+        except (OSError, RuntimeError):
+            continue
+        if resolved == r or r in resolved.parents:
+            return True
+    return False
+
+
 def _download_url_to_file(url: str, dest_dir: Path) -> Optional[Path]:
     """
     Downloads a URL (R2 public URL or any HTTPS/HTTP media URL) to a local temp file.
@@ -26,7 +120,11 @@ def _download_url_to_file(url: str, dest_dir: Path) -> Optional[Path]:
         if not filename:
             filename = "media_file"
 
-        dest_path = dest_dir / filename
+        if not _url_allowed(url):
+            logger.warning(f"Refusing to fetch media URL (not a public http(s) host): {url[:120]}")
+            return None
+
+        dest_path = dest_dir / _cache_name(url, filename)
         if dest_path.exists() and dest_path.stat().st_size > 0:
             return dest_path
 
@@ -38,7 +136,7 @@ def _download_url_to_file(url: str, dest_dir: Path) -> Optional[Path]:
         # enabled. A normal browser-like User-Agent is the standard fix for this class of
         # 403 and costs nothing to set.
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; QShalaExporter/1.0)"})
-        with urllib.request.urlopen(req, timeout=30) as resp, open(dest_path, "wb") as out_f:
+        with _OPENER.open(req, timeout=30) as resp, open(dest_path, "wb") as out_f:
             shutil.copyfileobj(resp, out_f)
 
         if dest_path.exists() and dest_path.stat().st_size > 0:
@@ -58,6 +156,9 @@ def _resolve_media_path(rel_url: Optional[str], download_dir: Optional[Path] = N
 
     # 0. Handle HTTPS/HTTP URLs (R2 media, external URLs)
     if clean_url.startswith("https://") or clean_url.startswith("http://"):
+        if not _url_allowed(clean_url):
+            logger.warning(f"Refusing media URL (not a public http(s) host): {clean_url[:120]}")
+            return None
         if download_dir:
             downloaded = _download_url_to_file(clean_url, download_dir)
             if downloaded and downloaded.exists() and downloaded.stat().st_size > 0:
@@ -67,7 +168,7 @@ def _resolve_media_path(rel_url: Optional[str], download_dir: Optional[Path] = N
                 from backend.app.services.storage.r2_storage import get_media_storage
                 r2 = get_media_storage()
                 if r2 is not None:
-                    dest = download_dir / Path(clean_url.split("?")[0]).name
+                    dest = download_dir / _cache_name(clean_url, Path(clean_url.split("?")[0]).name)
                     return r2.download_to_file(clean_url, dest)
             except Exception as e:
                 logger.warning(f"R2 direct S3 download fallback failed for {clean_url}: {e}")
@@ -79,6 +180,8 @@ def _resolve_media_path(rel_url: Optional[str], download_dir: Optional[Path] = N
     # 1. Slide extracts directory (/static/slides/...)
     if clean_url.startswith("/static/slides/"):
         sub = clean_url[len("/static/slides/"):].lstrip("/\\")
+        if not _safe_sub(sub):
+            return None
         candidates = [
             settings.SLIDES_DIR / sub,
             Path("frontend/public/static/slides") / sub,
@@ -98,7 +201,7 @@ def _resolve_media_path(rel_url: Optional[str], download_dir: Optional[Path] = N
                 r2 = get_media_storage()
                 if r2 is not None:
                     key = f"slides/{sub}"
-                    dest = download_dir / Path(sub).name
+                    dest = download_dir / _cache_name(key, Path(sub).name)
                     try:
                         p = r2.download_to_file(key, dest)
                         if p.exists() and p.stat().st_size > 0:
@@ -111,6 +214,8 @@ def _resolve_media_path(rel_url: Optional[str], download_dir: Optional[Path] = N
     # 2. Storage directory general (/static/...)
     elif clean_url.startswith("/static/"):
         sub = clean_url.lstrip("/static/").lstrip("/\\")
+        if not _safe_sub(sub):
+            return None
         candidates = [
             settings.STORAGE_DIR / sub,
             Path("frontend/public/static") / sub,
@@ -146,7 +251,7 @@ def _resolve_media_path(rel_url: Optional[str], download_dir: Optional[Path] = N
 
     # 4. Direct filesystem path
     p_direct = Path(clean_url)
-    if p_direct.exists() and p_direct.is_file():
+    if p_direct.exists() and p_direct.is_file() and _within_media_roots(p_direct):
         return p_direct
         
     # 5. Storage uploads directory check
