@@ -50,6 +50,11 @@ TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "16"))   # parallel Gemi
 # The parser writes every extracted picture to disk (SLIDES_DIR/<doc>/media/) before uploading it to R2, so the
 # vision stage can read that local file instead of downloading the same bytes back over HTTP. Set 0 to always fetch.
 VISION_PREFER_LOCAL: bool = os.getenv("VISION_PREFER_LOCAL", "1").strip().lower() not in ("0", "false", "no", "off")
+# What to do when an uploaded deck file is byte-identical (SHA-256) to a deck already ingested to completion.
+#   process (default): ingest it as usual (its questions become "Repeated" entries on the originals).
+#   skip: mark it completed straight away with no questions and no AI/R2 work. NOTE: skipping means those
+#         repeat records are NOT written for the re-upload.
+IDENTICAL_REUPLOAD_ACTION: str = os.getenv("IDENTICAL_REUPLOAD_ACTION", "process").strip().lower()
 DEDUP_BEFORE_AI: bool = os.getenv("DEDUP_BEFORE_AI", "1").strip().lower() not in ("0", "false", "no", "off")
 from backend.app.services.deduplication.deduplicator import Deduplicator
 from backend.app.services.ai.factory import get_embedding_provider, get_llm_provider
@@ -75,6 +80,24 @@ def _ensure_clean(db: Session, where: str) -> None:
             db.rollback()
         except Exception:
             pass
+
+
+def sha256_file(path: str, chunk: int = 1 << 20) -> str:
+    """Streaming SHA-256 of a file (1 MB at a time, so a 700 MB deck never sits in memory)."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def find_identical_deck(db: Session, file_hash: str, exclude_id: str) -> Optional[Document]:
+    """A different deck that finished ingesting from byte-identical file content, if any."""
+    return (db.query(Document)
+            .filter(Document.file_sha256 == file_hash, Document.id != exclude_id,
+                    Document.processing_status == "COMPLETED")
+            .order_by(Document.created_at.asc()).first())
 
 
 def local_media_for_url(url: str, document_id: str) -> Optional["Path"]:
@@ -174,6 +197,35 @@ class IngestionPipeline:
             db.commit()
 
             file_ext = os.path.splitext(doc.filename)[1].lower()
+
+            # Fingerprint the file so an identical re-upload can be recognised. Never blocks ingestion.
+            try:
+                if doc.storage_path and os.path.exists(doc.storage_path):
+                    file_hash = await asyncio.to_thread(sha256_file, doc.storage_path)
+                    twin = find_identical_deck(db, file_hash, doc.id)
+                    doc.file_sha256 = file_hash
+                    db.commit()
+                    if twin is not None:
+                        progress.event(INGESTION_STATUS_REGISTRY[document_id],
+                                       f"This file is byte-identical to '{twin.title}', which is already ingested")
+                        if IDENTICAL_REUPLOAD_ACTION == "skip":
+                            doc.question_count = 0
+                            doc.slide_count = 0
+                            doc.processing_status = "COMPLETED"
+                            doc.processing_error = None
+                            db.commit()
+                            INGESTION_STATUS_REGISTRY[document_id].update({
+                                "progress_percentage": 100, "status": "COMPLETED",
+                                "current_step": f"Skipped: identical to '{twin.title}', already ingested",
+                                "duplicates_filtered": 0,
+                            })
+                            return
+            except Exception as hash_err:
+                logger.warning("deck fingerprint check failed (continuing normally): %s", safe_error(hash_err))
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
 
             # Step 1 & 2: Extracting and Processing Slides
             INGESTION_STATUS_REGISTRY[document_id].update({

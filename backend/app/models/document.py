@@ -38,6 +38,9 @@ class Document(Base):
     # own memory, same cross-process visibility gap as cancel_requested above. Unused (stays
     # null) for in_process/upload_queue modes, which already have it live via the registry.
     progress_detail = Column(JSON, nullable=True)
+    # SHA-256 of the uploaded deck file, recorded at the start of ingestion so an identical re-upload can be
+    # recognised (see IDENTICAL_REUPLOAD_ACTION in pipeline.py). Null for decks ingested before this existed.
+    file_sha256 = Column(String(64), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

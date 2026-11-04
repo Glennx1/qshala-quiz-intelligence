@@ -392,6 +392,7 @@ def ensure_schema_columns():
                     ("sharepoint_file_id", "VARCHAR(255)"),
                     ("cancel_requested", "BOOLEAN DEFAULT FALSE"),
                     ("progress_detail", "JSON"),
+                    ("file_sha256", "VARCHAR(64)"),
                 ]
                 for col_name, col_type in new_doc_cols:
                     try:
