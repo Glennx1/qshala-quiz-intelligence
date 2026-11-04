@@ -118,6 +118,19 @@ def _ingest_with_fake_r2(monkeypatch, tmp_path, prefer_local=True):
     return doc_id, llm, fetched, r2
 
 
+@pytest.fixture(autouse=True)
+def _remove_mirrored_media():
+    """The parser also mirrors media under frontend/public/static/slides/<doc>/; don't leave test pictures there."""
+    import shutil
+    mirror = Path(__file__).resolve().parents[2] / "frontend" / "public" / "static" / "slides"
+    before = {p.name for p in mirror.iterdir()} if mirror.exists() else set()
+    yield
+    if mirror.exists():
+        for p in mirror.iterdir():
+            if p.name not in before:
+                shutil.rmtree(p, ignore_errors=True)
+
+
 def test_vision_uses_local_copy_and_does_not_download(monkeypatch, tmp_path):
     doc_id, llm, fetched, r2 = _ingest_with_fake_r2(monkeypatch, tmp_path, prefer_local=True)
     assert r2.uploaded, "the picture should still be uploaded to R2"
