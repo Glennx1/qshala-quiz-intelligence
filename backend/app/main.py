@@ -195,8 +195,18 @@ class MultiDirStaticFiles(StaticFiles):
             return full_path, stat_result
         for fb in self.fallback_dirs:
             fb_path = fb / path
-            if fb_path.exists() and fb_path.is_file():
-                return str(fb_path.resolve()), fb_path.stat()
+            # Containment check: Starlette rejects ".." for the primary directory, but this fallback
+            # used to join the raw path itself, so "/static/%2e%2e/<file>" could read files outside
+            # the fallback folder. Resolve first and require the result to stay inside it.
+            try:
+                resolved = fb_path.resolve()
+                fb_root = fb.resolve()
+            except (OSError, RuntimeError):
+                continue
+            if not (resolved == fb_root or fb_root in resolved.parents):
+                continue
+            if resolved.exists() and resolved.is_file():
+                return str(resolved), resolved.stat()
         return full_path, stat_result
 
 # Mount static file directory for extracted slide assets with fallback
