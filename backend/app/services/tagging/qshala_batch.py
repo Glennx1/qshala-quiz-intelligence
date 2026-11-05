@@ -159,7 +159,7 @@ def _write_item(db: Session, q: Dict[str, Any], llm_out: Dict[str, Any], model: 
         # A chunk's token usage is split evenly across the questions it returned, so per-row figures are
         # an average share; summed over a chunk they equal what Gemini billed for that call.
         tokens_in=(usage or {}).get("in"), tokens_out=(usage or {}).get("out"),
-        thinking_tokens=(usage or {}).get("think"),
+        thinking_tokens=(usage or {}).get("think"), cached_tokens=(usage or {}).get("cached"),
         verification_notes=f"auto-routed (batch): {reason}",
     )
     db.add(row)
@@ -235,7 +235,7 @@ async def tag_questions_batched(db: Session, questions: List[Question], *, provi
     schema, system = _batch_schema(), _system_prompt()
     sem = asyncio.Semaphore(CHUNK_CONCURRENCY)
     stats = {"confirmed": 0, "draft": 0, "chunks": len(chunks), "failed_chunks": 0,
-             "tokens_in": 0, "tokens_out": 0, "tokens_think": 0, "calls": 0}
+             "tokens_in": 0, "tokens_out": 0, "tokens_think": 0, "tokens_cached": 0, "calls": 0}
 
     async def run_chunk(chunk: List[Dict[str, Any]]) -> Dict[int, Any]:
         """Tags one chunk. Returns {n: (result, latency_ms, usage_share)}. If the model returns fewer
@@ -266,9 +266,11 @@ async def tag_questions_batched(db: Session, questions: List[Question], *, provi
                     stats["tokens_in"] += int(usage.get("in", 0) or 0)
                     stats["tokens_out"] += int(usage.get("out", 0) or 0)
                     stats["tokens_think"] += int(usage.get("think", 0) or 0)
+                    stats["tokens_cached"] += int(usage.get("cached", 0) or 0)
                     k = max(1, len(returned))
                     share = {"in": int(usage.get("in", 0) or 0) // k, "out": int(usage.get("out", 0) or 0) // k,
-                             "think": int(usage.get("think", 0) or 0) // k}
+                             "think": int(usage.get("think", 0) or 0) // k,
+                             "cached": int(usage.get("cached", 0) or 0) // k}
                     for n, r in returned.items():
                         got[n] = (r, latency, share)
                     pending = [it for it in pending if it["n"] not in got]

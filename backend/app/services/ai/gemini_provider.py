@@ -75,11 +75,12 @@ _USAGE_LOCK = threading.Lock()
 
 def record_usage(label: str, usage: Dict[str, int]) -> None:
     with _USAGE_LOCK:
-        t = _USAGE_TOTALS.setdefault(label, {"calls": 0, "in": 0, "out": 0, "think": 0})
+        t = _USAGE_TOTALS.setdefault(label, {"calls": 0, "in": 0, "out": 0, "think": 0, "cached": 0})
         t["calls"] += 1
         t["in"] += int(usage.get("in", 0) or 0)
         t["out"] += int(usage.get("out", 0) or 0)
         t["think"] += int(usage.get("think", 0) or 0)
+        t["cached"] = t.get("cached", 0) + int(usage.get("cached", 0) or 0)
 
 
 def usage_snapshot(reset: bool = False) -> Dict[str, Dict[str, int]]:

@@ -114,6 +114,7 @@ class QshalaTag(Base):
     tokens_in = Column(Integer, nullable=True)
     tokens_out = Column(Integer, nullable=True)
     thinking_tokens = Column(Integer, nullable=True)
+    cached_tokens = Column(Integer, nullable=True)
     latency_ms = Column(Integer, nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=_now, index=True)

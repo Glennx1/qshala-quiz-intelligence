@@ -480,6 +480,8 @@ def deck_tag_summary(document_id: str, db: Session = Depends(get_db)):
     untagged_count = 0
     tokens_in = 0
     tokens_out = 0
+    tokens_think = 0
+    tokens_cached = 0
     latency_ms = 0
 
     for qid in q_ids:
@@ -495,11 +497,14 @@ def deck_tag_summary(document_id: str, db: Session = Depends(get_db)):
         for t in tlist:
             tokens_in += t.tokens_in or 0
             tokens_out += t.tokens_out or 0
+            tokens_think += t.thinking_tokens or 0
+            tokens_cached += t.cached_tokens or 0
             latency_ms += t.latency_ms or 0
 
-    # Pricing for Gemini 3.5 Flash-Lite: $0.075 / 1M in, $0.30 / 1M out, $1 = ₹87
-    cost_usd = (tokens_in / 1_000_000 * 0.075) + (tokens_out / 1_000_000 * 0.30)
-    cost_inr = round(cost_usd * 87.0, 2)
+    # Thinking tokens bill as output; cached prompt tokens at a discount (prices/ratio are env-configurable).
+    from backend.app.services.ai.usage_cost import estimate_cost_usd, USD_TO_INR
+    cost_usd = estimate_cost_usd(tokens_in, tokens_out, tokens_think, tokens_cached)
+    cost_inr = round(cost_usd * USD_TO_INR, 2)
 
     return {
         "document_id": document_id,
@@ -509,6 +514,8 @@ def deck_tag_summary(document_id: str, db: Session = Depends(get_db)):
         "untagged": untagged_count,
         "total_tokens_in": tokens_in,
         "total_tokens_out": tokens_out,
+        "total_thinking_tokens": tokens_think,
+        "total_cached_tokens": tokens_cached,
         "total_latency_ms": latency_ms,
         "estimated_cost_inr": cost_inr
     }

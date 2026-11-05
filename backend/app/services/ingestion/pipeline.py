@@ -499,8 +499,15 @@ class IngestionPipeline:
                 progress.event(INGESTION_STATUS_REGISTRY[document_id],
                                f"{_vision_reused['n']} repeated pictures reused their earlier description (skipped the AI call)")
             _vu = {k: usage_snapshot().get("vision", {}).get(k, 0) - _usage_before.get("vision", {}).get(k, 0)
-                   for k in ("calls", "in", "out", "think")}
+                   for k in ("calls", "in", "out", "think", "cached")}
             if _vu["calls"]:
+                try:
+                    from backend.app.services.ai.usage_cost import save_usage
+                    with short_session() as _udb:
+                        save_usage(_udb, document_id, "vision", getattr(self.llm_provider, "model", None), _vu)
+                        _udb.commit()
+                except Exception as _ue:
+                    logger.warning("vision usage row not saved: %s", type(_ue).__name__)
                 logger.info("vision usage for %s: %s", document_id, _vu)
                 progress.event(INGESTION_STATUS_REGISTRY[document_id],
                                f"Image AI usage: {_vu['calls']} calls, {_vu['in']:,} input / {_vu['out']:,} output / "
@@ -772,6 +779,11 @@ class IngestionPipeline:
                         actor="deck_upload",
                     )
                     if tag_stats.get("calls"):
+                        from backend.app.services.ai.usage_cost import save_usage
+                        save_usage(db, document_id, "tagging", self.qshala_tagger.model,
+                                   {"calls": tag_stats["calls"], "in": tag_stats["tokens_in"],
+                                    "out": tag_stats["tokens_out"], "think": tag_stats.get("tokens_think", 0),
+                                    "cached": tag_stats.get("tokens_cached", 0)})
                         progress.event(INGESTION_STATUS_REGISTRY[document_id],
                                        f"Tagging AI usage: {tag_stats['calls']} calls, {tag_stats['tokens_in']:,} input / "
                                        f"{tag_stats['tokens_out']:,} output / {tag_stats.get('tokens_think', 0):,} thinking tokens")

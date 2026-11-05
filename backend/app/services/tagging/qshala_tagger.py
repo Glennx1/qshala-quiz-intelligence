@@ -479,7 +479,7 @@ class QshalaTagger:
             status=status,
             tokens_in=usage.get("in"),
             tokens_out=usage.get("out"),
-            thinking_tokens=usage.get("think"),
+            thinking_tokens=usage.get("think"), cached_tokens=usage.get("cached"),
             latency_ms=latency_ms,
             verification_notes=f"auto-routed: {reason}",
         )
@@ -527,6 +527,7 @@ class QshalaTagger:
             fit=llm_out.get("fit"), search_summary=llm_out.get("search_summary"),
             confidence=confidence, status=status,
             tokens_in=usage.get("in"), tokens_out=usage.get("out"), thinking_tokens=usage.get("think"),
+            cached_tokens=usage.get("cached"),
             latency_ms=latency_ms, verification_notes=f"auto-routed: {reason}",
         )
         db.add(row)

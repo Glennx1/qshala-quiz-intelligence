@@ -418,6 +418,7 @@ def ensure_schema_columns():
                 ],
                 "qshala_tags": [
                     ("relevant_year", "INTEGER"),
+                    ("cached_tokens", "INTEGER"),
                 ],
             }
             for _tbl, _cols in _v6_cols.items():
