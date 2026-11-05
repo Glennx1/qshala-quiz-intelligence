@@ -755,8 +755,9 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
     narrative_arc: Optional[str] = None
     picked: List[Dict[str, Any]] = []
 
-    # AI Curator: If candidate pool is larger than requested and Curator is enabled
-    if len(cands) > brief.count and os.getenv("ENABLE_AI_CURATOR", "true").lower() in ("1", "true", "yes"):
+    cur_res = None
+    # AI Curator: Evaluate candidates for genuine relevance and curate narrative flow
+    if cands and os.getenv("ENABLE_AI_CURATOR", "true").lower() in ("1", "true", "yes"):
         try:
             from backend.app.services.prompt_quiz.curator_llm import curate_quiz_with_gemini
             cur_res = curate_quiz_with_gemini(
@@ -766,16 +767,14 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
                 current_questions=current_questions,
                 previous_brief=previous_brief,
             )
-            if cur_res and cur_res.get("selected_ids"):
+            if cur_res is not None and "selected_ids" in cur_res:
                 cands_by_id = {c["id"]: c for c in cands if c.get("id")}
-                cur_picked = [cands_by_id[qid] for qid in cur_res["selected_ids"] if qid in cands_by_id]
-                if len(cur_picked) == brief.count:
-                    picked = cur_picked
-                    narrative_arc = cur_res.get("narrative_arc")
+                picked = [cands_by_id[qid] for qid in cur_res["selected_ids"] if qid in cands_by_id]
+                narrative_arc = cur_res.get("narrative_arc")
         except Exception as e:
             logger.warning(f"AI Curator invocation failed ({e}), falling back to deterministic editor")
 
-    if not picked:
+    if not picked and (cur_res is None or "selected_ids" not in cur_res):
         picked = editor(cands, brief)
 
     # 6. Padding if requested and short

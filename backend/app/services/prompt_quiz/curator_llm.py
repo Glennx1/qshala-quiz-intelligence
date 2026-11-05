@@ -28,7 +28,7 @@ CURATION_SCHEMA: Dict[str, Any] = {
         "selected_ids": {
             "type": "ARRAY",
             "items": {"type": "STRING"},
-            "description": "The exact IDs of chosen questions, ordered by presentation sequence (e.g. Icebreaker -> Exploration -> Climax)."
+            "description": "The exact IDs of chosen questions that genuinely match the prompt, up to the target count (can be fewer or empty if candidates do not genuinely match), ordered by narrative sequence."
         },
         "narrative_arc": {
             "type": "STRING",
@@ -42,9 +42,12 @@ _SYSTEM = (
     "You are an elite Quiz Master and Head Curator for QShala, India's premier curiosity and quiz platform.\n"
     "Your job is to select the BEST questions from a provided candidate pool to fulfill the user's prompt.\n\n"
     "CRITICAL RULES:\n"
-    "1. YOU MUST SELECT IDs EXCLUSIVELY FROM THE PROVIDED CANDIDATE POOL. Never invent or hallucinate an ID.\n"
-    "2. Select EXACTLY the requested number of questions.\n"
-    "3. High-Order Human Curation:\n"
+    "1. ZERO HALLUCINATIONS: You MUST select IDs EXCLUSIVELY from the provided candidate pool. Never invent or hallucinate an ID.\n"
+    "2. TOPIC RELEVANCE & HONESTY (ABSOLUTE PRIORITY):\n"
+    "   - Only select questions that GENUINELY match the user's specific requested topic and intent.\n"
+    "   - If the user asks for a specific topic (e.g. 'quantum computing', 'cricket world cup', 'taylor swift') and the candidate pool only contains broad category neighbours (e.g. floppy disks, general software, football) that DO NOT answer the user's specific topic, DO NOT FORCE-FIT IRRELEVANT QUESTIONS.\n"
+    "   - If fewer than the requested count genuinely match (or 0 match), return ONLY the genuine matches in selected_ids (or [] if none match). Never pad with irrelevant trivia.\n"
+    "3. HIGH-ORDER HUMAN CURATION:\n"
     "   - Look beyond surface keywords. Match the user's requested tone, audience psychology, and subtle themes.\n"
     "   - Avoid semantic redundancy (e.g. if two questions cover nearly the same story, choose the punchier one).\n"
     "   - Build a narrative arc: start with an engaging icebreaker/hook, explore the theme with increasing depth, and finish with a memorable climax or tie-breaker.\n"
@@ -116,9 +119,7 @@ def curate_quiz_with_gemini(
     if not candidates or target_count <= 0:
         return None
 
-    # If pool size is already <= target count, no curation selection needed
-    if len(candidates) <= target_count:
-        return None
+# Evaluate candidates against the prompt for genuine topic relevance
 
     try:
         from backend.app.config import settings
@@ -206,8 +207,16 @@ def curate_quiz_with_gemini(
                 seen.add(qid)
                 deduped_ids.append(qid)
 
-        # If Gemini returned fewer valid IDs than target, pad with highest scoring remaining candidates
-        if len(deduped_ids) < target_count:
+        # If Gemini explicitly returned [] (0 genuine matches found), respect that:
+        if len(selected_ids) == 0:
+            return {
+                "selected_ids": [],
+                "narrative_arc": parsed.get("narrative_arc") or "No questions in the candidate pool match the requested topic."
+            }
+
+        # If Gemini attempted to select questions but some were hallucinated,
+        # backfill only if Gemini originally selected at least target_count
+        if len(selected_ids) >= target_count and len(deduped_ids) < target_count:
             for c in candidates:
                 cid = c.get("id")
                 if cid and cid not in seen:
@@ -216,11 +225,8 @@ def curate_quiz_with_gemini(
                 if len(deduped_ids) == target_count:
                     break
 
-        # If too many were returned, trim to target_count
-        final_ids = deduped_ids[:target_count]
-
         return {
-            "selected_ids": final_ids,
+            "selected_ids": deduped_ids[:target_count],
             "narrative_arc": parsed.get("narrative_arc") or "Curated for narrative flow and topical alignment."
         }
     except Exception as e:

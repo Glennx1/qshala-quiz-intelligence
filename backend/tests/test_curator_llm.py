@@ -158,3 +158,66 @@ def test_build_draft_invokes_curator_and_attaches_narrative_arc():
     finally:
         engine.invalidate_bank_cache()
         db.close()
+
+
+def test_curator_honest_rejection_delivers_zero_and_preserves_short_fulfillment():
+    """
+    Honest Fulfillment Invariant:
+    When candidates in the pool do not match the requested topic (e.g. quantum computing),
+    the AI Curator selects [] (0 questions), and build_draft respects that, delivering 0 questions
+    with short=True and add_adjacent suggestions.
+    """
+    db_engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(bind=db_engine)
+    TestingSession = sessionmaker(bind=db_engine)
+    db = TestingSession()
+
+    try:
+        doc = Document(id="doc_t2", filename="tech.pptx", title="Tech Trivia", file_type="pptx", storage_path="/tmp")
+        db.add(doc)
+        for i in range(1, 6):
+            q = Question(
+                id=f"q_tech_{i}",
+                document_id="doc_t2",
+                question_text=f"Question {i} about floppy disks and legacy hardware",
+                answer=f"Legacy Answer {i}",
+                topic="Technology",
+                subtopic="Computing and Software",
+                difficulty="Medium",
+                difficulty_score=0.50,
+            )
+            db.add(q)
+        q_adj = Question(
+            id="q_hist_1",
+            document_id="doc_t2",
+            question_text="Who was the first emperor of the Maurya dynasty?",
+            answer="Chandragupta Maurya",
+            topic="History",
+            subtopic="Ancient India",
+            difficulty="Easy",
+            difficulty_score=0.30,
+        )
+        db.add(q_adj)
+        db.commit()
+
+        honest_rejection = {
+            "selected_ids": [],
+            "narrative_arc": "No questions in the candidate pool match quantum computing breakthroughs."
+        }
+
+        engine.invalidate_bank_cache()
+        with patch("backend.app.services.prompt_quiz.curator_llm.curate_quiz_with_gemini", return_value=honest_rejection):
+            draft = engine.build_draft(
+                db=db,
+                prompt="5 questions on quantum computing breakthroughs in 2026",
+                count=5,
+            )
+
+        assert len(draft["questions"]) == 0
+        assert draft["fulfillment"]["short"] is True
+        assert draft["fulfillment"]["delivered"] == 0
+        assert draft["narrative_arc"] == "No questions in the candidate pool match quantum computing breakthroughs."
+        assert any(s.get("action") == "add_adjacent" for s in draft["fulfillment"]["suggestions"])
+    finally:
+        engine.invalidate_bank_cache()
+        db.close()
