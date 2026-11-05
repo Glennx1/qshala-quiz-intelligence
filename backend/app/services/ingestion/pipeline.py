@@ -157,6 +157,32 @@ def local_media_for_url(url: str, document_id: str) -> Optional["Path"]:
     return candidate if candidate.is_file() else None
 
 
+# A retried run (Cloud Run task retry, reaper requeue) starts on a document that may already hold the slides and
+# questions its failed predecessor committed; without clearing them the retry would add a second copy of everything.
+RESET_PARTIAL_ON_RETRY: bool = os.getenv("RESET_PARTIAL_ON_RETRY", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def clear_partial_ingestion(db: Session, doc: Document) -> int:
+    """Delete the slides and questions left on `doc` by an earlier, unfinished attempt. Returns how many questions went.
+    A COMPLETED document is never touched. Commits."""
+    if doc.processing_status == "COMPLETED":
+        return 0
+    from backend.app.services.question_meta_service import remove_repeats_for_document
+    n_q = db.query(Question).filter(Question.document_id == doc.id).count()
+    n_s = db.query(Slide).filter(Slide.document_id == doc.id).count()
+    if not n_q and not n_s:
+        return 0
+    remove_repeats_for_document(db, doc.id)          # other questions stop listing this deck as a repeat
+    for q in list(doc.questions):
+        db.delete(q)
+    for s in list(doc.slides):
+        db.delete(s)
+    doc.question_count = 0
+    doc.slide_count = 0
+    db.commit()
+    return n_q
+
+
 def exact_duplicate_indices(db: Session, questions: list) -> set:
     """Indices of questions the deduplicator's tier-1 check would drop as exact repeats: the content hash
     already exists in the vault, or the same hash appeared earlier in this batch. Uses the same hash and the
@@ -226,6 +252,17 @@ class IngestionPipeline:
                 INGESTION_STATUS_REGISTRY[document_id]["status"] = "FAILED"
                 INGESTION_STATUS_REGISTRY[document_id]["error"] = "Document not found"
                 return
+
+            if RESET_PARTIAL_ON_RETRY:
+                try:
+                    _cleared = clear_partial_ingestion(db, doc)
+                    if _cleared:
+                        progress.event(INGESTION_STATUS_REGISTRY[document_id],
+                                       f"Cleared {_cleared} questions left by an earlier unfinished attempt")
+                except Exception as _clr_err:
+                    db.rollback()
+                    logger.warning("could not clear a previous attempt's rows: %s", safe_error(_clr_err))
+                    doc = db.query(Document).filter(Document.id == document_id).first()
 
             doc.processing_status = "PROCESSING"
             db.commit()
