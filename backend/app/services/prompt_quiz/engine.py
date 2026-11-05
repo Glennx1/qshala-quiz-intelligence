@@ -15,11 +15,14 @@ Retrieval, ranking and selection stay 100% deterministic Python — the LLM's ro
 strictly prompt -> Brief, so there is zero hallucination risk in the questions served.
 """
 from __future__ import annotations
+import os
 import re
+import time
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional, Sequence, Set
 
-from sqlalchemy.orm import Session
+from sqlalchemy import case, func
+from sqlalchemy.orm import Session, defer
 
 from backend.app.models.question import Question
 try:  # tag tables may be absent or renamed on some branches; engine degrades gracefully
@@ -366,18 +369,57 @@ def interpret(prompt: str, count: Optional[int] = None, options: Optional[Dict[s
 
 
 # ---------- Librarian ----------
+# The bank is rebuilt from the database on every request (2-3 times per request in places). A short cache lets those
+# share one load. PROMPT_QUIZ_BANK_TTL_S=0 turns it off; questions added or edited show up within that many seconds.
+_BANK_CACHE: Dict[str, Any] = {"at": 0.0, "key": None, "bank": None}
+
+
+def _bank_ttl() -> float:
+    try:
+        return float(os.getenv("PROMPT_QUIZ_BANK_TTL_S", "10"))
+    except ValueError:
+        return 10.0
+
+
+def invalidate_bank_cache() -> None:
+    _BANK_CACHE.update({"at": 0.0, "key": None, "bank": None})
+
+
 def _load_bank(db: Session) -> List[Dict[str, Any]]:
-    qs = db.query(Question).filter((Question.duplicate_status != "CONFIRMED_DUPLICATE") | (Question.duplicate_status.is_(None))).all()
+    ttl = _bank_ttl()
+    key = str(db.get_bind().url) if ttl > 0 else None
+    now = time.monotonic()
+    if ttl > 0 and _BANK_CACHE["bank"] is not None and _BANK_CACHE["key"] == key and now - _BANK_CACHE["at"] < ttl:
+        return [dict(r) for r in _BANK_CACHE["bank"]]      # callers may add fields (e.g. score) to what they get
+    bank = _load_bank_uncached(db)
+    if ttl > 0:
+        _BANK_CACHE.update({"at": now, "key": key, "bank": bank})
+        return [dict(r) for r in bank]
+    return bank
+
+
+def _latest_tags(db: Session) -> Dict[str, Any]:
+    """Per question, the tag the bank uses: the newest confirmed one, else the newest draft. Chosen in SQL so only
+    one row per question is loaded (it used to read every tag row, superseded ones included, and sort in Python)."""
+    rank = func.row_number().over(
+        partition_by=QshalaTag.question_id,
+        order_by=(case((QshalaTag.status == "confirmed", 1), else_=0).desc(),
+                  QshalaTag.created_at.desc(), QshalaTag.id.desc())).label("rn")
+    ranked = (db.query(QshalaTag.id.label("tid"), rank)
+              .filter(QshalaTag.status.in_(["confirmed", "draft"])).subquery())
+    rows = (db.query(QshalaTag).join(ranked, QshalaTag.id == ranked.c.tid).filter(ranked.c.rn == 1).all())
+    return {r.question_id: r for r in rows}
+
+
+def _load_bank_uncached(db: Session) -> List[Dict[str, Any]]:
+    # The 768-number embedding vector is never read here; leaving it out roughly halves what is fetched per row.
+    qs = (db.query(Question).options(defer(Question.embedding))
+          .filter((Question.duplicate_status != "CONFIRMED_DUPLICATE") | (Question.duplicate_status.is_(None))).all())
     tags: Dict[str, Any] = {}
     try:
         if QshalaTag is None:
             raise RuntimeError("no tag table")
-        rows = (db.query(QshalaTag).filter(QshalaTag.status.in_(["confirmed", "draft"]))
-                .order_by(QshalaTag.created_at.asc()).all())
-        for r in rows:  # newest wins; confirmed beats draft
-            old = tags.get(r.question_id)
-            if old is None or r.status == "confirmed" or old.status != "confirmed":
-                tags[r.question_id] = r
+        tags = _latest_tags(db)
     except Exception:
         tags = {}
 
@@ -520,14 +562,21 @@ def _fp(text: str) -> frozenset:
 
 
 def guardian(hits: List[Dict[str, Any]], brief: Brief, exclude_ids: Optional[Set[str]] = None) -> List[Dict[str, Any]]:
+    # Same rule as before (drop a hit whose first-14-token set overlaps an earlier kept hit by more than 70%), but
+    # only earlier hits that share a token are compared, via a token -> kept-hits index, instead of every pair.
     out, seen = [], []
+    by_token: Dict[str, List[int]] = {}
     for h in hits:
         if exclude_ids and h["id"] in exclude_ids:
             continue
         fp = _fp(h["question_text"])
-        if any(fp and len(fp & s) / max(len(fp | s), 1) > 0.7 for s in seen):
-            continue
+        if fp:
+            candidates = {i for tok in fp for i in by_token.get(tok, ())}
+            if any(len(fp & seen[i]) / max(len(fp | seen[i]), 1) > 0.7 for i in candidates):
+                continue
         seen.append(fp)
+        for tok in fp:
+            by_token.setdefault(tok, []).append(len(seen) - 1)
         out.append(h)
     return out
 
