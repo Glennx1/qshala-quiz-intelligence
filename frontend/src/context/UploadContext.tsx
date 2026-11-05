@@ -103,15 +103,19 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const [, setTick] = useState(0);
 
   // Send batch heartbeat every 20s while activeBatchId is active to prevent abandoned status
+  // It stops once every item is finished (the batch id stays set for the summary screen, but nothing is left to keep alive).
+  const batchHasWork = items.some(
+    (it) => it.phase === 'UPLOADING' || it.phase === 'WAITING' || it.phase === 'PROCESSING' || it.phase === 'QUEUED'
+  );
   useEffect(() => {
-    if (!activeBatchId) return;
+    if (!activeBatchId || !batchHasWork) return;
     const send = () => {
       api.sendBatchHeartbeat(activeBatchId).catch(() => {});
     };
     send();
     const interval = setInterval(send, 20000);
     return () => clearInterval(interval);
-  }, [activeBatchId]);
+  }, [activeBatchId, batchHasWork]);
 
   // Formatting helpers
   const fmtMB = useCallback((bytes: number) => (bytes / (1024 * 1024)).toFixed(1), []);
@@ -253,6 +257,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         );
       if (isAllTerminal) return;
 
+      // A hidden tab does not need live progress; check again later instead of sending requests nobody sees.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        if (isMounted) timerId = setTimeout(pollBatch, 8000);
+        return;
+      }
+
       try {
         const batchStatus = await api.getUploadBatch(activeBatchId);
         if (!isMounted) return;
@@ -340,9 +350,21 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!activeDocId) return;
 
-    const interval = setInterval(async () => {
+    // A chained setTimeout (not setInterval) so a slow response can never overlap the next request. The wait is
+    // 1.2 s normally, 3 s after an error, and a hidden tab skips the request altogether.
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const tick = async () => {
+      if (cancelled) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        timer = setTimeout(tick, 3000);
+        return;
+      }
+      let nextDelay = 1200;
       try {
         const status = await api.getIngestionStatus(activeDocId);
+        if (cancelled) return;
         setPipelineProgress({
           step: status.current_step,
           percentage: status.progress_percentage,
@@ -381,13 +403,21 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         if (status.status === 'COMPLETED' || status.status === 'FAILED' || status.status === 'CANCELLED') {
           setActiveDocId(null);
           setVersion((v) => v + 1);
+          return;
         }
       } catch (e) {
         console.error('Document ingestion polling error:', e);
+        nextDelay = 3000;
       }
-    }, 1200);
+      if (!cancelled) timer = setTimeout(tick, nextDelay);
+    };
 
-    return () => clearInterval(interval);
+    timer = setTimeout(tick, 1200);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [activeDocId]);
 
   // Serial client uploader: upload one file at a time from items queue
