@@ -41,6 +41,9 @@ def split_pools(pool: List[Candidate], *, l1s: Sequence[str], l2s: Sequence[str]
     l2s = list(l2s or [])
     if l2s and not any(_l2_names(c) & {x.lower() for x in l2s} for c in pool):
         l2s = []
+    l1s = list(l1s or [])
+    if l1s and not any((c.get("topic_l1") or "").lower() in {x.lower() for x in l1s} for c in pool):
+        l1s = []
     on_all = [c for c in pool if is_on_topic(c, l1s, l2s)]
     on_ok = [c for c in on_all if passes_hard(c, filters, format_filter)]
     on_ids = {id(c) for c in on_all}

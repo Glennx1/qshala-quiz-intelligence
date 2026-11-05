@@ -148,3 +148,11 @@ def test_off_difficulty_is_reported():
     f = build_fulfillment(requested=2, picked=picked, padded=0, adjacent_available=0,
                           blocked={}, hard_bias="easy", padding_allowed=False)
     assert f["off_difficulty"] == 1 and "1 sit outside" in f["note"]
+
+
+def test_split_pools_drops_nonexistent_l1s():
+    """If the LLM provided an L1 topic (e.g. 'History') that matches nothing in the pool,
+    split_pools drops l1s so cross-category search matches are not wiped out."""
+    pool = [q(1, l1="Business", l2="Business Leaders"), q(2, l1="Politics", l2="Leaders")]
+    on_ok, _, _, _ = split_pools(pool, l1s=["History"], l2s=[], filters={}, format_filter=None)
+    assert len(on_ok) == 2

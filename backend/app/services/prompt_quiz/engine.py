@@ -670,17 +670,17 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
 
     # Geographic/locality queries: don't restrict to a single L1 topic or L2 subtopics.
     # "5 questions on Karnataka" wants ALL Karnataka content, not just Geography or Festivals.
-    is_geo = bool(brief.locality or any(g in (brief.prompt or "").lower() for g in ["karnataka", "bengaluru", "bangalore", "mumbai", "delhi", "chennai", "pune", "hyderabad", "kolkata", "india", "bharat"]))
-    if is_geo:
-        has_subject = any(t in (brief.prompt or "").lower() for t in ("brand", "finance", "bank", "food", "start", "tech", "sport", "cricket", "market", "music", "movie"))
-        if not has_subject:
-            brief.topics_l1 = []
-            brief.subtopics_l2 = []
-            if brief.locality:
-                brief.query = brief.locality
-            elif any(g in (brief.prompt or "").lower() for g in ["india", "bharat"]):
-                brief.query = "india"
-            brief.search_terms = []
+    geo_names = {"karnataka", "bengaluru", "bangalore", "mumbai", "delhi", "chennai", "pune", "hyderabad", "kolkata", "india", "bharat"}
+    q_clean = (brief.query or "").lower().strip()
+    is_pure_geo = (q_clean in geo_names or q_clean in ("", "general knowledge", "trivia", "quiz")) and any(g in (brief.prompt or "").lower() for g in geo_names)
+    if is_pure_geo:
+        brief.topics_l1 = []
+        brief.subtopics_l2 = []
+        if brief.locality:
+            brief.query = brief.locality
+        elif any(g in (brief.prompt or "").lower() for g in ["india", "bharat"]):
+            brief.query = "india"
+        brief.search_terms = []
 
     # Broad / vague prompts: "10 questions", "give me 5 questions", "quiz for tonight", "surprise me with 5 questions"
     # When no topic, locality, or subtopic was requested, do a broad randomized search so every run gives a fresh, varied quiz.
