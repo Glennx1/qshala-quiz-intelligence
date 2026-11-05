@@ -50,6 +50,37 @@ TAG_CONCURRENCY: int = int(os.getenv("TAG_CONCURRENCY", "16"))   # parallel Gemi
 # The parser writes every extracted picture to disk (SLIDES_DIR/<doc>/media/) before uploading it to R2, so the
 # vision stage can read that local file instead of downloading the same bytes back over HTTP. Set 0 to always fetch.
 VISION_PREFER_LOCAL: bool = os.getenv("VISION_PREFER_LOCAL", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _env_tristate(name: str) -> Optional[bool]:
+    v = os.getenv(name, "auto").strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off"):
+        return False
+    return None
+
+
+def running_in_job_worker() -> bool:
+    """True inside a Cloud Run Job container (Cloud Run sets CLOUD_RUN_JOB there). Its disk is RAM, so disk is memory."""
+    return bool(os.environ.get("CLOUD_RUN_JOB"))
+
+
+def keep_local_media(r2_configured: bool) -> bool:
+    """Whether the parser keeps its extracted pictures on local disk (SLIDES_DIR/<doc>/media/) as well as uploading
+    them. KEEP_LOCAL_MEDIA=1/0 forces it. auto (default): keep, except in a Job worker that has R2, where a second
+    copy of every picture would sit in RAM; the parser then stages one file at a time and vision downloads from R2."""
+    forced = _env_tristate("KEEP_LOCAL_MEDIA")
+    if forced is not None:
+        return forced
+    return not (running_in_job_worker() and r2_configured)
+
+
+def delete_raw_deck_after_parse() -> bool:
+    """Whether the local copy of the uploaded deck is deleted once parsing is done (the copy in R2 stays, so a retried
+    task downloads it again). DELETE_RAW_DECK_AFTER_PARSE=1/0 forces it; auto (default): only in a Job worker."""
+    forced = _env_tristate("DELETE_RAW_DECK_AFTER_PARSE")
+    return running_in_job_worker() if forced is None else forced
 # What to do when an uploaded deck file is byte-identical (SHA-256) to a deck already ingested to completion.
 #   process (default): ingest it as usual (its questions become "Repeated" entries on the originals).
 #   skip: mark it completed straight away with no questions and no AI/R2 work. NOTE: skipping means those
@@ -237,7 +268,12 @@ class IngestionPipeline:
             })
 
             if file_ext in [".pptx", ".ppt"]:
-                parser = PPTXParser(doc.storage_path, doc.id)
+                try:
+                    from backend.app.services.storage.r2_storage import get_media_storage
+                    _r2_on = get_media_storage() is not None
+                except Exception:
+                    _r2_on = False
+                parser = PPTXParser(doc.storage_path, doc.id, write_to_disk=keep_local_media(_r2_on))
                 parser.should_cancel = lambda: doc_cancel_requested(document_id)
                 parser.on_progress = lambda detail, pct=None: progress.update(
                     INGESTION_STATUS_REGISTRY[document_id], detail=detail, pct=pct)
@@ -254,6 +290,17 @@ class IngestionPipeline:
                 raw_slides = await asyncio.to_thread(parser.parse)
             else:
                 raise ValueError(f"Unsupported file format: {file_ext}")
+
+            if delete_raw_deck_after_parse() and doc.storage_path:
+                # Everything the later stages need is now in raw_slides, the database and R2. Free the deck's disk
+                # (RAM, on Cloud Run) before the memory-hungry vision stage; a retried task downloads it again.
+                try:
+                    os.remove(doc.storage_path)
+                    progress.event(INGESTION_STATUS_REGISTRY[document_id], "Freed the temporary copy of the deck")
+                except FileNotFoundError:
+                    pass
+                except OSError as _rm_err:
+                    logger.warning("could not delete the local deck copy: %s", type(_rm_err).__name__)
 
             raise_if_cancelled(document_id)
             progress.event(INGESTION_STATUS_REGISTRY[document_id], f"Read {len(raw_slides)} slides and saved their pictures")
