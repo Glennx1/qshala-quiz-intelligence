@@ -156,4 +156,5 @@ def test_build_draft_invokes_curator_and_attaches_narrative_arc():
         delivered_ids = [q["id"] for q in draft["questions"]]
         assert delivered_ids == fake_curation["selected_ids"]
     finally:
+        engine.invalidate_bank_cache()
         db.close()

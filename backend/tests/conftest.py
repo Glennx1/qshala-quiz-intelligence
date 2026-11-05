@@ -102,15 +102,22 @@ def setup_test_schema(tmp_path_factory):
                     ("What is cloud computing?", "On-demand delivery of IT resources over the internet"),
                 ]),
             ]
+            topic_map = {
+                "banking": ("Finance", "Banks and Banking"),
+                "finance": ("Finance", "Corporate Finance"),
+                "startups": ("Business", "Startups"),
+                "technology": ("Technology", "Technology"),
+            }
             for kw, sub, top_list, q_tuples in sample_bank:
+                mapped_top, mapped_sub = topic_map.get(kw, ("General Knowledge", sub))
                 for idx, (q_txt, ans) in enumerate(q_tuples, 1):
                     db.add(Question(
                         id=str(uuid.uuid4()),
                         document_id=doc_id,
                         question_text=q_txt,
                         answer=ans,
-                        topic="Business" if kw in ("banking", "finance", "startups") else "Science",
-                        subtopic=sub,
+                        topic=mapped_top,
+                        subtopic=mapped_sub,
                         topics=top_list,
                         tags=[kw, "sample"],
                         difficulty="Hard" if idx > 6 else "Medium",
