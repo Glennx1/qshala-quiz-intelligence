@@ -467,13 +467,12 @@ def ensure_schema_columns():
     except Exception as e:
         logger.debug(f"Schema auto-check notice: {e}")
 
-# In SQLite mode, ensure schema columns are initialized immediately so local workers,
-# test suites, and scripts never fail on missing columns. (PostgreSQL continues via lifespan).
-if not is_postgres:
-    try:
-        ensure_schema_columns()
-    except Exception as e:
-        logger.debug(f"SQLite auto-migration notice: {e}")
+# Ensure schema columns are initialized immediately across all database types
+# (SQLite, PostgreSQL/Neon, Cloud SQL) so local and serverless workers never fail on missing columns.
+try:
+    ensure_schema_columns()
+except Exception as e:
+    logger.warning(f"Database auto-migration notice: {e}")
 
 def get_db():
     db = SessionLocal()

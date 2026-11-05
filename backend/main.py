@@ -82,6 +82,11 @@ async def unhandled_exception_handler(request, exc):
 try:
     from backend.app.main import app as qshala_app, MultiDirStaticFiles
     from backend.app.config import settings
+    from backend.app.database import ensure_schema_columns
+    try:
+        ensure_schema_columns()
+    except Exception as em:
+        print("Schema ensure notice:", em)
 
     for r in qshala_app.routes:
         app.routes.append(r)
