@@ -49,14 +49,35 @@ def ping():
 @app.get("/api/diagnostics")
 @app.get("/diagnostics")
 def diagnostics():
+    db_test = None
+    try:
+        from backend.app.database import SessionLocal
+        from backend.app.models.question import Question
+        db = SessionLocal()
+        q_count = db.query(Question).count()
+        db_test = {"status": "ok", "question_count": q_count}
+        db.close()
+    except Exception as e:
+        import traceback
+        db_test = {"status": "error", "error": str(e), "traceback": traceback.format_exc().splitlines()}
+
     return {
         "init_error": _init_error,
         "traceback": _init_traceback.splitlines() if _init_traceback else None,
+        "db_test": db_test,
         "sys_path": sys.path,
         "cwd": os.getcwd(),
         "files": os.listdir("."),
         "python_version": sys.version
     }
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc):
+    import traceback
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc), "traceback": traceback.format_exc().splitlines()}
+    )
 
 try:
     from backend.app.main import app as qshala_app, MultiDirStaticFiles
