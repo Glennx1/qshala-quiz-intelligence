@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -320,7 +321,7 @@ async def _upload_chunk_direct_to_r2(
             )
         doc_id = str(uuid.uuid4())
         raw_key = f"raw-uploads/{doc_id}{ext}"
-        r2_upload_id = r2.create_multipart_upload(raw_key)
+        r2_upload_id = await asyncio.to_thread(r2.create_multipart_upload, raw_key)
         session_rec = UploadSession(
             upload_id=upload_id,
             doc_id=doc_id,
@@ -355,7 +356,8 @@ async def _upload_chunk_direct_to_r2(
                     f"upload size ({MAX_FILE_SIZE_MB:.0f} MB). Raise MAX_UPLOAD_MB on the backend."),
         )
 
-    etag = r2.upload_part(session_rec.raw_key, session_rec.r2_upload_id, chunk_index + 1, body)
+    # Network call for a 20 MB slice: off the event loop so other requests keep being served meanwhile.
+    etag = await asyncio.to_thread(r2.upload_part, session_rec.raw_key, session_rec.r2_upload_id, chunk_index + 1, body)
     parts_map = dict(session_rec.parts or {})
     parts_map[str(chunk_index + 1)] = etag
     session_rec.parts = parts_map
@@ -383,7 +385,7 @@ async def _upload_chunk_direct_to_r2(
 
     # All parts received -- finish multipart upload
     sorted_parts = [{"PartNumber": int(pn), "ETag": tag} for pn, tag in sorted(parts_map.items(), key=lambda x: int(x[0]))]
-    r2.complete_multipart_upload(session_rec.raw_key, session_rec.r2_upload_id, sorted_parts)
+    await asyncio.to_thread(r2.complete_multipart_upload, session_rec.raw_key, session_rec.r2_upload_id, sorted_parts)
 
     doc_id = session_rec.doc_id
     save_filename = f"{doc_id}{ext}"
@@ -536,12 +538,17 @@ async def upload_document_chunk(
     settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     storage_path = str(settings.UPLOAD_DIR / save_filename)
 
-    file_size = 0
-    with open(storage_path, "wb") as outfile:
-        for part_file in sorted(chunk_dir.glob("chunk_*.part")):
-            with open(part_file, "rb") as infile:
-                shutil.copyfileobj(infile, outfile)
-            file_size += os.path.getsize(part_file)
+    def _stitch() -> int:
+        total = 0
+        with open(storage_path, "wb") as outfile:
+            for part_file in sorted(chunk_dir.glob("chunk_*.part")):
+                with open(part_file, "rb") as infile:
+                    shutil.copyfileobj(infile, outfile)
+                total += os.path.getsize(part_file)
+        return total
+
+    # Joining up to hundreds of MB of slices is blocking disk work: keep it off the event loop.
+    file_size = await asyncio.to_thread(_stitch)
 
     # Enforce the same ceiling as the direct path (chunked bypasses Vercel's limit but
     # must still respect MAX_UPLOAD_MB so a runaway upload can't fill the disk).

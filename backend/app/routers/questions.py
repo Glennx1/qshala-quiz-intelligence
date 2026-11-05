@@ -1,3 +1,4 @@
+import asyncio
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
@@ -381,8 +382,11 @@ async def search_questions(
 
     if query_str:
         # 1. Check if query matches a deck / document title directly
-        doc_matches = db.query(Document).filter(Document.title.ilike(f"%{query_str}%")).all()
-        doc_ids = [d.id for d in doc_matches]
+        # (Database work in this endpoint runs in a worker thread so one slow query cannot stall the whole server.)
+        def _title_matches():
+            return [d.id for d in db.query(Document).filter(Document.title.ilike(f"%{query_str}%")).all()]
+
+        doc_ids = await asyncio.to_thread(_title_matches)
 
         # 2. Perform semantic/hybrid search
         retriever = HybridRetriever(db)
@@ -394,87 +398,93 @@ async def search_questions(
             difficulty=diff_str,
             limit=limit_int
         )
+        def _assemble():
+            output = []
+            seen_q_ids = set()
+
+            # If any document matches the query string by title, prioritize and include its questions
+            if doc_ids:
+                deck_questions = db.query(Question, Document, Slide).\
+                    outerjoin(Document, Question.document_id == Document.id).\
+                    outerjoin(Slide, Question.slide_id == Slide.id).\
+                    filter(Question.document_id.in_(doc_ids)).limit(limit_int).all()
+                for q, doc, slide in deck_questions:
+                    if q.id not in seen_q_ids:
+                        seen_q_ids.add(q.id)
+                        output.append(to_question_response(q, doc, slide))
+
+            for r in results:
+                if r["question"].id not in seen_q_ids:
+                    seen_q_ids.add(r["question"].id)
+                    output.append(to_question_response(r["question"], r["document"], r["slide"]))
+            return _enrich(db, output[:limit_int])
+
+        return await asyncio.to_thread(_assemble)
+
+    def _filtered_search():
+        # Direct query with rich metadata filters
+        q_builder = db.query(Question, Document, Slide).\
+            outerjoin(Document, Question.document_id == Document.id).\
+            outerjoin(Slide, Question.slide_id == Slide.id)
+
+        if dup_status_str:
+            q_builder = q_builder.filter(Question.duplicate_status == dup_status_str)
+        if doc_id_str:
+            q_builder = q_builder.filter(Question.document_id == doc_id_str)
+        if doc_title_str:
+            q_builder = q_builder.filter(Document.title.ilike(f"%{doc_title_str}%"))
+        if topic_str:
+            q_builder = q_builder.filter(
+                or_(
+                    Question.topic.ilike(f"%{topic_str}%"),
+                    Question.subtopic.ilike(f"%{topic_str}%")
+                )
+            )
+        if subtopic_str:
+            q_builder = q_builder.filter(Question.subtopic.ilike(f"%{subtopic_str}%"))
+        if tag_str:
+            clean_tag = tag_str.strip().lstrip("#").strip()
+            q_builder = q_builder.filter(func.cast(Question.tags, String).ilike(f"%{clean_tag}%"))
+        if diff_str:
+            q_builder = q_builder.filter(Question.difficulty.ilike(diff_str))
+        if grade_min_val is not None:
+            q_builder = q_builder.filter(Question.grade_min >= grade_min_val)
+        if grade_max_val is not None:
+            q_builder = q_builder.filter(Question.grade_max <= grade_max_val)
+        if fmt_str:
+            target_fmts = [fmt_str]
+            if fmt_str in ("CONNECT_4", "CONNECT"):
+                target_fmts = ["CONNECT_4", "CONNECT"]
+            elif fmt_str in ("STEPPED_CLUE", "THREE_CLUE"):
+                target_fmts = ["STEPPED_CLUE", "THREE_CLUE"]
+            from backend.app.models.qshala_tag import QshalaQuestionMetadata
+            if fmt_str in ("STANDARD_QA", "QA"):
+                target_fmts.extend(["STANDARD_QA", "QA", "SLIDE_QA"])
+            q_builder = q_builder.outerjoin(
+                QshalaQuestionMetadata, Question.id == QshalaQuestionMetadata.question_id
+            ).filter(
+                or_(
+                    Question.question_format.in_(target_fmts),
+                    Question.question_type.in_(target_fmts),
+                    QshalaQuestionMetadata.question_format.in_(target_fmts)
+                )
+            )
+
+        # Sorting
+        sort_col = getattr(Question, sort_by_str, Question.created_at)
+        if sort_order_str == "asc":
+            q_builder = q_builder.order_by(asc(sort_col))
+        else:
+            q_builder = q_builder.order_by(desc(sort_col))
+
+        items = q_builder.offset(offset_int).limit(limit_int).all()
+
         output = []
-        seen_q_ids = set()
+        for q, doc, slide in items:
+            output.append(to_question_response(q, doc, slide))
+        return _enrich(db, output)
 
-        # If any document matches the query string by title, prioritize and include its questions
-        if doc_ids:
-            deck_questions = db.query(Question, Document, Slide).\
-                outerjoin(Document, Question.document_id == Document.id).\
-                outerjoin(Slide, Question.slide_id == Slide.id).\
-                filter(Question.document_id.in_(doc_ids)).limit(limit_int).all()
-            for q, doc, slide in deck_questions:
-                if q.id not in seen_q_ids:
-                    seen_q_ids.add(q.id)
-                    output.append(to_question_response(q, doc, slide))
-
-        for r in results:
-            if r["question"].id not in seen_q_ids:
-                seen_q_ids.add(r["question"].id)
-                output.append(to_question_response(r["question"], r["document"], r["slide"]))
-        return _enrich(db, output[:limit_int])
-
-    # Direct query with rich metadata filters
-    q_builder = db.query(Question, Document, Slide).\
-        outerjoin(Document, Question.document_id == Document.id).\
-        outerjoin(Slide, Question.slide_id == Slide.id)
-
-    if dup_status_str:
-        q_builder = q_builder.filter(Question.duplicate_status == dup_status_str)
-    if doc_id_str:
-        q_builder = q_builder.filter(Question.document_id == doc_id_str)
-    if doc_title_str:
-        q_builder = q_builder.filter(Document.title.ilike(f"%{doc_title_str}%"))
-    if topic_str:
-        q_builder = q_builder.filter(
-            or_(
-                Question.topic.ilike(f"%{topic_str}%"),
-                Question.subtopic.ilike(f"%{topic_str}%")
-            )
-        )
-    if subtopic_str:
-        q_builder = q_builder.filter(Question.subtopic.ilike(f"%{subtopic_str}%"))
-    if tag_str:
-        clean_tag = tag_str.strip().lstrip("#").strip()
-        q_builder = q_builder.filter(func.cast(Question.tags, String).ilike(f"%{clean_tag}%"))
-    if diff_str:
-        q_builder = q_builder.filter(Question.difficulty.ilike(diff_str))
-    if grade_min_val is not None:
-        q_builder = q_builder.filter(Question.grade_min >= grade_min_val)
-    if grade_max_val is not None:
-        q_builder = q_builder.filter(Question.grade_max <= grade_max_val)
-    if fmt_str:
-        target_fmts = [fmt_str]
-        if fmt_str in ("CONNECT_4", "CONNECT"):
-            target_fmts = ["CONNECT_4", "CONNECT"]
-        elif fmt_str in ("STEPPED_CLUE", "THREE_CLUE"):
-            target_fmts = ["STEPPED_CLUE", "THREE_CLUE"]
-        from backend.app.models.qshala_tag import QshalaQuestionMetadata
-        if fmt_str in ("STANDARD_QA", "QA"):
-            target_fmts.extend(["STANDARD_QA", "QA", "SLIDE_QA"])
-        q_builder = q_builder.outerjoin(
-            QshalaQuestionMetadata, Question.id == QshalaQuestionMetadata.question_id
-        ).filter(
-            or_(
-                Question.question_format.in_(target_fmts),
-                Question.question_type.in_(target_fmts),
-                QshalaQuestionMetadata.question_format.in_(target_fmts)
-            )
-        )
-
-    # Sorting
-    sort_col = getattr(Question, sort_by_str, Question.created_at)
-    if sort_order_str == "asc":
-        q_builder = q_builder.order_by(asc(sort_col))
-    else:
-        q_builder = q_builder.order_by(desc(sort_col))
-
-    items = q_builder.offset(offset_int).limit(limit_int).all()
-
-    output = []
-    for q, doc, slide in items:
-        output.append(to_question_response(q, doc, slide))
-    return _enrich(db, output)
+    return await asyncio.to_thread(_filtered_search)
 
 @router.get("/duplicates", response_model=List[QuestionResponse])
 def list_duplicate_candidates(

@@ -131,7 +131,7 @@ def get_active_upload_batch(db: Session = Depends(get_db)):
 
 
 @router.get("/upload-batch/{batch_id}")
-async def get_upload_batch_status(batch_id: str, db: Session = Depends(get_db)):
+def get_upload_batch_status(batch_id: str, db: Session = Depends(get_db)):
     """Get merged status and totals for an upload batch (read-only query)."""
     batch = db.query(UploadBatch).filter(UploadBatch.id == batch_id).first()
     if not batch:
