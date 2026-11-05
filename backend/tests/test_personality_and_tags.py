@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from backend.app.database import SessionLocal, engine, Base
 from backend.app.models.question import Question
+from backend.app.models.document import Document
 from backend.app.models.quiz import Quiz, GeneratedQuestion
 from backend.app.routers.questions import list_vault_tags, preview_tag_quiz_availability
 from backend.app.schemas.quiz import QuizGenerateRequest
@@ -71,7 +72,38 @@ def test_vault_tags_and_preview_endpoints():
 def test_retriever_tag_overlap_boosting():
     print("\n--- Testing Hybrid Retriever with Tag Overlap Scoring ---")
     db = SessionLocal()
+    created_qs = []
+    created_doc = None
     try:
+        if db.query(Question).filter(Question.topic == "Australian History").count() == 0:
+            doc = db.query(Document).first()
+            if not doc:
+                doc = Document(id="doc_test_aus", filename="aus.pptx", title="Australia", file_type="pptx", storage_path="/tmp")
+                db.add(doc)
+                db.commit()
+                created_doc = doc
+            doc_id = doc.id
+
+            for i, (qtxt, atxt, tags) in enumerate([
+                ("Which British explorer charted Botany Bay in 1770?", "Captain James Cook", ["Captain James Cook", "Botany Bay"]),
+                ("In what year did the First Fleet arrive in Botany Bay?", "1788", ["Botany Bay", "First Fleet"]),
+                ("What was the original name proposed for Botany Bay by James Cook?", "Stingray Bay", ["Captain James Cook", "Stingray Bay"]),
+            ], 1):
+                q = Question(
+                    id=f"test_aus_q_{i}",
+                    document_id=doc_id,
+                    topic="Australian History",
+                    subtopic="Exploration",
+                    question_text=qtxt,
+                    answer=atxt,
+                    difficulty="Medium",
+                    difficulty_score=0.5,
+                    tags=tags
+                )
+                db.add(q)
+                created_qs.append(q)
+            db.commit()
+
         retriever = HybridRetriever(db)
         results = retriever.fetch_by_filters(
             topic="Australian History",
@@ -85,6 +117,17 @@ def test_retriever_tag_overlap_boosting():
         assert len(results) > 0
         print("[PASS] Hybrid retriever successfully scores and weights tag overlap!")
     finally:
+        for q in created_qs:
+            try:
+                db.delete(q)
+            except Exception:
+                pass
+        if created_doc:
+            try:
+                db.delete(created_doc)
+            except Exception:
+                pass
+        db.commit()
         db.close()
 
 def test_quiz_generator_with_tags_and_personality():
