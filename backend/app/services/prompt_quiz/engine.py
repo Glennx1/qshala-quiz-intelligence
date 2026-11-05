@@ -61,6 +61,7 @@ class Brief:
     topics_l1: List[str] = field(default_factory=list)
     subtopics_l2: List[str] = field(default_factory=list)
     search_terms: List[str] = field(default_factory=list)
+    narrative_arc: Optional[str] = None
 
     def public(self) -> Dict[str, Any]:
         return asdict(self)
@@ -750,7 +751,32 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
     # 5. Guardian + Editor on ranked on-topic list
     effective_exclude = set(exclude_ids or set())
     cands = guardian(on_ok, brief, exclude_ids=effective_exclude)
-    picked = editor(cands, brief)
+
+    narrative_arc: Optional[str] = None
+    picked: List[Dict[str, Any]] = []
+
+    # AI Curator: If candidate pool is larger than requested and Curator is enabled
+    if len(cands) > brief.count and os.getenv("ENABLE_AI_CURATOR", "true").lower() in ("1", "true", "yes"):
+        try:
+            from backend.app.services.prompt_quiz.curator_llm import curate_quiz_with_gemini
+            cur_res = curate_quiz_with_gemini(
+                prompt=brief.prompt,
+                target_count=brief.count,
+                candidates=cands,
+                current_questions=current_questions,
+                previous_brief=previous_brief,
+            )
+            if cur_res and cur_res.get("selected_ids"):
+                cands_by_id = {c["id"]: c for c in cands if c.get("id")}
+                cur_picked = [cands_by_id[qid] for qid in cur_res["selected_ids"] if qid in cands_by_id]
+                if len(cur_picked) == brief.count:
+                    picked = cur_picked
+                    narrative_arc = cur_res.get("narrative_arc")
+        except Exception as e:
+            logger.warning(f"AI Curator invocation failed ({e}), falling back to deterministic editor")
+
+    if not picked:
+        picked = editor(cands, brief)
 
     # 6. Padding if requested and short
     padded = 0
@@ -778,13 +804,23 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
     # 8. Host message
     msg = fulfillment["note"] if fulfillment.get("short") else host(brief, picked, len(bank))
 
+    stages = ["Interpreter", "Librarian", "Guardian"]
+    if narrative_arc:
+        stages.append("Curator")
+    else:
+        stages.append("Editor")
+    stages.append("Host")
+
+    brief.narrative_arc = narrative_arc
+
     return {
         "brief": brief.public(),
         "questions": [_view(p) for p in picked],
         "message": msg,
         "bank_size": len(bank),
-        "stages": ["Interpreter", "Librarian", "Guardian", "Editor", "Host"],
+        "stages": stages,
         "fulfillment": fulfillment,
+        "narrative_arc": narrative_arc,
     }
 
 

@@ -59,6 +59,7 @@ type Draft = {
   brief: BriefData;
   fulfillment?: Fulfillment;
   stages?: string[];
+  narrative_arc?: string | null;
 };
 
 const GREETINGS = [
@@ -581,6 +582,16 @@ export default function QuizzerHome() {
           )}
 
           <p className="text-[15px] text-slate-600">{draft.message}</p>
+
+          {draft.narrative_arc && (
+            <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-purple-200 bg-purple-50/70 p-3 text-[13px] text-purple-950 shadow-xs">
+              <Sparkles size={16} className="mt-0.5 shrink-0 text-purple-600" />
+              <div>
+                <span className="font-semibold text-purple-900">Curated Round Arc:</span>{' '}
+                <span className="text-purple-800">{draft.narrative_arc}</span>
+              </div>
+            </div>
+          )}
 
           {/* Selection header */}
           <div className="mt-4 flex items-center justify-between border-b border-slate-200 pb-2 text-[13px] text-slate-600">
