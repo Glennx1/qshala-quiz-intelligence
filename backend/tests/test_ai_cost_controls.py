@@ -61,7 +61,7 @@ def test_describe_image_records_usage_by_label():
                                                        "thoughtsTokenCount": 7}))
     with patch("httpx.AsyncClient.post", new=post):
         asyncio.run(_provider("gemini-3.5-flash-lite").describe_image(b"x", "image/png"))
-    assert gp.usage_snapshot()["vision"] == {"calls": 1, "in": 300, "out": 40, "think": 7}
+    assert gp.usage_snapshot()["vision"] == {"calls": 1, "in": 300, "out": 40, "think": 7, "cached": 0}
 
 
 def test_describe_image_retries_once_with_bigger_cap_when_cut_off_before_any_text():
