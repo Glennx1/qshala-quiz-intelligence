@@ -171,15 +171,37 @@ _PUBLIC_PREFIXES = (
 _PUBLIC_EXACT = {"/", "/api", settings.API_V1_STR,
                  "/health", "/api/health", f"{settings.API_V1_STR}/health"}
 
+def _api_key_required() -> bool:
+    """REQUIRE_API_KEY=1 makes the gate fail closed: with no API_KEY_SECRET configured, protected routes answer 503
+    instead of being open. Off by default so an existing deployment without the secret keeps working."""
+    return os.getenv("REQUIRE_API_KEY", "").strip().lower() in ("1", "true", "yes")
+
+
+def _api_key_matches(provided: str, secret: str) -> bool:
+    import hmac
+    return hmac.compare_digest(provided.encode("utf-8"), secret.encode("utf-8"))
+
+
+if os.getenv("K_SERVICE") and not settings.API_KEY_SECRET:
+    logging.getLogger(__name__).warning(
+        "Running on Cloud Run with API_KEY_SECRET unset: every API route is open to anonymous callers. "
+        "Set API_KEY_SECRET (and REQUIRE_API_KEY=1 to refuse to run open).")
+
+
 @app.middleware("http")
 async def require_api_key(request, call_next):
     from fastapi.responses import JSONResponse
-    if not settings.API_KEY_SECRET or request.method == "OPTIONS":
+    if request.method == "OPTIONS":
         return await call_next(request)
     path = request.url.path
     if path in _PUBLIC_EXACT or path.startswith(_PUBLIC_PREFIXES):
         return await call_next(request)
-    if request.headers.get("x-api-key") != settings.API_KEY_SECRET:
+    if not settings.API_KEY_SECRET:
+        if _api_key_required():
+            return JSONResponse(status_code=503, content={
+                "detail": "API key auth is required (REQUIRE_API_KEY) but API_KEY_SECRET is not configured"})
+        return await call_next(request)
+    if not _api_key_matches(request.headers.get("x-api-key", ""), settings.API_KEY_SECRET):
         return JSONResponse(status_code=401, content={"detail": "Missing or invalid X-API-Key header"})
     return await call_next(request)
 
