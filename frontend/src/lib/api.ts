@@ -81,6 +81,13 @@ const fetch = async (input: RequestInfo | URL, init: RequestInit = {}): Promise<
 };
 
 export function getApiBase(): string {
+  // In the browser on Vercel deployments, always use the colocated Vercel backend at /api/v1
+  // via Vercel rewrites, avoiding stale external backends unless explicitly forced.
+  if (typeof window !== 'undefined') {
+    if (window.location.hostname.includes('vercel.app')) {
+      return '/api/v1';
+    }
+  }
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL;
   }
