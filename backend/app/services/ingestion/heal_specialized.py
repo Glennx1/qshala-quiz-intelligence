@@ -70,6 +70,7 @@ def heal_specialized_questions(db: Session) -> Dict[str, int]:
         q_insta.format_data = {"type": "VISUAL_CLUE", "image_url": (q_insta.question_images or [None])[0]}
         q_insta.format_payload = {"type": "VISUAL_CLUE", "image_url": (q_insta.question_images or [None])[0]}
         stats["reclassified_visual"] += 1
+    db.commit()
 
     # 2. Heal STEPPED_CLUE questions
     stepped_qs = db.query(Question).filter(
@@ -129,8 +130,14 @@ def heal_specialized_questions(db: Session) -> Dict[str, int]:
         stats["stepped_healed"] += 1
 
     # 3. Heal CONNECT_4 questions
+    reclassified_ids = {
+        "6914a915-73e1-41a9-a205-120fdaa5f67b",
+        "02e7fc08-64d4-48b2-a443-03e6fd16d3a3",
+        "c9bd82a2-d5a8-4296-aa4b-384c0b386273",
+    }
     connect_qs = db.query(Question).filter(
-        Question.question_format.in_(["CONNECT_4", "CONNECT"])
+        Question.question_format.in_(["CONNECT_4", "CONNECT"]),
+        ~Question.id.in_(reclassified_ids)
     ).all()
 
     connect_prompts = {
