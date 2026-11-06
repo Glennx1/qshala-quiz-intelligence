@@ -52,7 +52,8 @@ def passes_hard(c: Candidate, filters: Dict[str, Any], format_filter: Optional[s
                 (c.get("question_text") or "") + " " +
                 (c.get("answer") or "") + " " +
                 (c.get("topic_l1") or "") + " " +
-                (c.get("city_name") or "") + " " +
+                (c.get("subtopic_l2") or "") + " " +
+                " ".join(str(t) for t in (c.get("tags") or [])) + " " +
                 (c.get("geo_region") or "")
             ).lower()
             has_in = any(m in txt for m in _IN_MARKERS)
@@ -137,8 +138,18 @@ def audience_score(c: Candidate, *, locality: Optional[str] = None, india_focuse
             d += 0.5
 
     aud = _lc(audience)
-    if aud and aud != "general" and _lc(c.get("primary_audience")) == aud:
-        d += 0.3
+    if aud and aud != "general":
+        primary = _lc(c.get("primary_audience"))
+        suitability = [_lc(s) for s in (c.get("audience_suitability") or []) if isinstance(s, str)]
+        if aud == "school":
+            if any(s in suitability for s in ("middle_school", "high_school", "primary", "school")):
+                d += 1.2
+            elif primary in ("middle_school", "high_school", "primary", "school"):
+                d += 0.8
+            elif primary in ("corporate", "executive"):
+                d -= 1.5
+        elif primary == aud:
+            d += 0.5
 
     words = [_lc(t).replace("-", " ") for t in (tone or []) if _lc(t)]
     if words:

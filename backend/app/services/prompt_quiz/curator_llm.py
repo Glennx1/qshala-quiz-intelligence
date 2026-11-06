@@ -49,6 +49,7 @@ _SYSTEM = (
     "   - If fewer than the requested count genuinely match (or 0 match), return ONLY the genuine matches in selected_ids (or [] if none match). Never pad with irrelevant trivia.\n"
     "3. HIGH-ORDER HUMAN CURATION:\n"
     "   - Look beyond surface keywords. Match the user's requested tone, audience psychology, and subtle themes.\n"
+    "   - When an audience like 'school students' or 'kids' in India is requested, prioritize inspiring figures, scientists, space pioneers, educators, national icons, and achievers that school students study, relate to, and find educational, rather than adult corporate finance, tax avoidance, or adult satire.\n"
     "   - Avoid semantic redundancy (e.g. if two questions cover nearly the same story, choose the punchier one).\n"
     "   - Build a narrative arc: start with an engaging icebreaker/hook, explore the theme with increasing depth, and finish with a memorable climax or tie-breaker.\n"
     "4. Output JSON strictly adhering to the schema."

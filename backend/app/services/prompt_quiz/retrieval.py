@@ -62,7 +62,13 @@ SYNONYMS: Dict[str, List[str]] = {
     "scandal": ["scandal", "fraud", "collapse", "corporate crime"],
     "energy": ["energy", "solar", "power", "renewable", "hydrogen", "coal", "nuclear"],
     "festival": ["festival", "diwali", "mela", "celebration", "event"],
-    "leader": ["ceo", "founder", "chairman", "billionaire", "entrepreneur"],
+    "people": ["people", "person", "personality", "personalities", "figure", "figures", "leader", "leaders", "great indian", "scientist", "inventor", "pioneer", "author", "founder", "achiever"],
+    "person": ["person", "people", "personality", "personalities", "figure", "leader", "pioneer", "great indian", "achiever"],
+    "personality": ["personality", "personalities", "person", "people", "figure", "figures", "leader", "great indian", "achiever", "pioneer"],
+    "personalities": ["personalities", "personality", "people", "person", "figure", "figures", "leaders", "great indian", "achievers", "pioneers"],
+    "figure": ["figure", "figures", "personality", "personalities", "person", "people", "leader", "pioneer", "achiever"],
+    "figures": ["figures", "figure", "personalities", "personality", "people", "person", "leaders", "achievers"],
+    "leader": ["leader", "leaders", "personality", "pioneer", "president", "minister", "founder", "statesman", "chief", "ceo"],
     "ceo": ["ceo", "chief executive", "founder", "chairman"],
     "corporate": ["company", "business", "brand", "ceo", "industry", "merger", "corporate", "acquisition", "firm", "leader"],
     "business": ["company", "brand", "startup", "market", "industry", "business", "corporate"],
@@ -222,7 +228,9 @@ class Index:
                         + " "
                         + (item.get("topic_l1") or "")
                         + " "
-                        + (item.get("city_name") or "")
+                        + (item.get("subtopic_l2") or "")
+                        + " "
+                        + " ".join(item.get("tags") or [])
                         + " "
                         + (item.get("geo_region") or "")
                     ).lower()
