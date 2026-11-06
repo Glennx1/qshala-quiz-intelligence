@@ -582,6 +582,7 @@ def _normalize_answer_entity(ans: str) -> str:
         return ""
     # Strip common brackets, slashes, parentheticals: e.g. "Srinivasa Ramanujan / Ramanujan" -> "srinivasa ramanujan"
     primary = re.split(r"[/,;(]", ans)[0].strip().lower()
+    primary = re.sub(r"^(word|clue|answer|question|letter|name)\s*:\s*", "", primary).strip()
     # Strip common honorifics/prefixes: Dr., Shri, Sir, Smt, The, A, An
     primary = re.sub(r"\b(dr\.?|shri|sir|smt\.?|mr\.?|mrs\.?|ms\.?|the|a|an)\b", "", primary).strip()
     cleaned = re.sub(r"[^\w\s]", "", primary)

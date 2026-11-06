@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
-CURATOR_TIMEOUT_S = float(os.getenv("CURATOR_TIMEOUT_S", "6.5"))
+CURATOR_TIMEOUT_S = float(os.getenv("CURATOR_TIMEOUT_S", "4.0"))
 
 CURATION_SCHEMA: Dict[str, Any] = {
     "type": "OBJECT",
@@ -153,6 +153,7 @@ def curate_quiz_with_gemini(
             "response_mime_type": "application/json",
             "response_schema": CURATION_SCHEMA,
             "temperature": 0.1,
+            "maxOutputTokens": 450,
         },
     }
 

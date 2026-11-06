@@ -20,7 +20,7 @@ from backend.app.services.prompt_quiz.retrieval import parse_prompt, WORD_NUMS
 
 logger = logging.getLogger(__name__)
 
-INTENT_TIMEOUT_S = float(os.getenv("INTENT_TIMEOUT_S", "5.0"))
+INTENT_TIMEOUT_S = float(os.getenv("INTENT_TIMEOUT_S", "4.0"))
 
 _TAXONOMY_CACHE: Dict[str, Any] = {"at": 0.0, "taxonomy": None}
 _TAXONOMY_TTL_S = 120.0  # refresh from DB every 2 minutes
@@ -203,6 +203,7 @@ def deconstruct_prompt(
             "response_mime_type": "application/json",
             "response_schema": INTENT_SCHEMA,
             "temperature": 0.1,
+            "maxOutputTokens": 800,
         },
     }
 
