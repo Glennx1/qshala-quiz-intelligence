@@ -82,53 +82,32 @@ def detect_and_structure_format(
     opts = options or []
 
     # 1. Stepped Clue (Portfolio Builder / 3 Clues buzzer round)
-    if _STEPPED_RE.search(combined) or deck_round_format in ("STEPPED_CLUE", "THREE_CLUE", "PORTFOLIO_BUILDER") or (deck_round_format == "BUZZER" and ("clue" in q_text.lower() or "clue 1" in combined.lower())): 
+    if _STEPPED_RE.search(combined) or deck_round_format in ("STEPPED_CLUE", "THREE_CLUE", "PORTFOLIO_BUILDER") or (deck_round_format == "BUZZER" and ("clue" in q_text.lower() or "clue 1" in combined.lower())):
         clues: List[Dict[str, Any]] = []
-        # Attempt to parse progressive clues if embedded in text
-        clue_matches = re.split(r"(?:^|\n)\s*(?:(?:\d+\.)?\s*Clue\s*(\d)\s*:\s*([+\-\d/]+))", q_text, flags=re.I)
-        if len(clue_matches) > 1:
-            # We have regex split: preamble, step_num, points, text...
-            i = 1
-            while i < len(clue_matches) - 2:
-                step_num = clue_matches[i]
-                points = clue_matches[i+1]
-                body = clue_matches[i+2].strip()
-                clues.append({
-                    "step": int(step_num) if step_num and step_num.isdigit() else (len(clues) + 1),
-                    "points": points,
-                    "text": body,
-                    "image": imgs[len(clues)] if len(clues) < len(imgs) else None,
-                })
-                i += 3
-        if len(clues) < 3:
-            # Fallback to boundary search on Clue 1, Clue 2, Clue 3
-            m1 = re.search(r'(?:^|\n)\s*(?:(?:\d+\.)?\s*)?Clue\s*1\b', q_text, re.I)
-            m2 = re.search(r'(?:^|\n)\s*(?:(?:\d+\.)?\s*)?Clue\s*2\b', q_text, re.I)
-            m3 = re.search(r'(?:^|\n)\s*(?:(?:\d+\.)?\s*)?Clue\s*3\b', q_text, re.I)
-            if m1 and m2 and m3 and m1.start() < m2.start() < m3.start():
-                def _clean_clue_body(raw: str) -> str:
-                    c = re.sub(r'^(?:\s*\(?[+\-\d/]+\)?\s*:?|\s*(?:\d+\.)?\s*Clue\s*\d\s*:?\s*[+\-\d/]*)+', '', raw, flags=re.I)
-                    c = re.sub(r'(?:\n\s*(?:\d+\.)?\s*Clue\s*\d\s*:?\s*[+\-\d/]*)+.*$', '', c, flags=re.I)
-                    return c.strip()
-
+        try:
+            from backend.app.services.ingestion.heal_specialized import parse_stepped_clues
+            c1, c2, c3 = parse_stepped_clues(q_text)
+            if c1 and c2 and c3:
                 clues = [
-                    {"step": 1, "points": "+20/-15", "text": _clean_clue_body(q_text[m1.end():m2.start()]), "image": imgs[0] if len(imgs) > 0 else None},
-                    {"step": 2, "points": "+15/-10", "text": _clean_clue_body(q_text[m2.end():m3.start()]), "image": imgs[1] if len(imgs) > 1 else None},
-                    {"step": 3, "points": "+10/-5", "text": _clean_clue_body(q_text[m3.end():]), "image": imgs[2] if len(imgs) > 2 else None},
+                    {"step": 1, "points": "+20/-15", "points_correct": 20, "points_wrong": -15, "points_label": "+20 / -15", "difficulty_label": "Hard Clue", "text": c1, "image": imgs[0] if len(imgs) > 0 else None, "image_url": imgs[0] if len(imgs) > 0 else None},
+                    {"step": 2, "points": "+15/-10", "points_correct": 15, "points_wrong": -10, "points_label": "+15 / -10", "difficulty_label": "Medium Clue", "text": c2, "image": imgs[1] if len(imgs) > 1 else None, "image_url": imgs[1] if len(imgs) > 1 else None},
+                    {"step": 3, "points": "+10/-5", "points_correct": 10, "points_wrong": -5, "points_label": "+10 / -5", "difficulty_label": "Giveaway Clue", "text": c3, "image": imgs[2] if len(imgs) > 2 else None, "image_url": imgs[2] if len(imgs) > 2 else None},
                 ]
+        except Exception:
+            pass
 
         if not clues:
-            # Construct standard 3-tier structure
             clues = [
-                {"step": 1, "points": "+20/-15", "text": q_text, "image": imgs[0] if imgs else None},
-                {"step": 2, "points": "+15/-10", "text": "Additional context clue", "image": imgs[1] if len(imgs) > 1 else None},
-                {"step": 3, "points": "+10/-5", "text": "Direct giveaway clue", "image": imgs[2] if len(imgs) > 2 else None},
+                {"step": 1, "points": "+20/-15", "text": q_text, "image": imgs[0] if imgs else None, "image_url": imgs[0] if imgs else None},
+                {"step": 2, "points": "+15/-10", "text": "Additional context clue", "image": imgs[1] if len(imgs) > 1 else None, "image_url": imgs[1] if len(imgs) > 1 else None},
+                {"step": 3, "points": "+10/-5", "text": "Direct giveaway clue", "image": imgs[2] if len(imgs) > 2 else None, "image_url": imgs[2] if len(imgs) > 2 else None},
             ]
         payload = {
             "type": FMT_STEPPED_CLUE,
             "badge": "Portfolio Builder • Stepped Clues",
             "clues": clues,
             "rules": "All on buzzer • 1 attempt per clue • Clue 1: +20/-15, Clue 2: +15/-10, Clue 3: +10/-5",
+            "answer": answer,
         }
         return FMT_STEPPED_CLUE, payload
 
@@ -170,18 +149,22 @@ def detect_and_structure_format(
     # 3. Connect / Connect 4
     if _CONNECT_RE.search(combined) or deck_round_format in ("CONNECT_4", "CONNECT", "MARKET_INDICATORS") or (imgs and len(imgs) >= 4 and not opts):
         elements: List[Dict[str, Any]] = []
-        for i in range(min(4, len(imgs) if imgs else 4)):
+        for i in range(4):
             img = imgs[i] if i < len(imgs) else None
             elements.append({
                 "index": i + 1,
                 "label": f"Clue {i + 1}",
+                "text": f"Clue {i + 1}",
                 "image": img,
+                "image_url": img,
+                "explanation": "",
             })
         payload = {
             "type": FMT_CONNECT_4,
             "badge": "Connect 4 • Common Link",
-            "prompt": q_text or "What common thread or concept connects all of these?",
+            "prompt": q_text or "What common thread or concept connects all four clues and images?",
             "elements": elements,
+            "common_link": answer,
             "connection_reveal": answer,
         }
         return FMT_CONNECT_4, payload

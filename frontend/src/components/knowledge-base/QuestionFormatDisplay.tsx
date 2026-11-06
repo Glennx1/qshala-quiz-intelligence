@@ -65,14 +65,39 @@ export default function QuestionFormatDisplay({
       <div className="space-y-1.5 mt-1">
         {clues && Array.isArray(clues) && clues.length > 0 ? (
           <div className="space-y-1.5 pt-1">
-            {clues.map((clue: any, i: number) => (
-              <div key={i} className="flex items-start gap-2 rounded-md bg-amber-50/70 border border-amber-200/80 px-2.5 py-1.5 text-[12.5px]">
-                <span className="shrink-0 rounded bg-amber-200/90 text-amber-900 font-mono text-[10.5px] font-bold px-1.5 py-0.5">
-                  {clue.points || `Clue ${clue.step || i + 1}`}
-                </span>
-                <span className="text-slate-800 leading-snug">{clue.text || q.question_text}</span>
-              </div>
-            ))}
+            {clues.map((clue: any, i: number) => {
+              const imgUrl = clue.image || clue.image_url;
+              return (
+                <div key={i} className="flex items-start gap-2.5 rounded-lg bg-amber-50/70 border border-amber-200/80 px-3 py-2 text-[12.5px]">
+                  <span className="shrink-0 rounded bg-amber-200 text-amber-900 font-mono text-[11px] font-bold px-2 py-0.5">
+                    {clue.points || `Clue ${clue.step || i + 1}`}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    {clue.difficulty_label && (
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-800/70 block mb-0.5">
+                        {clue.difficulty_label}
+                      </span>
+                    )}
+                    <span className="text-slate-800 leading-snug">{clue.text || q.question_text}</span>
+                  </div>
+                  {imgUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewImage(imgUrl)}
+                      className="shrink-0 rounded-md overflow-hidden border border-amber-300 bg-white hover:border-amber-500 transition cursor-pointer"
+                      title="Click to preview clue image"
+                    >
+                      <img
+                        src={getImageSrc(imgUrl)}
+                        onError={() => handleImgError(imgUrl)}
+                        alt={`Clue ${i + 1}`}
+                        className="h-10 w-14 object-contain"
+                      />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         ) : (
           <div className="font-semibold text-[13.5px] text-slate-900 leading-snug">

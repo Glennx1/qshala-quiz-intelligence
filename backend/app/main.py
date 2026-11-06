@@ -101,6 +101,16 @@ async def lifespan(app: FastAPI):
             from backend.app.utils.seed_knowledge_base import seed
             await seed(force=False)
             logger.info("Auto-seeding completed.")
+
+        try:
+            from backend.app.services.ingestion.heal_specialized import heal_specialized_questions
+            _db_heal = SessionLocal()
+            try:
+                heal_specialized_questions(_db_heal)
+            finally:
+                _db_heal.close()
+        except Exception as e_heal:
+            logger.warning(f"Specialized questions startup heal skipped: {e_heal}")
     except Exception as e:
         logger.warning(f"Lifespan seed check exception: {e}")
 

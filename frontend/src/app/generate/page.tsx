@@ -16,6 +16,8 @@ type DraftQ = {
   question_images?: string[];
   answer_images?: string[];
   image_refs?: string[];
+  question_format?: string | null;
+  format_payload?: any;
 };
 
 type FulfillmentSuggestion = {
@@ -685,38 +687,146 @@ export default function QuizzerHome() {
                     </span>
                   </label>
                   <div className="min-w-0 flex-1">
-                    <p className="whitespace-pre-line text-[15px] leading-relaxed text-slate-900">{q.question_text}</p>
-                    
-                    {/* Visual Clue Preview */}
-                    {((q.question_images && q.question_images.length > 0) || (q.image_refs && q.image_refs.length > 0)) && (
-                      <div className="mt-2.5 flex items-center gap-2.5">
-                        <img
-                          src={resolveMediaUrl((q.question_images && q.question_images[0]) || (q.image_refs && q.image_refs[0]))}
-                          alt="Question Clue"
-                          className="h-16 w-24 rounded-lg object-contain bg-slate-50 border border-slate-200 shadow-xs"
-                          loading="lazy"
-                        />
-                        <span className="text-[11px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
-                          Visual Clue
-                        </span>
+                    {/* Specialized Connect 4 Rendering */}
+                    {q.question_format === 'CONNECT_4' && q.format_payload ? (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1 rounded-md bg-blue-100 text-blue-800 text-[11px] font-bold px-2 py-0.5 uppercase tracking-wide">
+                            Connect 4 • Common Link
+                          </span>
+                          {q.format_payload.sub_hint && (
+                            <span className="text-[12px] text-slate-500 font-medium italic">
+                              Hint: {q.format_payload.sub_hint}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[15px] font-semibold text-slate-900 leading-snug">
+                          {q.format_payload.prompt || "What common thread or concept connects all four clues and images?"}
+                        </p>
+                        {/* 4 Clue Tiles */}
+                        {q.format_payload.elements && Array.isArray(q.format_payload.elements) && q.format_payload.elements.length > 0 && (
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                            {q.format_payload.elements.map((elem: any, elIdx: number) => {
+                              const imgUrl = elem.image || elem.image_url;
+                              return (
+                                <div
+                                  key={elIdx}
+                                  className="relative rounded-xl overflow-hidden border border-blue-200 bg-blue-50/40 p-2 flex flex-col items-center text-center group hover:border-blue-400 transition"
+                                >
+                                  <span className="self-start rounded bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 uppercase mb-1.5">
+                                    {elem.label || `Clue ${elIdx + 1}`}
+                                  </span>
+                                  {imgUrl ? (
+                                    <img
+                                      src={resolveMediaUrl(imgUrl)}
+                                      alt={elem.label || `Clue ${elIdx + 1}`}
+                                      className="w-full h-24 object-contain rounded-lg bg-white border border-blue-100 mb-1.5"
+                                      loading="lazy"
+                                    />
+                                  ) : (
+                                    <div className="w-full h-24 flex items-center justify-center rounded-lg bg-white border border-blue-100 text-slate-400 text-[12px] mb-1.5">
+                                      Text Clue
+                                    </div>
+                                  )}
+                                  {elem.text && elem.text !== elem.label && (
+                                    <p className="text-[11.5px] text-slate-700 font-medium line-clamp-2">{elem.text}</p>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
+                    ) : q.question_format === 'STEPPED_CLUE' && q.format_payload ? (
+                      /* Specialized Stepped Clue Rendering */
+                      <div className="space-y-2.5">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 text-amber-900 text-[11px] font-bold px-2 py-0.5 uppercase tracking-wide">
+                            Portfolio Builder • 3 Stepped Clues
+                          </span>
+                          <span className="text-[11px] text-slate-400">All on buzzer · 1 attempt per clue</span>
+                        </div>
+                        {/* 3 Progressive Tiers */}
+                        <div className="space-y-2 pt-0.5">
+                          {((q.format_payload.clues && Array.isArray(q.format_payload.clues)) ? q.format_payload.clues : []).map((clue: any, cIdx: number) => {
+                            const borderStyle = cIdx === 0
+                              ? 'border-amber-300 bg-amber-50/60'
+                              : cIdx === 1
+                              ? 'border-orange-200 bg-orange-50/40'
+                              : 'border-emerald-200 bg-emerald-50/40';
+                            const badgeStyle = cIdx === 0
+                              ? 'bg-amber-600 text-white'
+                              : cIdx === 1
+                              ? 'bg-orange-600 text-white'
+                              : 'bg-emerald-600 text-white';
+                            const imgUrl = clue.image || clue.image_url;
+                            return (
+                              <div key={cIdx} className={`flex items-start gap-3 rounded-xl border p-2.5 ${borderStyle}`}>
+                                <span className={`shrink-0 rounded-lg px-2 py-1 text-[11px] font-bold font-mono tracking-tight ${badgeStyle}`}>
+                                  {clue.points || (cIdx === 0 ? '+20 / -15' : cIdx === 1 ? '+15 / -10' : '+10 / -5')}
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-0.5">
+                                    {clue.difficulty_label || (cIdx === 0 ? 'Hard Clue' : cIdx === 1 ? 'Medium Clue' : 'Giveaway Clue')}
+                                  </span>
+                                  <p className="text-[13.5px] text-slate-800 leading-snug">{clue.text}</p>
+                                </div>
+                                {imgUrl && (
+                                  <img
+                                    src={resolveMediaUrl(imgUrl)}
+                                    alt={`Step ${cIdx + 1} Visual`}
+                                    className="h-14 w-20 shrink-0 rounded-lg object-contain bg-white border border-slate-200"
+                                    loading="lazy"
+                                  />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      /* Standard Question Rendering */
+                      <>
+                        <p className="whitespace-pre-line text-[15px] leading-relaxed text-slate-900">{q.question_text}</p>
+                        
+                        {/* Visual Clue Preview */}
+                        {((q.question_images && q.question_images.length > 0) || (q.image_refs && q.image_refs.length > 0)) && (
+                          <div className="mt-2.5 flex items-center gap-2.5">
+                            <img
+                              src={resolveMediaUrl((q.question_images && q.question_images[0]) || (q.image_refs && q.image_refs[0]))}
+                              alt="Question Clue"
+                              className="h-16 w-24 rounded-lg object-contain bg-slate-50 border border-slate-200 shadow-xs"
+                              loading="lazy"
+                            />
+                            <span className="text-[11px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
+                              Visual Clue
+                            </span>
+                          </div>
+                        )}
+                      </>
                     )}
 
-                    {/* Answer shown by default */}
+                    {/* Answer shown with Format-Specific Reveal Badge */}
                     {q.answer && (
-                      <div className="mt-2.5">
-                        <p className="text-[14px] font-semibold text-emerald-700">{q.answer}</p>
+                      <div className="mt-3 flex items-center gap-2">
+                        <span className={`text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-md ${
+                          q.question_format === 'CONNECT_4'
+                            ? 'bg-blue-100 text-blue-800'
+                            : q.question_format === 'STEPPED_CLUE'
+                            ? 'bg-amber-100 text-amber-900'
+                            : 'bg-emerald-100 text-emerald-800'
+                        }`}>
+                          {q.question_format === 'CONNECT_4' ? 'Common Link' : 'Answer'}
+                        </span>
+                        <p className="text-[14.5px] font-semibold text-slate-900">{q.answer}</p>
                         {q.answer_images && q.answer_images.length > 0 && (
-                          <div className="mt-2 flex items-center gap-2">
+                          <div className="ml-2 flex items-center gap-2">
                             <img
                               src={resolveMediaUrl(q.answer_images[0])}
                               alt="Answer Diagram"
-                              className="h-16 w-24 rounded-lg object-contain bg-emerald-50/50 border border-emerald-200 shadow-xs"
+                              className="h-14 w-20 rounded-lg object-contain bg-emerald-50/50 border border-emerald-200 shadow-xs"
                               loading="lazy"
                             />
-                            <span className="text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
-                              Answer Diagram
-                            </span>
                           </div>
                         )}
                       </div>

@@ -471,6 +471,7 @@ def _load_bank_uncached(db: Session) -> List[Dict[str, Any]]:
             "document_title": docs_map.get(q.document_id, ""),
             "tagged": bool(t),
             "question_format": getattr(q, 'question_format', None) or getattr(q, 'question_type', 'STANDARD_QA'),
+            "format_payload": getattr(q, 'format_payload', None) or getattr(q, 'format_data', None),
             "city_name": (getattr(t, 'city_name', None) if t else None) or (getattr(m, 'city_name', None) if m else None),
             "geo_region": (getattr(t, 'geo_region', None) if t else None) or (getattr(m, 'geo_region', None) if m else None),
             "primary_audience": getattr(m, 'primary_audience', None) if m else None,
@@ -658,7 +659,8 @@ def host(brief: Brief, picked: List[Dict[str, Any]], bank_size: int) -> str:
 def _view(c: Dict[str, Any]) -> Dict[str, Any]:
     return {k: c.get(k) for k in ("id", "question_text", "answer", "topic_l1", "subtopic_l2", "difficulty_score",
                                   "difficulty", "image_dependent", "shelf_life", "tagged", "score", "document_id",
-                                  "question_images", "answer_images", "image_refs")}
+                                  "question_images", "answer_images", "image_refs",
+                                  "question_format", "format_payload")}
 
 
 def build_draft(db: Session, prompt: str, count: Optional[int] = None,
