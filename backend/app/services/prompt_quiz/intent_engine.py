@@ -89,12 +89,12 @@ INTENT_SCHEMA: Dict[str, Any] = {
         "mapped_topics_l1": {
             "type": "ARRAY",
             "items": {"type": "STRING"},
-            "description": "Only valid L1 topics matching the live vault taxonomy. For cross-cutting prompts (people, achievers, inventions, failures, underdogs) leave empty [] so questions across all subjects can be found."
+            "description": "Only set if the user explicitly requested a single specific category (e.g. 'sports only' -> ['Sports']). For multidisciplinary, persona, or thematic prompts (people, freedom fighters, scientists, space missions, pioneers, inventions, history, culture), leave empty [] so all relevant questions can be found."
         },
         "mapped_subtopics_l2": {
             "type": "ARRAY",
             "items": {"type": "STRING"},
-            "description": "Only valid L2 subtopics matching the live vault taxonomy. If the prompt is broad or cross-cutting, leave empty []."
+            "description": "Leave empty [] unless the user explicitly requested a specific subtopic by name (e.g. 'cricket', 'cryptocurrency', 'taxation'). DO NOT guess or constrain subtopics for thematic, historical, or persona prompts."
         },
         "expansion_terms": {
             "type": "ARRAY",
@@ -147,10 +147,10 @@ def _build_system_prompt(taxonomy: Dict[str, List[str]]) -> str:
         "   - Generate 15-25 rich, high-affinity search terms including specific famous entities, pioneers, role models, technical terms, or synonyms.\n"
         "   - Example: 'important people in India' -> ['kalam', 'ramanujan', 'modi', 'bose', 'wangchuk', 'chanu', 'scientist', 'inventor', 'pioneer', 'leader', 'achiever', 'author', 'freedom fighter', 'isro', 'president', 'nobel'].\n"
         "   - Example: 'fintech in bangalore' -> ['zerodha', 'phonepe', 'cred', 'navi', 'razorpay', 'upi', 'payments', 'startup', 'fintech', 'kamath'].\n\n"
-        "3. CROSS-CUTTING VS SINGLE-TOPIC PROMPTS:\n"
-        "   - Prompts like 'people', 'inventions', 'failures before success', 'food connections', 'underdogs' cut across Politics, Science, Business, Culture, and Sports.\n"
-        "   - For cross-cutting prompts, set mapped_topics_l1: [] and mapped_subtopics_l2: [] so the search retrieves questions across all domains.\n"
-        "   - Only set mapped_topics_l1 if the prompt is explicitly confined to a single domain (e.g. 'tech only' -> ['Technology']).\n\n"
+        "3. CROSS-CUTTING & THEMATIC PROMPTS (Crucial):\n"
+        "   - Thematic prompts (e.g. 'freedom fighters', 'scientists', 'space missions and astronauts', 'women pioneers', 'important people', 'underdogs', 'inventions', 'history', 'culture') span multiple disciplines.\n"
+        "   - For ANY thematic, persona, or multidisciplinary prompt, set mapped_topics_l1: [] and mapped_subtopics_l2: [] so retrieval searches across the entire archive using your rich expansion_terms.\n"
+        "   - ONLY set mapped_topics_l1 or mapped_subtopics_l2 if the user explicitly commanded a specific narrow category (e.g. 'only cricket', 'purely finance', 'taxation questions').\n\n"
         "4. AUDIENCE PERSONA CALIBRATION:\n"
         "   - If target_audience == 'school' (kids, school students, assembly): prioritize inspiring thinkers, creators, national role models, curricular curiosity. Add adult satire, corporate tax avoidance, and adult controversy to negative_terms.\n"
         "   - Output strictly valid JSON conforming to the schema."
@@ -265,6 +265,17 @@ def deconstruct_prompt(
         if fmt_filter in ("STANDARD_QA", "STANDARD", "", "NONE", None):
             fmt_filter = None
 
+        # For thematic / multidisciplinary prompts, unconstrain category filters so rich BM25 search terms find all matches
+        thematic_signals = (
+            "people", "person", "personality", "leader", "pioneer", "scientist",
+            "astronaut", "space", "mission", "freedom", "fighter", "women", "achiever",
+            "inventor", "hero", "startup", "founder", "underdog", "inventions",
+            "history", "heritage", "movement", "revolution"
+        )
+        is_thematic = any(s in subject.lower() or s in prompt.lower() for s in thematic_signals)
+        l1s = [] if is_thematic else (parsed.get("mapped_topics_l1") or [])
+        l2s = [] if is_thematic else (parsed.get("mapped_subtopics_l2") or [])
+
         from backend.app.services.prompt_quiz.engine import Brief
         brief = Brief(
                 prompt=prompt,
@@ -280,8 +291,8 @@ def deconstruct_prompt(
                 venue_type=target_aud,
                 tone=[],
                 cross_topic_padding=False,
-                topics_l1=parsed.get("mapped_topics_l1") or [],
-                subtopics_l2=parsed.get("mapped_subtopics_l2") or [],
+                topics_l1=l1s,
+                subtopics_l2=l2s,
                 search_terms=expansions,
         )
         logger.info(

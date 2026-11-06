@@ -21,9 +21,14 @@ def _l2_names(c: Candidate) -> set:
     return names
 
 
-def is_on_topic(c: Candidate, l1s: Sequence[str], l2s: Sequence[str]) -> bool:
-    if float(c.get("score") or 0.0) < MIN_RELEVANCE_SCORE:
+def is_on_topic(c: Candidate, l1s: Sequence[str], l2s: Sequence[str], min_semantic_score: float = 1.2) -> bool:
+    score = float(c.get("score") or 0.0)
+    if score < MIN_RELEVANCE_SCORE:
         return False
+    # If the candidate has a strong semantic score matching the query & expansion terms,
+    # it is genuinely on-topic regardless of strict database taxonomy tagging discrepancies.
+    if score >= min_semantic_score:
+        return True
     l1set = {x.lower() for x in l1s or []}
     l2set = {x.lower() for x in l2s or []}
     if l2set:

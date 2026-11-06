@@ -576,13 +576,31 @@ def _fp(text: str) -> frozenset:
     return frozenset(tokenize(text)[:14])
 
 
+def _normalize_answer_entity(ans: str) -> str:
+    """Extracts a normalized core entity token set from an answer string for robust deduplication."""
+    if not ans:
+        return ""
+    # Strip common brackets, slashes, parentheticals: e.g. "Srinivasa Ramanujan / Ramanujan" -> "srinivasa ramanujan"
+    primary = re.split(r"[/,;(]", ans)[0].strip().lower()
+    # Strip common honorifics/prefixes: Dr., Shri, Sir, Smt, The, A, An
+    primary = re.sub(r"\b(dr\.?|shri|sir|smt\.?|mr\.?|mrs\.?|ms\.?|the|a|an)\b", "", primary).strip()
+    cleaned = re.sub(r"[^\w\s]", "", primary)
+    tokens = sorted([t for t in cleaned.split() if len(t) > 2])
+    return " ".join(tokens)
+
+
 def guardian(hits: List[Dict[str, Any]], brief: Brief, exclude_ids: Optional[Set[str]] = None) -> List[Dict[str, Any]]:
     # Same rule as before (drop a hit whose first-14-token set overlaps an earlier kept hit by more than 70%), but
     # only earlier hits that share a token are compared, via a token -> kept-hits index, instead of every pair.
     out, seen = [], []
+    seen_entities: Set[str] = set()
     by_token: Dict[str, List[int]] = {}
     for h in hits:
         if exclude_ids and h["id"] in exclude_ids:
+            continue
+        # Entity / answer deduplication: avoid multiple questions testing the exact same entity
+        ent = _normalize_answer_entity(h.get("answer") or "")
+        if ent and ent in seen_entities:
             continue
         fp = _fp(h["question_text"])
         if fp:
@@ -592,6 +610,8 @@ def guardian(hits: List[Dict[str, Any]], brief: Brief, exclude_ids: Optional[Set
         seen.append(fp)
         for tok in fp:
             by_token.setdefault(tok, []).append(len(seen) - 1)
+        if ent:
+            seen_entities.add(ent)
         out.append(h)
     return out
 
@@ -617,33 +637,46 @@ def editor(cands: List[Dict[str, Any]], brief: Brief) -> List[Dict[str, Any]]:
     # Only filter by subtopics when the brief carries bank-validated L2 names,
     # or when a non-geographic query explicitly names a full subtopic (e.g. query 'cricket' -> subtopic 'Cricket').
     target_subs = set(brief.subtopics_l2)
-    if not target_subs and brief.query and not brief.locality:
+    # Only filter by subtopics when the brief explicitly asked for them,
+    # never when coming from dynamic intent where BM25 semantic expansion drives relevance.
+    if not target_subs and brief.query and not brief.locality and getattr(brief, "source", None) != "gemini_dynamic_intent":
         q_tokens = {w for w in brief.query.lower().split() if len(w) > 3}
         for c in cands:
             sub = c.get("subtopic_l2")
             if sub and sub.lower() in q_tokens:
                 target_subs.add(sub)
 
-    if target_subs and not brief.cross_topic_padding:
+    if target_subs and not brief.cross_topic_padding and getattr(brief, "source", None) != "gemini_dynamic_intent":
         ordered_cands = [c for c in ordered_cands if c.get("subtopic_l2") in target_subs or not c.get("subtopic_l2")]
 
     chosen: List[Dict[str, Any]] = []
+    chosen_entities: Set[str] = set()
     per_sub: Dict[str, int] = {}
     cap = max(2, -(-n // 3))  # no subtopic takes more than ~a third
     leftovers = []
     for c in ordered_cands:
+        ent = _normalize_answer_entity(c.get("answer") or "")
+        if ent and ent in chosen_entities:
+            continue
         sub = c.get("subtopic_l2") or c.get("topic_l1") or "?"
         if sub not in target_subs and per_sub.get(sub, 0) >= cap:
             leftovers.append(c)
             continue
         per_sub[sub] = per_sub.get(sub, 0) + 1
         chosen.append(c)
+        if ent:
+            chosen_entities.add(ent)
         if len(chosen) == n:
             break
     for c in leftovers:
         if len(chosen) >= n:
             break
+        ent = _normalize_answer_entity(c.get("answer") or "")
+        if ent and ent in chosen_entities:
+            continue
         chosen.append(c)
+        if ent:
+            chosen_entities.add(ent)
     if brief.ramp:
         chosen.sort(key=lambda c: c.get("difficulty_score") or 0.5)
         if brief.hard_bias == "hard":
@@ -793,16 +826,29 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
     if cands and os.getenv("ENABLE_AI_CURATOR", "true").lower() in ("1", "true", "yes"):
         try:
             from backend.app.services.prompt_quiz.curator_llm import curate_quiz_with_gemini
+            # Cap curator candidates at top 35 to prevent token latency timeouts under serverless
+            curator_pool = cands[:35]
             cur_res = curate_quiz_with_gemini(
                 prompt=brief.prompt,
                 target_count=brief.count,
-                candidates=cands,
+                candidates=curator_pool,
                 current_questions=current_questions,
                 previous_brief=previous_brief,
             )
             if cur_res is not None and "selected_ids" in cur_res:
-                cands_by_id = {c["id"]: c for c in cands if c.get("id")}
-                picked = [cands_by_id[qid] for qid in cur_res["selected_ids"] if qid in cands_by_id]
+                cands_by_id = {c["id"]: c for c in curator_pool if c.get("id")}
+                seen_cur_ents: Set[str] = set()
+                deduped_cur_picked = []
+                for qid in cur_res["selected_ids"]:
+                    if qid in cands_by_id:
+                        c = cands_by_id[qid]
+                        ent = _normalize_answer_entity(c.get("answer") or "")
+                        if ent and ent in seen_cur_ents:
+                            continue
+                        if ent:
+                            seen_cur_ents.add(ent)
+                        deduped_cur_picked.append(c)
+                picked = deduped_cur_picked
                 narrative_arc = cur_res.get("narrative_arc")
         except Exception as e:
             logger.warning(f"AI Curator invocation failed ({e}), falling back to deterministic editor")

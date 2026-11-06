@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
-CURATOR_TIMEOUT_S = float(os.getenv("CURATOR_TIMEOUT_S", "5.0"))
+CURATOR_TIMEOUT_S = float(os.getenv("CURATOR_TIMEOUT_S", "6.5"))
 
 CURATION_SCHEMA: Dict[str, Any] = {
     "type": "OBJECT",
@@ -50,9 +50,11 @@ _SYSTEM = (
     "3. HIGH-ORDER HUMAN CURATION:\n"
     "   - Look beyond surface keywords. Match the user's requested tone, audience psychology, and subtle themes.\n"
     "   - When an audience like 'school students' or 'kids' in India is requested, prioritize inspiring figures, scientists, space pioneers, educators, national icons, and achievers that school students study, relate to, and find educational, rather than adult corporate finance, tax avoidance, or adult satire.\n"
-    "   - Avoid semantic redundancy (e.g. if two questions cover nearly the same story, choose the punchier one).\n"
     "   - Build a narrative arc: start with an engaging icebreaker/hook, explore the theme with increasing depth, and finish with a memorable climax or tie-breaker.\n"
-    "4. Output JSON strictly adhering to the schema."
+    "4. DIVERSITY & ZERO DUPLICATE ENTITIES (Crucial):\n"
+    "   - NEVER select two questions that ask about or have the same answer/entity (e.g. do NOT pick two questions about Dadabhai Naoroji, or two about Ramanujan).\n"
+    "   - Every selected question must feature a distinct person, mission, invention, or concept.\n"
+    "5. Output JSON strictly adhering to the schema."
 )
 
 

@@ -11,9 +11,16 @@ Candidate = Dict[str, Any]
 HARD_FLAGS = ("format", "no_images", "school_safe", "evergreen", "india_international")
 _BANDS = {"easy": (0.0, 0.35), "medium": (0.35, 0.65), "hard": (0.65, 1.01)}
 _IN_MARKERS = (
-    "india", "indian", "karnataka", "bangalore", "bengaluru",
-    "mumbai", "bombay", "delhi", "chennai", "madras",
-    "kolkata", "calcutta", "pune", "hyderabad", "mysore", "mysuru", "hassan"
+    "india", "indian", "bharat", "bharatiya", "hindustan", "hindustani",
+    "karnataka", "bangalore", "bengaluru", "mumbai", "bombay", "delhi", "chennai", "madras",
+    "kolkata", "calcutta", "pune", "hyderabad", "mysore", "mysuru", "hassan",
+    "kerala", "tamil nadu", "tamilnadu", "andhra", "telangana", "maharashtra",
+    "gujarat", "rajasthan", "punjab", "haryana", "uttar pradesh", "bihar", "bengal",
+    "odisha", "orissa", "assam", "goa", "kashmir", "ladakh", "himachal", "uttarakhand",
+    "isro", "drdo", "rbi", "lic", "iit", "iim", "aiims", "csir", "chandrayaan", "mangalyaan",
+    "gaganyaan", "aditya l1", "sriharikota", "vikram sarabhai", "satish dhawan",
+    "gandhi", "nehru", "patel", "kalam", "ramanujan", "bose", "tilak", "ambedkar",
+    "modi", "sharma", "chawla", "tendulkar", "kohli", "dhoni"
 )
 
 
@@ -35,7 +42,6 @@ def passes_hard(c: Candidate, filters: Dict[str, Any], format_filter: Optional[s
     if skip != "school_safe" and f.get("school_safe"):
         if not c.get("tagged"):
             return False                      # unknown sensitivity: stay conservative for school audiences
-        # NULL sensitivity means "never assessed" (rule-seeded rows, parked/failed rows), NOT "safe".
         sens = c.get("sensitivity")
         if not isinstance(sens, str) or sens.strip().upper() != "NONE":
             return False
@@ -47,6 +53,8 @@ def passes_hard(c: Candidate, filters: Dict[str, Any], format_filter: Optional[s
         c_geo = (c.get("india_international") or "").upper()
         if c_geo and c_geo in (target_geo, "MIXED"):
             pass
+        elif target_geo == "IN" and c_geo == "INTL":
+            return False
         else:
             txt = (
                 (c.get("question_text") or "") + " " +
