@@ -585,7 +585,7 @@ def _normalize_answer_entity(ans: str) -> str:
     # Strip common honorifics/prefixes: Dr., Shri, Sir, Smt, The, A, An
     primary = re.sub(r"\b(dr\.?|shri|sir|smt\.?|mr\.?|mrs\.?|ms\.?|the|a|an)\b", "", primary).strip()
     cleaned = re.sub(r"[^\w\s]", "", primary)
-    tokens = sorted([t for t in cleaned.split() if len(t) > 2])
+    tokens = [t for t in cleaned.split() if t]
     return " ".join(tokens)
 
 
