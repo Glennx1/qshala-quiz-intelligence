@@ -15,6 +15,8 @@ Retrieval, ranking and selection stay 100% deterministic Python — the LLM's ro
 strictly prompt -> Brief, so there is zero hallucination risk in the questions served.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 import os
 import re
 import time
@@ -319,19 +321,30 @@ def _brief_from_regex(prompt: str, count: Optional[int],
 
 def interpret(prompt: str, count: Optional[int] = None, options: Optional[Dict[str, Any]] = None,
               previous_brief: Optional[Dict[str, Any]] = None,
-              current_questions: Optional[List[Dict[str, Any]]] = None) -> Brief:
-    """Prompt -> Brief. Tries the Gemini Interpreter first; on any failure (no key, timeout,
-    error) falls back seamlessly to the regex parser. `options` are explicit UI toggles applied
-    last and always win. `previous_brief` enables refinement ("make it harder", "5 more")."""
-    gem: Optional[Dict[str, Any]] = None
-    try:
-        from backend.app.services.prompt_quiz.interpreter_llm import interpret_with_gemini
-        gem = interpret_with_gemini(prompt or "", previous_brief, current_questions=current_questions)
-    except Exception:
-        gem = None
+              current_questions: Optional[List[Dict[str, Any]]] = None,
+              db: Optional[Session] = None) -> Brief:
+    """Prompt -> Brief. Tries the Dynamic Intent Engine first (live taxonomy + rich semantic expansions);
+    falls back to Interpreter LLM, then to deterministic regex parser."""
+    brief: Optional[Brief] = None
 
-    brief = _brief_from_gemini(prompt, gem, count, previous_brief) if gem \
-        else _brief_from_regex(prompt, count, previous_brief, current_questions=current_questions)
+    # Stage 1: Try Dynamic Intent Engine with Live Vault Taxonomy
+    if db is not None and os.getenv("ENABLE_INTENT_ENGINE", "true").lower() in ("1", "true", "yes"):
+        try:
+            from backend.app.services.prompt_quiz.intent_engine import deconstruct_prompt
+            brief = deconstruct_prompt(prompt, db, count=count, options=options, previous_brief=previous_brief)
+        except Exception as e_intent:
+            logger.warning(f"Dynamic intent engine deconstruction failed ({e_intent}), falling back to interpreter")
+
+    if brief is None:
+        gem: Optional[Dict[str, Any]] = None
+        try:
+            from backend.app.services.prompt_quiz.interpreter_llm import interpret_with_gemini
+            gem = interpret_with_gemini(prompt or "", previous_brief, current_questions=current_questions)
+        except Exception:
+            gem = None
+
+        brief = _brief_from_gemini(prompt, gem, count, previous_brief) if gem \
+            else _brief_from_regex(prompt, count, previous_brief, current_questions=current_questions)
 
     # Defaults for audience
     f, hb = defaults_for_audience(brief.filters.get("audience"), brief.filters, brief.hard_bias)
@@ -668,19 +681,37 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
                 previous_brief: Optional[Dict[str, Any]] = None,
                 exclude_ids: Optional[Set[str]] = None,
                 current_questions: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
-    brief = interpret(prompt, count, options, previous_brief, current_questions=current_questions)
+    brief = interpret(prompt, count, options, previous_brief, current_questions=current_questions, db=db)
 
-    # Geographic/locality queries: don't restrict to a single L1 topic or L2 subtopics.
-    # "5 questions on Karnataka" wants ALL Karnataka content, not just Geography or Festivals.
+    # Geographic/locality queries: ONLY when the user's prompt is strictly asking for geographic trivia,
+    # NOT when geography is just a qualifier for a subject (e.g. "people in india", "food in delhi", "startups in bangalore").
     geo_names = {"karnataka", "bengaluru", "bangalore", "mumbai", "delhi", "chennai", "pune", "hyderabad", "kolkata", "india", "bharat"}
     q_clean = (brief.query or "").lower().strip()
-    is_pure_geo = (q_clean in geo_names or q_clean in ("", "general knowledge", "trivia", "quiz")) and any(g in (brief.prompt or "").lower() for g in geo_names)
+    p_lower_prompt = (brief.prompt or "").lower().strip()
+
+    # Detect if the prompt has an actual topical subject beyond geography
+    non_geo_signals = (
+        "people", "person", "personality", "personalities", "figure", "figures", "leader", "leaders",
+        "scientist", "scientists", "inventor", "inventors", "author", "authors", "food", "dish", "cuisine",
+        "startup", "startups", "company", "companies", "brand", "brands", "tech", "technology", "ai",
+        "finance", "bank", "banking", "cricket", "sport", "sports", "movie", "movies", "film", "music",
+        "history", "heritage", "art", "law", "court", "women", "symbol", "symbols", "freedom", "education"
+    )
+    has_topical_subject = any(s in p_lower_prompt or s in q_clean for s in non_geo_signals)
+
+    is_pure_geo = (not has_topical_subject) and (
+        q_clean in geo_names
+        or (
+            q_clean in ("", "general knowledge", "trivia", "quiz")
+            and any(re.search(r"\b" + g + r"\b", p_lower_prompt) for g in ["karnataka", "bengaluru", "bangalore", "mumbai", "delhi", "chennai", "pune", "hyderabad", "kolkata"])
+        )
+    )
     if is_pure_geo:
         brief.topics_l1 = []
         brief.subtopics_l2 = []
         if brief.locality:
             brief.query = brief.locality
-        elif any(g in (brief.prompt or "").lower() for g in ["india", "bharat"]):
+        elif any(g in p_lower_prompt for g in ["india", "bharat"]):
             brief.query = "india"
         brief.search_terms = []
 

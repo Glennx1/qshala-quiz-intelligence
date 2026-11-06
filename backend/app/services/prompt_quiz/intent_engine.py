@@ -1,0 +1,295 @@
+"""Dynamic Intuitive Intent Engine powered by Gemini.
+
+Zero-hardcoding architecture:
+Transforms natural language prompts into rich semantic retrieval briefs.
+Dynamically extracts core intent, corrects typos, generates 15-25 semantic
+expansion terms (entities, synonyms, related concepts), and maps to live
+vault taxonomy without brittle static Python dictionaries.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import time
+from typing import Any, Dict, List, Optional, Set
+from sqlalchemy.orm import Session
+
+from backend.app.services.prompt_quiz.retrieval import parse_prompt, WORD_NUMS
+
+logger = logging.getLogger(__name__)
+
+INTENT_TIMEOUT_S = float(os.getenv("INTENT_TIMEOUT_S", "5.0"))
+
+_TAXONOMY_CACHE: Dict[str, Any] = {"at": 0.0, "taxonomy": None}
+_TAXONOMY_TTL_S = 120.0  # refresh from DB every 2 minutes
+
+
+def get_live_vault_taxonomy(db: Session) -> Dict[str, List[str]]:
+    """Fetches all valid topics and subtopics currently populated in the database."""
+    now = time.monotonic()
+    if _TAXONOMY_CACHE["taxonomy"] is not None and (now - _TAXONOMY_CACHE["at"]) < _TAXONOMY_TTL_S:
+        return _TAXONOMY_CACHE["taxonomy"]
+
+    try:
+        from backend.app.models.question import Question
+        rows = db.query(Question.topic, Question.subtopic).distinct().all()
+        taxonomy: Dict[str, Set[str]] = {}
+        for top, sub in rows:
+            if top and top.strip():
+                t = top.strip()
+                taxonomy.setdefault(t, set())
+                if sub and sub.strip():
+                    taxonomy[t].add(sub.strip())
+
+        result = {k: sorted(list(v)) for k, v in taxonomy.items()}
+        _TAXONOMY_CACHE["taxonomy"] = result
+        _TAXONOMY_CACHE["at"] = now
+        return result
+    except Exception as e:
+        logger.warning(f"Failed to fetch live vault taxonomy ({e}), using default fallback")
+        return {
+            "General Knowledge": ["General Trivia", "Modern History", "Space and Astronomy"],
+            "Culture": ["Art and Artists", "Heritage", "Festivals and Traditions", "Literature"],
+            "Politics": ["Governance and Constitution", "Elections"],
+            "Business": ["Brands", "Startups", "Founders", "Advertising", "Automobiles"],
+            "Finance": ["Banks and Banking", "Central Banking", "Coins and Notes", "Economics"],
+            "Technology": ["Artificial Intelligence", "Consumer Tech and Gadgets", "Inventions and Inventors"],
+            "Sports": ["Cricket", "Olympics and Multi-Sport Events", "Other Sports"],
+            "Entertainment": ["Celebrities", "Musicians and Bands"],
+        }
+
+
+INTENT_SCHEMA: Dict[str, Any] = {
+    "type": "OBJECT",
+    "properties": {
+        "normalized_subject": {
+            "type": "STRING",
+            "description": "The clean, corrected core topic/subject of the quiz, fixing any typos (e.g. 'improtant epople' -> 'important people', 'scinetist' -> 'scientist'). Do NOT include counts or location qualifiers."
+        },
+        "count": {
+            "type": "INTEGER",
+            "description": "The number of questions requested (default 10 if unstated)."
+        },
+        "target_audience": {
+            "type": "STRING",
+            "enum": ["school", "college", "corporate", "general"],
+            "description": "Audience persona. 'school' if kids, school students, class 6-12, or assembly; 'college' for campus/fest; 'corporate' for workplace; else 'general'."
+        },
+        "india_focused": {
+            "type": "BOOLEAN",
+            "description": "True if the user asked for Indian context, Indian students, or an Indian city/state."
+        },
+        "locality": {
+            "type": "STRING",
+            "nullable": True,
+            "description": "Specific city or state if requested (e.g. 'Bengaluru', 'Mumbai', 'Karnataka'), otherwise null."
+        },
+        "mapped_topics_l1": {
+            "type": "ARRAY",
+            "items": {"type": "STRING"},
+            "description": "Only valid L1 topics matching the live vault taxonomy. For cross-cutting prompts (people, achievers, inventions, failures, underdogs) leave empty [] so questions across all subjects can be found."
+        },
+        "mapped_subtopics_l2": {
+            "type": "ARRAY",
+            "items": {"type": "STRING"},
+            "description": "Only valid L2 subtopics matching the live vault taxonomy. If the prompt is broad or cross-cutting, leave empty []."
+        },
+        "expansion_terms": {
+            "type": "ARRAY",
+            "items": {"type": "STRING"},
+            "description": "15-25 rich semantic search terms: synonyms, famous names/entities, abbreviations, key concepts, and milestones related to the subject. Never include generic words like 'quiz' or 'question'."
+        },
+        "negative_terms": {
+            "type": "ARRAY",
+            "items": {"type": "STRING"},
+            "description": "Concepts or motifs that clash with the requested tone or audience (e.g. adult satire, tax loopholes, scams for a school quiz)."
+        },
+        "format_filter": {
+            "type": "STRING",
+            "enum": ["CONNECT_4", "STEPPED_CLUE", "ARRANGE_ORDER"],
+            "nullable": True,
+            "description": "ONLY set if the user explicitly requested a specialized format: 'CONNECT_4' for connect 4; 'STEPPED_CLUE' for 3-clues; 'ARRANGE_ORDER' for ordering. MUST BE NULL/NONE for normal prompts so all formats can be included."
+        },
+        "hard_bias": {
+            "type": "STRING",
+            "enum": ["easy", "medium", "hard", "balanced", "spicy"],
+            "nullable": True,
+            "description": "Difficulty bias if requested or implied by audience."
+        },
+        "framing": {
+            "type": "STRING",
+            "description": "A crisp, engaging 1-sentence description of this quiz round."
+        }
+    },
+    "required": ["normalized_subject", "count", "target_audience", "expansion_terms", "framing"]
+}
+
+
+def _build_system_prompt(taxonomy: Dict[str, List[str]]) -> str:
+    tax_summary = []
+    for l1, l2s in sorted(taxonomy.items()):
+        tax_summary.append(f"  - {l1}: {', '.join(l2s[:6])}")
+    tax_str = "\n".join(tax_summary)
+
+    return (
+        "You are the Lead Quiz Intelligence Architect for QShala, India's premier curiosity and quiz platform.\n"
+        "Your task is to intuitively deconstruct the user's natural language quiz prompt into deep semantic search signals.\n\n"
+        "LIVE VAULT TAXONOMY (The real categories in the database):\n"
+        f"{tax_str}\n\n"
+        "CRITICAL RULES:\n"
+        "1. INTUITIVE UNDERSTANDING & TYPO CORRECTION:\n"
+        "   - Autocorrect colloquialisms, slang, and typos (e.g. 'improtant epople' -> 'important people', 'scinetist' -> 'scientist').\n"
+        "   - Distinguish SUBJECT from SCOPE: If the user asks for 'important people for school students in India', the subject is 'important people', the scope is India, and the audience is school students.\n"
+        "   - Never let a geographic scope erase the subject.\n\n"
+        "2. SEMANTIC EXPANSION TERMS (Absolute Priority):\n"
+        "   - Generate 15-25 rich, high-affinity search terms including specific famous entities, pioneers, role models, technical terms, or synonyms.\n"
+        "   - Example: 'important people in India' -> ['kalam', 'ramanujan', 'modi', 'bose', 'wangchuk', 'chanu', 'scientist', 'inventor', 'pioneer', 'leader', 'achiever', 'author', 'freedom fighter', 'isro', 'president', 'nobel'].\n"
+        "   - Example: 'fintech in bangalore' -> ['zerodha', 'phonepe', 'cred', 'navi', 'razorpay', 'upi', 'payments', 'startup', 'fintech', 'kamath'].\n\n"
+        "3. CROSS-CUTTING VS SINGLE-TOPIC PROMPTS:\n"
+        "   - Prompts like 'people', 'inventions', 'failures before success', 'food connections', 'underdogs' cut across Politics, Science, Business, Culture, and Sports.\n"
+        "   - For cross-cutting prompts, set mapped_topics_l1: [] and mapped_subtopics_l2: [] so the search retrieves questions across all domains.\n"
+        "   - Only set mapped_topics_l1 if the prompt is explicitly confined to a single domain (e.g. 'tech only' -> ['Technology']).\n\n"
+        "4. AUDIENCE PERSONA CALIBRATION:\n"
+        "   - If target_audience == 'school' (kids, school students, assembly): prioritize inspiring thinkers, creators, national role models, curricular curiosity. Add adult satire, corporate tax avoidance, and adult controversy to negative_terms.\n"
+        "   - Output strictly valid JSON conforming to the schema."
+    )
+
+
+def deconstruct_prompt(
+    prompt: str,
+    db: Session,
+    count: Optional[int] = None,
+    options: Optional[Dict[str, Any]] = None,
+    previous_brief: Optional[Dict[str, Any]] = None,
+) -> Optional[Brief]:
+    """Deconstructs prompt using Gemini with live taxonomy awareness and rich dynamic expansion."""
+    from backend.app.config import settings
+    api_key = (
+        getattr(settings, "GEMINI_API_KEY", None)
+        or os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+        or os.getenv("GEMINI_KEY")
+    )
+    if not api_key:
+        logger.debug("No GEMINI_API_KEY available; using regex fallback")
+        return None
+
+    taxonomy = get_live_vault_taxonomy(db)
+    system_text = _build_system_prompt(taxonomy)
+
+    user_payload: Dict[str, Any] = {"prompt": prompt}
+    if count:
+        user_payload["requested_count"] = count
+    if previous_brief:
+        user_payload["previous_brief"] = {
+            "query": previous_brief.get("query"),
+            "audience": (previous_brief.get("filters") or {}).get("audience"),
+            "topics_l1": previous_brief.get("topics_l1"),
+        }
+    if options:
+        user_payload["explicit_options"] = options
+
+    user_text = json.dumps(user_payload)
+
+    model = getattr(settings, "GEMINI_MODEL", None) or "gemini-3.8-flash"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+    payload = {
+        "contents": [{"parts": [{"text": user_text}]}],
+        "system_instruction": {"parts": [{"text": system_text}]},
+        "generationConfig": {
+            "response_mime_type": "application/json",
+            "response_schema": INTENT_SCHEMA,
+            "temperature": 0.1,
+        },
+    }
+
+    try:
+        import httpx
+        with httpx.Client(timeout=INTENT_TIMEOUT_S) as client:
+            headers = {"x-goog-api-key": api_key}
+            res = client.post(url, json=payload, headers=headers)
+        if res.status_code != 200:
+            logger.warning(f"Intent engine HTTP {res.status_code} on {model}: {res.text[:120]}")
+            return None
+
+        data = res.json()
+        cands = data.get("candidates") or []
+        if not cands:
+            return None
+
+        parts = (cands[0].get("content") or {}).get("parts") or []
+        raw_text = ""
+        for part in reversed(parts):
+            if "text" in part and not part.get("thought", False):
+                raw_text = part["text"]
+                break
+        if not raw_text:
+            for part in reversed(parts):
+                if "text" in part:
+                    raw_text = part["text"]
+                    break
+
+        if not raw_text:
+            return None
+
+        parsed = json.loads(raw_text)
+
+        # Build Brief from rich intent
+        final_count = int(parsed.get("count") or count or 10)
+        subject = (parsed.get("normalized_subject") or prompt).strip()
+        expansions = parsed.get("expansion_terms") or []
+        target_aud = parsed.get("target_audience") or "general"
+        is_india = bool(parsed.get("india_focused"))
+
+        filters: Dict[str, Any] = {}
+        if is_india:
+                filters["india_focused"] = True
+                filters["india_international"] = "IN"
+
+        if target_aud == "school":
+                filters["audience"] = "school"
+                filters["school_safe"] = True
+                filters["evergreen"] = True
+                filters["evergreen_only"] = True
+        elif target_aud in ("college", "corporate"):
+                filters["audience"] = target_aud
+
+        hard_bias = parsed.get("hard_bias")
+        if target_aud == "school" and not hard_bias:
+                hard_bias = "easy"
+
+        fmt_filter = parsed.get("format_filter")
+        if fmt_filter in ("STANDARD_QA", "STANDARD", "", "NONE", None):
+            fmt_filter = None
+
+        from backend.app.services.prompt_quiz.engine import Brief
+        brief = Brief(
+                prompt=prompt,
+                query=subject,
+                count=final_count,
+                filters=filters,
+                ramp=True,
+                hard_bias=hard_bias,
+                framing=parsed.get("framing") or f"A curated round on {subject}",
+                source="gemini_dynamic_intent",
+                format_filter=fmt_filter,
+                locality=parsed.get("locality"),
+                venue_type=target_aud,
+                tone=[],
+                cross_topic_padding=False,
+                topics_l1=parsed.get("mapped_topics_l1") or [],
+                subtopics_l2=parsed.get("mapped_subtopics_l2") or [],
+                search_terms=expansions,
+        )
+        logger.info(
+                f"Dynamic Intent parsed: subject='{subject}', expansions={len(expansions)}, aud='{target_aud}', l1={brief.topics_l1}"
+        )
+        return brief
+
+    except Exception as e:
+        logger.warning(f"Intent engine attempt failed: {e}")
+
+    return None
