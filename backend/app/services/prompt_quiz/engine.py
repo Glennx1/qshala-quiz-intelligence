@@ -854,7 +854,7 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
         except Exception as e:
             logger.warning(f"AI Curator invocation failed ({e}), falling back to deterministic editor")
 
-    if not picked and (cur_res is None or "selected_ids" not in cur_res):
+    if not picked:
         picked = editor(cands, brief)
 
     # 6. Padding if requested and short
