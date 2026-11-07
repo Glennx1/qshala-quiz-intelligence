@@ -606,12 +606,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Single-file backward compatibility wrapper
-  const handleFileUpload = useCallback(
-    async (file: File) => {
-      await handleMultiFileUpload([file]);
-    },
-    []
-  );
+  const handleFileUpload = async (file: File) => {
+    await handleMultiFileUpload([file]);
+  };
 
   // Retry a failed item (client-side upload failure or server-side ingestion failure)
   const handleRetry = async (id: string) => {

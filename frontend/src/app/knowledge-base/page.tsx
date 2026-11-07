@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, Suspense } from 'react';
+import { useState, useCallback, Suspense } from 'react';
 import dynamic from 'next/dynamic';
 import { useSearchParams } from 'next/navigation';
 import { AlertTriangle, Eye, X } from 'lucide-react';
@@ -17,7 +17,7 @@ const MediaViewerModal = dynamic(() => import('../../components/MediaViewerModal
 import TableSkeleton from '../../components/TableSkeleton';
 import VaultFilters from '../../components/knowledge-base/VaultFilters';
 import QuestionRow from '../../components/knowledge-base/QuestionRow';
-import DuplicateReviewModal from '../../components/knowledge-base/DuplicateReviewModal';
+const DuplicateReviewModal = dynamic(() => import('../../components/knowledge-base/DuplicateReviewModal'), { ssr: false });
 import { useVaultQuestions } from '../../hooks/useVaultQuestions';
 import { isPlaceholderIcon } from '../../lib/placeholderIcons';
 
@@ -25,7 +25,14 @@ function KnowledgeBaseContent() {
   const searchParams = useSearchParams();
   const initialTopic = searchParams.get('topic') || '';
 
-  const [selectedSlide, setSelectedSlide] = useState<any>(null);
+  const [selectedSlide, setSelectedSlide] = useState<{
+    document_title?: string | null;
+    slide_number?: number | null;
+    extracted_text?: string;
+    speaker_notes?: string | null;
+    slide_type?: string;
+    image_paths?: string[];
+  } | null>(null);
   const [selectedQuestionForTags, setSelectedQuestionForTags] = useState<HistoricalQuestion | null>(null);
   const [selectedQuestionForMedia, setSelectedQuestionForMedia] = useState<HistoricalQuestion | null>(null);
   const [selectedDuplicateForReview, setSelectedDuplicateForReview] = useState<HistoricalQuestion | null>(null);
@@ -52,23 +59,23 @@ function KnowledgeBaseContent() {
     handleQuestionTagsSaved, handleAcceptReview, handleResolveDuplicate,
   } = useVaultQuestions(initialTopic, setSelectedDuplicateForReview);
 
-  const getImageSrc = (rawUrl: string | null | undefined) => {
+  const getImageSrc = useCallback((rawUrl: string | null | undefined) => {
     if (!rawUrl) return '';
     if (imgFallbackUrls[rawUrl]) {
       return imgFallbackUrls[rawUrl];
     }
     return resolveMediaUrl(rawUrl);
-  };
+  }, [imgFallbackUrls]);
 
-  const handleImgError = (rawUrl: string) => {
-    const current = getImageSrc(rawUrl);
-    const nextFallback = getFallbackMediaUrl(current);
-    if (nextFallback && nextFallback !== current) {
+  const handleImgError = useCallback((rawUrl: string) => {
+    const current = resolveMediaUrl(rawUrl);
+    const nextFallback = getFallbackMediaUrl(imgFallbackUrls[rawUrl] || current);
+    if (nextFallback && nextFallback !== (imgFallbackUrls[rawUrl] || current)) {
       setImgFallbackUrls((prev) => ({ ...prev, [rawUrl]: nextFallback }));
     }
-  };
+  }, [imgFallbackUrls]);
 
-  const handleViewSlide = (q: HistoricalQuestion) => {
+  const handleViewSlide = useCallback((q: HistoricalQuestion) => {
     const rawQImgs = (q.question_images && q.question_images.length > 0)
       ? q.question_images
       : (q.image_refs || []);
@@ -84,7 +91,7 @@ function KnowledgeBaseContent() {
       slide_type: 'QUESTION',
       image_paths: allSlideImgs,
     });
-  };
+  }, []);
 
   return (
     <div className="p-6 sm:p-8 lg:p-10 max-w-7xl mx-auto space-y-6">

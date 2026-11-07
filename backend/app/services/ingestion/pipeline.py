@@ -92,8 +92,30 @@ from backend.app.services.ai.factory import get_embedding_provider, get_llm_prov
 
 logger = logging.getLogger(__name__)
 
-# Global tracker for real-time progress polling
+# Global tracker for real-time progress polling.
+# Entries are evicted after _REGISTRY_TTL_S seconds (completed/failed) or _REGISTRY_MAX entries.
 INGESTION_STATUS_REGISTRY: Dict[str, Dict[str, Any]] = {}
+_REGISTRY_TTL_S: float = float(os.getenv("INGESTION_REGISTRY_TTL_S", "3600"))
+_REGISTRY_MAX: int = 200
+
+
+def _evict_stale_registry() -> None:
+    """Remove completed/failed entries older than _REGISTRY_TTL_S, and cap at _REGISTRY_MAX."""
+    if len(INGESTION_STATUS_REGISTRY) <= _REGISTRY_MAX // 2:
+        return
+    now = time.time()
+    to_remove = []
+    for doc_id, entry in INGESTION_STATUS_REGISTRY.items():
+        status = entry.get("status", "")
+        ts = entry.get("_ts", 0)
+        if status in ("COMPLETED", "FAILED", "CANCELLED") and (now - ts) > _REGISTRY_TTL_S:
+            to_remove.append(doc_id)
+    for doc_id in to_remove:
+        INGESTION_STATUS_REGISTRY.pop(doc_id, None)
+    if len(INGESTION_STATUS_REGISTRY) > _REGISTRY_MAX:
+        sorted_entries = sorted(INGESTION_STATUS_REGISTRY.items(), key=lambda x: x[1].get("_ts", 0))
+        for doc_id, _ in sorted_entries[:len(INGESTION_STATUS_REGISTRY) - _REGISTRY_MAX]:
+            INGESTION_STATUS_REGISTRY.pop(doc_id, None)
 
 
 def _ensure_clean(db: Session, where: str) -> None:
@@ -225,6 +247,7 @@ class IngestionPipeline:
         self.llm_provider = get_llm_provider()
 
     async def run(self, document_id: str):
+        _evict_stale_registry()
         INGESTION_STATUS_REGISTRY[document_id] = {
             "document_id": document_id,
             "status": "PROCESSING",
@@ -235,6 +258,7 @@ class IngestionPipeline:
             "error": None,
             "detail": "Upload received. Starting to process the deck.",
             "events": [],
+            "_ts": time.time(),
         }
         progress.event(INGESTION_STATUS_REGISTRY[document_id], "Upload received, starting to process the deck")
 
@@ -913,7 +937,8 @@ class IngestionPipeline:
                 "current_step": "Ingestion completed successfully" + _tag_note,
                 "slides_processed": len(slide_models),
                 "questions_extracted": len(question_models),
-                "duplicates_filtered": len(duplicates)
+                "duplicates_filtered": len(duplicates),
+                "_ts": time.time(),
             })
 
         except IngestionCancelled:
@@ -942,7 +967,8 @@ class IngestionPipeline:
             INGESTION_STATUS_REGISTRY[document_id].update({
                 "status": "FAILED",
                 "error": str(e),
-                "current_step": f"Error: {str(e)}"
+                "current_step": f"Error: {str(e)}",
+                "_ts": time.time(),
             })
         finally:
             if own_session:

@@ -297,13 +297,14 @@ class HybridRetriever:
                 candidates = [(q, doc, slide) for (q, doc, slide, _dist) in rows]
                 candidate_distances = {q.id: float(_dist) for (q, doc, slide, _dist) in rows if _dist is not None}
         else:
-            # Step 2 (fallback): no pgvector available -- score every matching
-            # row in Python, same as this always did.
+            # Step 2 (fallback): no pgvector available -- score matching rows
+            # in Python. Cap at 2000 to avoid OOM on large vaults.
+            _FALLBACK_CAP = 2000
             query_builder = self._apply_topic_filter(
                 self._apply_grade_filter(self._join_query(), grade_min, grade_max),
                 topic
             )
-            candidates = query_builder.all()
+            candidates = query_builder.limit(_FALLBACK_CAP).all()
 
             if not candidates:
                 candidates = self._join_query().limit(pool_size).all()

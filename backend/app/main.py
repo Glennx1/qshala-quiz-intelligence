@@ -153,7 +153,7 @@ _cors_origins = (
     else ["http://localhost:3000", "http://127.0.0.1:3000"]
 )
 _cors_origin_regex = (
-    r"^https://.*\.vercel\.app$|^https://.*\.run\.app$|^http://localhost(:\d+)?$|^http://127\.0\.0\.1(:\d+)?$"
+    r"^https://qshala[a-z0-9-]*\.vercel\.app$|^https://qshala[a-z0-9-]*\.run\.app$|^http://localhost(:\d+)?$|^http://127\.0\.0\.1(:\d+)?$"
 )
 app.add_middleware(
     CORSMiddleware,
@@ -196,6 +196,15 @@ if os.getenv("K_SERVICE") and not settings.API_KEY_SECRET:
     logging.getLogger(__name__).warning(
         "Running on Cloud Run with API_KEY_SECRET unset: every API route is open to anonymous callers. "
         "Set API_KEY_SECRET (and REQUIRE_API_KEY=1 to refuse to run open).")
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 
 @app.middleware("http")
@@ -295,14 +304,7 @@ def health():
     tell what's actually wrong, instead of a blind 200 OK that doesn't mean anything."""
     from fastapi.responses import JSONResponse
     from sqlalchemy import text as _sql_text
-    from backend.app.database import DB_BACKEND, DB_PERSISTENT, raw_db_url, engine
-
-    host = "local file"
-    if DB_PERSISTENT:
-        try:
-            host = raw_db_url.split("@", 1)[1].split("/", 1)[0]   # host only, never credentials
-        except Exception:
-            host = "postgres"
+    from backend.app.database import DB_BACKEND, DB_PERSISTENT, engine
 
     problems = []
     try:
@@ -333,15 +335,12 @@ def health():
         "status": "healthy" if healthy else "unhealthy",
         "database": DB_BACKEND,
         "persistent": DB_PERSISTENT,
-        "db_host": host,
         "checks": {
             "database_reachable": db_reachable,
             "gemini_key_configured": gemini_configured,
             "r2_configured": r2_complete if r2_touched else None,
         },
         "problems": problems or None,
-        "warning": None if DB_PERSISTENT else
-                   "Data is NOT persistent (SQLite on ephemeral disk). Set DATABASE_URL to Neon.",
     }
     return JSONResponse(content=body, status_code=200 if healthy else 503)
 

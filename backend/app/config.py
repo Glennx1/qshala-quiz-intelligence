@@ -377,9 +377,4 @@ class Settings(BaseSettings):
         env_file = ".env"
         extra = "ignore"
 
-# Ensure no empty strings slip into settings
-for _k, _v in list(os.environ.items()):
-    if _v == "":
-        os.environ.pop(_k, None)
-
 settings = Settings()

@@ -118,7 +118,14 @@ if is_postgres:
     # and causing Cloud Run startup TCP probes to fail with DEADLINE_EXCEEDED.
     # Therefore, skip startup options if connecting through a pooler.
     is_pooled = "-pooler" in raw_db_url or "neon.tech" in raw_db_url
-    _pg_base = dict(echo=False, pool_pre_ping=True, pool_recycle=280)
+    _pg_base = dict(
+        echo=False,
+        pool_pre_ping=True,
+        pool_recycle=280,
+        pool_size=5,
+        max_overflow=10,
+        pool_timeout=30,
+    )
     _pg_connect_args = None if is_pooled else {"options": "-c idle_in_transaction_session_timeout=0"}
     _attempts = (_pg_connect_args, None) if _pg_connect_args else (None,)
     for _attempt_args in _attempts:
@@ -439,28 +446,39 @@ def ensure_schema_columns():
             from backend.app.services.tagging.difficulty_engine import DifficultyEngine
             from backend.app.models.question import Question
 
+            _BACKFILL_BATCH = 200
             sess = SessionLocal()
-            unhashed = sess.query(Question).filter(Question.content_hash.is_(None)).all()
-            if unhashed:
-                tagger = AutoTagger()
-                diff_eng = DifficultyEngine()
-                for q in unhashed:
-                    q.content_hash = Deduplicator.compute_hash(q.question_text, q.answer)
-                    t_data = tagger.tag_question(q.question_text, q.answer, q.explanation or "")
-                    d_data = diff_eng.evaluate(q.question_text, q.answer, q.explanation or "")
-                    q.topics = t_data["topics"]
-                    q.tags = t_data["tags"]
-                    q.question_hook = t_data["question_hook"]
-                    q.curiosity_score = t_data["curiosity_score"]
-                    q.temporal_nature = t_data["temporal_nature"]
-                    q.difficulty = d_data["difficulty"]
-                    q.difficulty_score = d_data["difficulty_score"]
-                    q.cognitive_level = d_data["cognitive_level"]
-                    q.audience_suitability = d_data["audience_suitability"]
-                    q.provenance_decks = [{"document_id": q.document_id, "slide_id": q.slide_id}]
-                    q.occurrence_count = 1
-                sess.commit()
-            sess.close()
+            try:
+                total = sess.query(Question).filter(Question.content_hash.is_(None)).count()
+                if total:
+                    tagger = AutoTagger()
+                    diff_eng = DifficultyEngine()
+                    offset = 0
+                    while offset < total:
+                        batch = (sess.query(Question)
+                                 .filter(Question.content_hash.is_(None))
+                                 .limit(_BACKFILL_BATCH).all())
+                        if not batch:
+                            break
+                        for q in batch:
+                            q.content_hash = Deduplicator.compute_hash(q.question_text, q.answer)
+                            t_data = tagger.tag_question(q.question_text, q.answer, q.explanation or "")
+                            d_data = diff_eng.evaluate(q.question_text, q.answer, q.explanation or "")
+                            q.topics = t_data["topics"]
+                            q.tags = t_data["tags"]
+                            q.question_hook = t_data["question_hook"]
+                            q.curiosity_score = t_data["curiosity_score"]
+                            q.temporal_nature = t_data["temporal_nature"]
+                            q.difficulty = d_data["difficulty"]
+                            q.difficulty_score = d_data["difficulty_score"]
+                            q.cognitive_level = d_data["cognitive_level"]
+                            q.audience_suitability = d_data["audience_suitability"]
+                            q.provenance_decks = [{"document_id": q.document_id, "slide_id": q.slide_id}]
+                            q.occurrence_count = 1
+                        sess.commit()
+                        offset += len(batch)
+            finally:
+                sess.close()
         except Exception as be:
             logger.debug(f"Legacy backfill notice: {be}")
 

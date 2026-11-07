@@ -5,8 +5,11 @@ from backend.app.models.question import Question
 from backend.app.services.ai.factory import get_embedding_provider
 from backend.app.services.retrieval.vector_search import batch_cosine_similarities
 from backend.app.config import settings
+from backend.app.database import is_postgres, PG_VECTOR_AVAILABLE
 
 logger = logging.getLogger(__name__)
+
+_ANN_POOL = 50
 
 class DuplicateDetector:
     def __init__(self, db: Session):
@@ -16,21 +19,37 @@ class DuplicateDetector:
 
     async def check_duplicate(self, question_text: str) -> Tuple[float, Optional[str], bool]:
         """
-        Calculates cosine similarity of question_text against all historical questions.
+        Calculates cosine similarity of question_text against historical questions.
+        Uses pgvector ANN index when available, falling back to in-memory scan with a limit.
         Returns: (highest_similarity_score, most_similar_question_text, is_duplicate)
         """
-        all_questions = self.db.query(Question).all()
-        if not all_questions:
-            return 0.0, None, False
-
         try:
             q_emb = await self.embedding_provider.get_embedding(question_text)
         except Exception:
-            return 0.0, None, False        # no real embedding: cannot judge similarity, so don't flag a duplicate
+            return 0.0, None, False
+
+        if is_postgres and PG_VECTOR_AVAILABLE:
+            distance_col = Question.embedding.cosine_distance(q_emb)
+            row = (self.db.query(Question.question_text, distance_col.label("dist"))
+                   .filter(Question.embedding.isnot(None))
+                   .order_by(distance_col)
+                   .limit(1)
+                   .first())
+            if row is None:
+                return 0.0, None, False
+            sim = round(1.0 - float(row.dist), 3)
+            return sim, row.question_text, sim >= self.threshold
+
+        candidates = (self.db.query(Question)
+                      .filter(Question.embedding.isnot(None))
+                      .limit(5000)
+                      .all())
+        if not candidates:
+            return 0.0, None, False
 
         candidate_embs = []
         valid_questions = []
-        for q in all_questions:
+        for q in candidates:
             if isinstance(q.embedding, list) and len(q.embedding) == len(q_emb):
                 candidate_embs.append(q.embedding)
                 valid_questions.append(q)

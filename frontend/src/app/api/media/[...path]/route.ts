@@ -20,17 +20,34 @@ export async function GET(
   context: { params: Promise<{ path: string[] }> }
 ) {
   const { path: pathSegments } = await context.params;
+
+  // Reject path segments that attempt directory traversal
+  if (pathSegments.some(seg => seg === '..' || seg === '.' || seg.includes('\0'))) {
+    return NextResponse.json({ error: 'Invalid path' }, { status: 400 });
+  }
+
   const relativePath = pathSegments.join('/');
 
   // Search candidate root directories
-  const candidatePaths = [
-    path.join(process.cwd(), 'public', 'static', relativePath),
-    path.join(process.cwd(), 'public', relativePath),
-    path.join(process.cwd(), '..', 'backend', 'storage', relativePath),
-    path.join(process.cwd(), '..', 'backend', 'storage', 'slides', relativePath),
-    path.join('/tmp', 'qshala_storage', relativePath),
-    path.join('/tmp', 'qshala_storage', 'slides', relativePath),
+  const rootDirs = [
+    path.join(process.cwd(), 'public', 'static'),
+    path.join(process.cwd(), 'public'),
+    path.join(process.cwd(), '..', 'backend', 'storage'),
+    path.join(process.cwd(), '..', 'backend', 'storage', 'slides'),
+    path.join('/tmp', 'qshala_storage'),
+    path.join('/tmp', 'qshala_storage', 'slides'),
   ];
+
+  const candidatePaths = rootDirs.map(root => {
+    const joined = path.join(root, relativePath);
+    const resolved = path.resolve(joined);
+    const resolvedRoot = path.resolve(root);
+    // Containment check: resolved path must stay inside its root
+    if (!resolved.startsWith(resolvedRoot + path.sep) && resolved !== resolvedRoot) {
+      return null;
+    }
+    return resolved;
+  }).filter((p): p is string => p !== null);
 
   for (const filePath of candidatePaths) {
     if (fs.existsSync(/*turbopackIgnore: true*/ filePath)) {
@@ -71,8 +88,15 @@ export async function GET(
           });
         }
 
-        const buffer = fs.readFileSync(/*turbopackIgnore: true*/ filePath);
-        return new NextResponse(buffer, {
+        const fullStream = fs.createReadStream(/*turbopackIgnore: true*/ filePath);
+        const webFullStream = new ReadableStream({
+          start(controller) {
+            fullStream.on('data', (chunk) => controller.enqueue(chunk));
+            fullStream.on('end', () => controller.close());
+            fullStream.on('error', (err) => controller.error(err));
+          },
+        });
+        return new NextResponse(webFullStream, {
           status: 200,
           headers: {
             'Content-Type': contentType,

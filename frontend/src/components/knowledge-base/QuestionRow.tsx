@@ -1,3 +1,4 @@
+import React from 'react';
 import {
   AlertTriangle, Star, Play, Volume2, Image as ImageIcon, Video, Layers,
   CheckCircle, Tag, ExternalLink,
@@ -26,7 +27,7 @@ export interface QuestionRowProps {
   setTagFilter: (v: string) => void;
 }
 
-export default function QuestionRow({
+function QuestionRow({
   q,
   activeTab,
   getImageSrc,
@@ -403,3 +404,5 @@ export default function QuestionRow({
     </tr>
   );
 }
+
+export default React.memo(QuestionRow);

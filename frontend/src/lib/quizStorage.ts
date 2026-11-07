@@ -33,11 +33,25 @@ export function saveLocalQuiz(quiz: Quiz): void {
     } else {
       updated = [quiz, ...current];
     }
-    // Cap at 100 recent quizzes to prevent storage bloat
-    if (updated.length > 100) {
-      updated = updated.slice(0, 100);
+    // Cap at 50 recent quizzes to stay well within localStorage's ~5MB limit
+    if (updated.length > 50) {
+      updated = updated.slice(0, 50);
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    const serialized = JSON.stringify(updated);
+    try {
+      localStorage.setItem(STORAGE_KEY, serialized);
+    } catch (storageErr) {
+      // QuotaExceededError: shed oldest quizzes until it fits
+      let trimmed = updated;
+      while (trimmed.length > 1) {
+        trimmed = trimmed.slice(0, Math.floor(trimmed.length * 0.75));
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+          return;
+        } catch { /* keep trimming */ }
+      }
+      localStorage.removeItem(STORAGE_KEY);
+    }
   } catch (err) {
     console.error('Error saving quiz to localStorage:', err);
   }

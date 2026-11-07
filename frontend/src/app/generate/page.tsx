@@ -91,7 +91,7 @@ const FALLBACK_STARTERS = [
   'Warm-up quiz on brands and logos, no images',
 ];
 
-async function api<T>(path: string, body?: unknown): Promise<T> {
+async function apiFetch<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${getApiBase()}${path}`, {
     method: body === undefined ? 'GET' : 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -139,7 +139,7 @@ export default function QuizzerHome() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- random pick must run after hydration
     setGreeting(GREETINGS[Math.floor(Math.random() * GREETINGS.length)]);
     setPh(PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)]);
-    api<{ starters: string[] }>('/prompt-quiz/starters').then((d) => setStarters(d.starters.slice(0, 4))).catch(() => {});
+    apiFetch<{ starters: string[] }>('/prompt-quiz/starters').then((d) => setStarters(d.starters.slice(0, 4))).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -168,7 +168,7 @@ export default function QuizzerHome() {
     setError(''); setStage(0); setLoading(true);
     try {
       const payload: Record<string, unknown> = { prompt: p, ...extraPayload };
-      const d = await api<Draft>('/prompt-quiz/draft', payload);
+      const d = await apiFetch<Draft>('/prompt-quiz/draft', payload);
       setDraft(d);
       setQs(d.questions);
       setChecked(new Set(d.questions.map((q) => q.id)));
@@ -193,7 +193,7 @@ export default function QuizzerHome() {
         question_text: q.question_text,
         topic: q.subtopic_l2 || q.topic_l1,
       }));
-      const d = await api<Draft>('/prompt-quiz/draft', {
+      const d = await apiFetch<Draft>('/prompt-quiz/draft', {
         prompt: `replace question ${slotIndex} with ${t}`,
         previous_brief: draft.brief,
         keep_ids: Array.from(locked),
@@ -229,7 +229,7 @@ export default function QuizzerHome() {
         topic: q.subtopic_l2 || q.topic_l1,
       }));
 
-      const d = await api<Draft>('/prompt-quiz/draft', {
+      const d = await apiFetch<Draft>('/prompt-quiz/draft', {
         prompt: `change ${unselectedCount} questions to ${t}`,
         previous_brief: draft.brief,
         keep_ids: keptIds,
@@ -250,7 +250,7 @@ export default function QuizzerHome() {
 
   async function swap(id: string) {
     try {
-      const nq = await api<DraftQ>('/prompt-quiz/swap', {
+      const nq = await apiFetch<DraftQ>('/prompt-quiz/swap', {
         prompt: lastPrompt,
         question_id: id,
         keep_ids: qs.map((q) => q.id),
@@ -281,7 +281,7 @@ export default function QuizzerHome() {
     if (selectedIds.length === 0) return;
     setSaving(true);
     try {
-      const r = await api<{ quiz_id: string }>('/prompt-quiz/save', {
+      const r = await apiFetch<{ quiz_id: string }>('/prompt-quiz/save', {
         prompt: lastPrompt,
         question_ids: selectedIds,
         brief: draft?.brief,
@@ -315,7 +315,7 @@ export default function QuizzerHome() {
 
     setError(''); setLoading(true); setStage(0);
     try {
-      const d = await api<Draft>('/prompt-quiz/draft', {
+      const d = await apiFetch<Draft>('/prompt-quiz/draft', {
         prompt: textToUse,
         previous_brief: draft.brief,
         keep_ids: keptIds,

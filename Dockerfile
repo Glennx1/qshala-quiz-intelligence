@@ -8,13 +8,19 @@ WORKDIR /app
 # build-essential + libpq-dev are a safety net in case any dependency needs to compile
 # from source on this platform; psycopg2-binary/Pillow normally ship prebuilt wheels.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential libpq-dev \
+    build-essential libpq-dev curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
 COPY backend backend
+
+# Run as non-root for defense in depth
+RUN groupadd -r qshala && useradd -r -g qshala -d /app -s /sbin/nologin qshala \
+    && mkdir -p /tmp/storage /tmp/storage/uploads /tmp/storage/slides /tmp/storage/exports /tmp/storage/blobs \
+    && chown -R qshala:qshala /app /tmp/storage
+USER qshala
 
 ENV PYTHONUNBUFFERED=1
 ENV SERVER_MEMORY_LIMIT_MB=2048
@@ -27,6 +33,9 @@ ENV CHUNK_CONCURRENCY=8
 ENV BIG_DECODE_CONCURRENCY=6
 ENV MALLOC_ARENA_MAX=4
 EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD curl -f http://localhost:${PORT:-8080}/health || exit 1
 
 # Cloud Run injects $PORT (defaults to 8080); single worker -- see .env.example, the
 # upload queue's advisory lock and in-process state assume one process per container.
