@@ -596,12 +596,13 @@ def guardian(hits: List[Dict[str, Any]], brief: Brief, exclude_ids: Optional[Set
     out, seen = [], []
     seen_entities: Set[str] = set()
     by_token: Dict[str, List[int]] = {}
+    common_geo = {"bengaluru", "bangalore", "mumbai", "delhi", "india", "chennai", "kolkata", "hyderabad", "pune"}
     for h in hits:
         if exclude_ids and h["id"] in exclude_ids:
             continue
         # Entity / answer deduplication: avoid multiple questions testing the exact same entity
         ent = _normalize_answer_entity(h.get("answer") or "")
-        if ent and ent in seen_entities:
+        if ent and ent not in common_geo and ent in seen_entities:
             continue
         fp = _fp(h["question_text"])
         if fp:
@@ -652,12 +653,13 @@ def editor(cands: List[Dict[str, Any]], brief: Brief) -> List[Dict[str, Any]]:
 
     chosen: List[Dict[str, Any]] = []
     chosen_entities: Set[str] = set()
+    common_geo = {"bengaluru", "bangalore", "mumbai", "delhi", "india", "chennai", "kolkata", "hyderabad", "pune"}
     per_sub: Dict[str, int] = {}
     cap = max(2, -(-n // 3))  # no subtopic takes more than ~a third
     leftovers = []
     for c in ordered_cands:
         ent = _normalize_answer_entity(c.get("answer") or "")
-        if ent and ent in chosen_entities:
+        if ent and ent not in common_geo and ent in chosen_entities:
             continue
         sub = c.get("subtopic_l2") or c.get("topic_l1") or "?"
         if sub not in target_subs and per_sub.get(sub, 0) >= cap:
@@ -840,11 +842,12 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
                 cands_by_id = {c["id"]: c for c in curator_pool if c.get("id")}
                 seen_cur_ents: Set[str] = set()
                 deduped_cur_picked = []
+                common_geo = {"bengaluru", "bangalore", "mumbai", "delhi", "india", "chennai", "kolkata", "hyderabad", "pune"}
                 for qid in cur_res["selected_ids"]:
                     if qid in cands_by_id:
                         c = cands_by_id[qid]
                         ent = _normalize_answer_entity(c.get("answer") or "")
-                        if ent and ent in seen_cur_ents:
+                        if ent and ent not in common_geo and ent in seen_cur_ents:
                             continue
                         if ent:
                             seen_cur_ents.add(ent)
@@ -854,7 +857,7 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
         except Exception as e:
             logger.warning(f"AI Curator invocation failed ({e}), falling back to deterministic editor")
 
-    if not picked:
+    if not picked and cur_res is None:
         picked = editor(cands, brief)
 
     # 6. Padding if requested and short
