@@ -1,7 +1,6 @@
 import asyncio
-from typing import List, Optional, Dict, Any, Set
+from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, Query, HTTPException
-from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func, desc, asc, String
 from backend.app.database import get_db
@@ -168,16 +167,14 @@ def get_topic_summary(topic: str, db: Session = Depends(get_db)):
     """
     Returns deep pedagogical metadata for a given topic in the vault:
     total questions, difficulty breakdown, subtopics, grade coverage, and previews.
-    Uses aggregation queries instead of loading all matching rows.
     """
-    safe_topic = topic.replace("%", r"\%").replace("_", r"\_")
-    topic_filter = or_(
-        Question.topic.ilike(f"%{safe_topic}%"),
-        Question.subtopic.ilike(f"%{safe_topic}%")
+    questions = (
+        db.query(Question)
+        .filter(or_(Question.topic.ilike(f"%{topic}%"), Question.subtopic.ilike(f"%{topic}%")))
+        .all()
     )
 
-    total = db.query(func.count(Question.id)).filter(topic_filter).scalar() or 0
-    if total == 0:
+    if not questions:
         return {
             "topic": topic,
             "total_questions": 0,
@@ -188,75 +185,68 @@ def get_topic_summary(topic: str, db: Session = Depends(get_db)):
             "sample_questions": []
         }
 
-    diff_rows = (db.query(func.coalesce(Question.difficulty, 'Medium'), func.count(Question.id))
-                 .filter(topic_filter)
-                 .group_by(func.coalesce(Question.difficulty, 'Medium'))
-                 .all())
     diff_counts = {"Easy": 0, "Medium": 0, "Hard": 0}
-    for d_val, cnt in diff_rows:
-        diff_counts[d_val] = diff_counts.get(d_val, 0) + cnt
+    subtopics = set()
+    grade_mins = []
+    grade_maxs = []
 
-    subtopic_rows = (db.query(Question.subtopic)
-                     .filter(topic_filter, Question.subtopic.isnot(None))
-                     .distinct().all())
-    subtopics = sorted([r[0] for r in subtopic_rows if r[0]])
+    for q in questions:
+        d = q.difficulty or "Medium"
+        diff_counts[d] = diff_counts.get(d, 0) + 1
+        if q.subtopic:
+            subtopics.add(q.subtopic)
+        if q.grade_min:
+            grade_mins.append(q.grade_min)
+        if q.grade_max:
+            grade_maxs.append(q.grade_max)
 
-    grade_agg = (db.query(func.min(Question.grade_min), func.max(Question.grade_max))
-                 .filter(topic_filter).first())
-    g_min = grade_agg[0] if grade_agg and grade_agg[0] else 3
-    g_max = grade_agg[1] if grade_agg and grade_agg[1] else 12
-
-    sample_qs = db.query(Question).filter(topic_filter).limit(3).all()
     samples = [
         {"question_text": q.question_text, "difficulty": q.difficulty, "answer": q.answer}
-        for q in sample_qs
+        for q in questions[:3]
     ]
 
     return {
         "topic": topic,
-        "total_questions": total,
+        "total_questions": len(questions),
         "difficulty_breakdown": diff_counts,
-        "subtopics": subtopics,
-        "grade_min": g_min,
-        "grade_max": g_max,
+        "subtopics": sorted(list(subtopics)),
+        "grade_min": min(grade_mins) if grade_mins else 3,
+        "grade_max": max(grade_maxs) if grade_maxs else 12,
         "sample_questions": samples
     }
 
 @router.get("/tags", response_model=List[Dict[str, Any]])
 def list_vault_tags(
     topic: Optional[str] = Query(None, description="Optional topic filter"),
-    limit: int = Query(100, ge=1, le=500, description="Max tags to return"),
     db: Session = Depends(get_db)
 ):
     """
     Returns an inverted tag index of all unique entity tags in the Question Vault,
     their frequency counts, linked macro-topics, and co-occurring tags.
-    Only loads the tags and topic columns instead of full Question rows.
     """
     topic_str = topic if isinstance(topic, str) and topic.strip() else None
     q_query = db.query(Question.tags, Question.topic)
     if topic_str:
         q_query = q_query.filter(Question.topic.ilike(f"%{topic_str}%"))
-    q_query = q_query.filter(Question.tags.isnot(None))
-    rows = q_query.all()
+    questions = q_query.all()
 
     tag_counts: Dict[str, int] = {}
     tag_topics: Dict[str, Set[str]] = {}
     tag_co_occur: Dict[str, Dict[str, int]] = {}
 
-    for q_tags_raw, q_topic in rows:
-        q_tags = [t.strip().lstrip("#").strip() for t in (q_tags_raw or []) if isinstance(t, str) and t.strip()]
+    for q in questions:
+        q_tags = [t.strip().lstrip("#").strip() for t in (q.tags or []) if isinstance(t, str) and t.strip()]
         for t in q_tags:
             tag_counts[t] = tag_counts.get(t, 0) + 1
-            if q_topic:
-                tag_topics.setdefault(t, set()).add(q_topic)
+            if q.topic:
+                tag_topics.setdefault(t, set()).add(q.topic)
             if t not in tag_co_occur:
                 tag_co_occur[t] = {}
             for other_t in q_tags:
                 if other_t.lower() != t.lower():
                     tag_co_occur[t][other_t] = tag_co_occur[t].get(other_t, 0) + 1
 
-    sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+    sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
     results = []
     for t_name, count in sorted_tags:
         co_sorted = sorted(tag_co_occur.get(t_name, {}).items(), key=lambda x: x[1], reverse=True)
@@ -279,7 +269,7 @@ def preview_tag_quiz_availability(
 ):
     """
     Returns live compilation preview based on selected topic and/or concept tags.
-    Uses SQL-level filtering instead of loading the entire question table.
+    Identifies exact topic+tag matches and cross-topic tag synthesis matches.
     """
     topic_str = topic if isinstance(topic, str) and topic.strip() else None
     tags_str = tags if isinstance(tags, str) and tags.strip() else None
@@ -288,61 +278,46 @@ def preview_tag_quiz_availability(
 
     tag_list = [t.strip().lstrip("#").strip().lower() for t in (tags_str.split(",") if tags_str else []) if t.strip()]
 
-    base_q = db.query(Question)
+    all_questions = db.query(
+        Question.id, Question.question_text, Question.answer, Question.difficulty,
+        Question.topic, Question.tags, Question.grade_min, Question.grade_max,
+    ).all()
 
-    if grade_min_val is not None:
-        base_q = base_q.filter(or_(Question.grade_max.is_(None), Question.grade_max >= grade_min_val))
-    if grade_max_val is not None:
-        base_q = base_q.filter(or_(Question.grade_min.is_(None), Question.grade_min <= grade_max_val))
+    exact_matches = []
+    cross_topic_tag_matches = []
+    topic_only_matches = []
 
-    topic_filter = None
-    if topic_str:
-        topic_filter = or_(
-            Question.topic.ilike(f"%{topic_str}%"),
-            Question.subtopic.ilike(f"%{topic_str}%")
+    for q in all_questions:
+        if grade_min_val and q.grade_max and q.grade_max < grade_min_val:
+            continue
+        if grade_max_val and q.grade_min and q.grade_min > grade_max_val:
+            continue
+
+        q_tags_lower = [t.strip().lstrip("#").strip().lower() for t in (q.tags or []) if isinstance(t, str)]
+        matches_topic = bool(topic_str and topic_str.lower() in (q.topic or "").lower())
+        matches_tags = bool(
+            tag_list and any(
+                any(t == qt or t in qt or qt in t for t in tag_list)
+                for qt in q_tags_lower
+            )
         )
 
-    tag_filter = None
-    if tag_list:
-        tag_conditions = [func.cast(Question.tags, String).ilike(f"%{t}%") for t in tag_list]
-        tag_filter = or_(*tag_conditions)
+        if matches_topic and matches_tags:
+            exact_matches.append(q)
+        elif matches_tags:
+            cross_topic_tag_matches.append(q)
+        elif matches_topic:
+            topic_only_matches.append(q)
 
-    exact_count = 0
-    cross_topic_count = 0
-    topic_only_count = 0
+    combined_pool = exact_matches + cross_topic_tag_matches
+    if not tag_list:
+        combined_pool = topic_only_matches
 
-    if topic_filter is not None and tag_filter is not None:
-        exact_count = base_q.filter(topic_filter, tag_filter).count()
-        cross_topic_count = base_q.filter(~topic_filter, tag_filter).count()
-    elif topic_filter is not None:
-        topic_only_count = base_q.filter(topic_filter).count()
-    elif tag_filter is not None:
-        cross_topic_count = base_q.filter(tag_filter).count()
-
-    if tag_list:
-        if topic_filter is not None:
-            combined_q = base_q.filter(or_(
-                topic_filter & tag_filter,
-                tag_filter
-            ))
-        else:
-            combined_q = base_q.filter(tag_filter)
-    elif topic_filter is not None:
-        combined_q = base_q.filter(topic_filter)
-    else:
-        combined_q = base_q.filter(False)
-
-    total = combined_q.count()
-
-    diff_rows = combined_q.with_entities(
-        func.coalesce(Question.difficulty, 'Medium').label('d'),
-        func.count(Question.id)
-    ).group_by('d').all()
     diff_counts = {"Easy": 0, "Medium": 0, "Hard": 0}
-    for d_val, cnt in diff_rows:
-        diff_counts[d_val] = diff_counts.get(d_val, 0) + cnt
+    for q in combined_pool:
+        d = q.difficulty or "Medium"
+        diff_counts[d] = diff_counts.get(d, 0) + 1
 
-    samples = combined_q.limit(3).all()
     sample_previews = [
         {
             "id": q.id,
@@ -352,24 +327,25 @@ def preview_tag_quiz_availability(
             "topic": q.topic,
             "tags": q.tags or []
         }
-        for q in samples
+        for q in combined_pool[:3]
     ]
 
+    total = len(combined_pool)
     suggested_mode = "HISTORICAL" if total >= 5 else "NEW"
 
     return {
         "topic": topic,
         "tags": tag_list,
         "total_available": total,
-        "exact_matches_count": exact_count,
-        "cross_topic_tag_matches_count": cross_topic_count,
+        "exact_matches_count": len(exact_matches),
+        "cross_topic_tag_matches_count": len(cross_topic_tag_matches),
         "difficulty_breakdown": diff_counts,
         "suggested_mode": suggested_mode,
         "sample_questions": sample_previews
     }
 
 
-@router.get("")
+@router.get("", response_model=List[QuestionResponse])
 async def search_questions(
     query: Optional[str] = Query(None),
     topic: Optional[str] = Query(None),
@@ -402,12 +378,10 @@ async def search_questions(
     fmt_str = fmt_raw.strip().upper() if isinstance(fmt_raw, str) and fmt_raw.strip() else None
     grade_min_val = grade_min if isinstance(grade_min, int) else None
     grade_max_val = grade_max if isinstance(grade_max, int) else None
-    _ALLOWED_SORT_COLUMNS = frozenset({
-        "created_at", "question_text", "topic", "subtopic", "difficulty",
-        "difficulty_score", "curiosity_score", "grade_min", "grade_max",
-    })
-    sort_by_str = sort_by if isinstance(sort_by, str) and sort_by in _ALLOWED_SORT_COLUMNS else "created_at"
-    sort_order_str = sort_order if isinstance(sort_order, str) and sort_order in ("asc", "desc") else "desc"
+    _allowed_sort = {"created_at", "question_text", "topic", "subtopic", "difficulty",
+                     "difficulty_score", "curiosity_score", "grade_min", "grade_max"}
+    sort_by_str = sort_by if isinstance(sort_by, str) and sort_by in _allowed_sort else "created_at"
+    sort_order_str = sort_order if isinstance(sort_order, str) else "desc"
     limit_int = limit if isinstance(limit, int) else 50
     offset_int = offset if isinstance(offset, int) else 0
 
@@ -458,42 +432,30 @@ async def search_questions(
             outerjoin(Document, Question.document_id == Document.id).\
             outerjoin(Slide, Question.slide_id == Slide.id)
 
-        # Build a parallel count query with the same filters
-        count_builder = db.query(func.count(Question.id))
-
         if dup_status_str:
             q_builder = q_builder.filter(Question.duplicate_status == dup_status_str)
-            count_builder = count_builder.filter(Question.duplicate_status == dup_status_str)
         if doc_id_str:
             q_builder = q_builder.filter(Question.document_id == doc_id_str)
-            count_builder = count_builder.filter(Question.document_id == doc_id_str)
         if doc_title_str:
             q_builder = q_builder.filter(Document.title.ilike(f"%{doc_title_str}%"))
-            count_builder = count_builder.outerjoin(Document, Question.document_id == Document.id).filter(Document.title.ilike(f"%{doc_title_str}%"))
         if topic_str:
-            topic_flt = or_(
-                Question.topic.ilike(f"%{topic_str}%"),
-                Question.subtopic.ilike(f"%{topic_str}%")
+            q_builder = q_builder.filter(
+                or_(
+                    Question.topic.ilike(f"%{topic_str}%"),
+                    Question.subtopic.ilike(f"%{topic_str}%")
+                )
             )
-            q_builder = q_builder.filter(topic_flt)
-            count_builder = count_builder.filter(topic_flt)
         if subtopic_str:
             q_builder = q_builder.filter(Question.subtopic.ilike(f"%{subtopic_str}%"))
-            count_builder = count_builder.filter(Question.subtopic.ilike(f"%{subtopic_str}%"))
         if tag_str:
             clean_tag = tag_str.strip().lstrip("#").strip()
-            tag_flt = func.cast(Question.tags, String).ilike(f"%{clean_tag}%")
-            q_builder = q_builder.filter(tag_flt)
-            count_builder = count_builder.filter(tag_flt)
+            q_builder = q_builder.filter(func.cast(Question.tags, String).ilike(f"%{clean_tag}%"))
         if diff_str:
             q_builder = q_builder.filter(Question.difficulty.ilike(diff_str))
-            count_builder = count_builder.filter(Question.difficulty.ilike(diff_str))
         if grade_min_val is not None:
             q_builder = q_builder.filter(Question.grade_min >= grade_min_val)
-            count_builder = count_builder.filter(Question.grade_min >= grade_min_val)
         if grade_max_val is not None:
             q_builder = q_builder.filter(Question.grade_max <= grade_max_val)
-            count_builder = count_builder.filter(Question.grade_max <= grade_max_val)
         if fmt_str:
             target_fmts = [fmt_str]
             if fmt_str in ("CONNECT_4", "CONNECT"):
@@ -513,8 +475,6 @@ async def search_questions(
                 )
             )
 
-        total_count = count_builder.scalar() or 0
-
         # Sorting
         sort_col = getattr(Question, sort_by_str, Question.created_at)
         if sort_order_str == "asc":
@@ -527,14 +487,9 @@ async def search_questions(
         output = []
         for q, doc, slide in items:
             output.append(to_question_response(q, doc, slide))
-        return _enrich(db, output), total_count
+        return _enrich(db, output)
 
-    result, total = await asyncio.to_thread(_filtered_search)
-    from fastapi.encoders import jsonable_encoder
-    return JSONResponse(
-        content=jsonable_encoder(result),
-        headers={"X-Total-Count": str(total), "Access-Control-Expose-Headers": "X-Total-Count"},
-    )
+    return await asyncio.to_thread(_filtered_search)
 
 @router.get("/duplicates", response_model=List[QuestionResponse])
 def list_duplicate_candidates(

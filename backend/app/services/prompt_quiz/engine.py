@@ -427,12 +427,7 @@ def _latest_tags(db: Session) -> Dict[str, Any]:
 
 def _load_bank_uncached(db: Session) -> List[Dict[str, Any]]:
     # The 768-number embedding vector is never read here; leaving it out roughly halves what is fetched per row.
-    qs = (db.query(Question).options(
-              defer(Question.embedding), defer(Question.embedding_model),
-              defer(Question.explanation), defer(Question.options),
-              defer(Question.audio_transcript), defer(Question.video_transcript),
-              defer(Question.raw_media_refs), defer(Question.speaker_notes),
-          )
+    qs = (db.query(Question).options(defer(Question.embedding), defer(Question.embedding_model))
           .filter((Question.duplicate_status != "CONFIRMED_DUPLICATE") | (Question.duplicate_status.is_(None))).all())
     tags: Dict[str, Any] = {}
     try:

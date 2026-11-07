@@ -304,7 +304,14 @@ def health():
     tell what's actually wrong, instead of a blind 200 OK that doesn't mean anything."""
     from fastapi.responses import JSONResponse
     from sqlalchemy import text as _sql_text
-    from backend.app.database import DB_BACKEND, DB_PERSISTENT, engine
+    from backend.app.database import DB_BACKEND, DB_PERSISTENT, raw_db_url, engine
+
+    host = "local file"
+    if DB_PERSISTENT:
+        try:
+            host = raw_db_url.split("@", 1)[1].split("/", 1)[0]   # host only, never credentials
+        except Exception:
+            host = "postgres"
 
     problems = []
     try:
@@ -335,12 +342,15 @@ def health():
         "status": "healthy" if healthy else "unhealthy",
         "database": DB_BACKEND,
         "persistent": DB_PERSISTENT,
+        "db_host": host,
         "checks": {
             "database_reachable": db_reachable,
             "gemini_key_configured": gemini_configured,
             "r2_configured": r2_complete if r2_touched else None,
         },
         "problems": problems or None,
+        "warning": None if DB_PERSISTENT else
+                   "Data is NOT persistent (SQLite on ephemeral disk). Set DATABASE_URL to Neon.",
     }
     return JSONResponse(content=body, status_code=200 if healthy else 503)
 
