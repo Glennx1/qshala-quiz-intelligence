@@ -118,6 +118,11 @@ INTENT_SCHEMA: Dict[str, Any] = {
             "nullable": True,
             "description": "Difficulty bias if requested or implied by audience."
         },
+        "no_images": {
+            "type": "BOOLEAN",
+            "nullable": True,
+            "description": "True if the user asked for text only, no images, without pictures, or non-visual questions."
+        },
         "framing": {
             "type": "STRING",
             "description": "A crisp, engaging 1-sentence description of this quiz round."
@@ -246,6 +251,12 @@ def deconstruct_prompt(
         is_india = bool(parsed.get("india_focused"))
 
         filters: Dict[str, Any] = {}
+        has_no_images = bool(parsed.get("no_images")) or bool(
+            re.search(r"\b(no|without|zero|non-?visual|text-?only)\s*(?:of\s+)?(?:images?|pics?|visuals?|photos?)\b|\btext\s+only\b", prompt.lower())
+        )
+        if has_no_images:
+            filters["no_images"] = True
+            filters["exclude_image"] = True
         if is_india:
                 filters["india_focused"] = True
                 filters["india_international"] = "IN"
