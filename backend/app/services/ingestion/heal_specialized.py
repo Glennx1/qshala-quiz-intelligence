@@ -53,6 +53,10 @@ def heal_specialized_questions(db: Session) -> Dict[str, int]:
     if q_fund and q_fund.question_format != "ARRANGE_ORDER":
         q_fund.question_format = "ARRANGE_ORDER"
         q_fund.question_type = "ARRANGE_ORDER"
+        p = dict(q_fund.format_payload or {})
+        p.update({"has_timer": True, "timer_seconds": 60, "time_limit_seconds": 60, "type": "ARRANGE_ORDER"})
+        q_fund.format_payload = p
+        q_fund.format_data = p
         stats["reclassified_arrange"] += 1
 
     # Question 2: Share price as on 9th September 2026 -> ARRANGE_ORDER
@@ -60,6 +64,10 @@ def heal_specialized_questions(db: Session) -> Dict[str, int]:
     if q_share and q_share.question_format != "ARRANGE_ORDER":
         q_share.question_format = "ARRANGE_ORDER"
         q_share.question_type = "ARRANGE_ORDER"
+        p = dict(q_share.format_payload or {})
+        p.update({"has_timer": True, "timer_seconds": 60, "time_limit_seconds": 60, "type": "ARRANGE_ORDER"})
+        q_share.format_payload = p
+        q_share.format_data = p
         stats["reclassified_arrange"] += 1
 
     # Question 3: Instagram visual rebrand -> VISUAL_CLUE

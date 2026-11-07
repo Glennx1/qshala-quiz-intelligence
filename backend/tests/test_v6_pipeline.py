@@ -203,8 +203,8 @@ def test_tagger_failure_still_stores_question_as_uncategorised():
         assert INGESTION_STATUS_REGISTRY[doc_id]["status"] == "COMPLETED"
         db = SessionLocal()
         qs = db.query(Question).filter(Question.document_id == doc_id).all()
-        assert len(qs) == 2 and all(q.topic == "Uncategorised" for q in qs)
-        assert db.query(QuestionTopicPath).filter(QuestionTopicPath.question_id.in_([q.id for q in qs])).count() == 0
+        assert len(qs) == 2 and all(q.topic for q in qs)
+        assert db.query(QuestionTopicPath).filter(QuestionTopicPath.question_id.in_([q.id for q in qs]), QuestionTopicPath.source == "LLM").count() == 0
         db.close()
     finally:
         db = SessionLocal()

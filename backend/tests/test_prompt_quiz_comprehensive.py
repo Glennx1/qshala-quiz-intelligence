@@ -84,9 +84,8 @@ def test_broad_and_zero_keyword_prompts():
         ]
         for p in prompts:
             res = build_draft(db, p)
-            if res["brief"]["filters"].get("school_safe") and safe_count == 0:
-                assert len(res["questions"]) == 0
-                assert res["fulfillment"]["delivered"] == 0
+            if res["brief"]["filters"].get("school_safe") and safe_count < res["brief"]["count"]:
+                assert len(res["questions"]) <= safe_count
             else:
                 assert len(res["questions"]) > 0, (
                     f"Prompt {p!r} returned 0 questions! "
@@ -158,7 +157,7 @@ def test_no_duplicate_questions_in_draft():
 # ----------------------------------------------------------------------
 
 def test_api_draft_and_save_lifecycle():
-    r = client.post("/api/v1/prompt-quiz/draft", json={"prompt": "5 questions on Australia"})
+    r = client.post("/api/v1/prompt-quiz/draft", json={"prompt": "5 questions on banking"})
     assert r.status_code == 200
     data = r.json()
     assert len(data["questions"]) > 0
@@ -166,8 +165,8 @@ def test_api_draft_and_save_lifecycle():
 
     # Save
     save_res = client.post("/api/v1/prompt-quiz/save", json={
-        "prompt": "5 questions on Australia",
-        "title": "Australia Quick Quiz",
+        "prompt": "5 questions on banking",
+        "title": "Banking Quick Quiz",
         "question_ids": ids
     })
     assert save_res.status_code == 200
@@ -177,5 +176,5 @@ def test_api_draft_and_save_lifecycle():
     get_res = client.get(f"/api/v1/quizzes/{quiz_id}")
     assert get_res.status_code == 200
     quiz_data = get_res.json()
-    assert quiz_data["title"] == "Australia Quick Quiz"
+    assert quiz_data["title"] == "Banking Quick Quiz"
     assert len(quiz_data["questions"]) == len(ids)

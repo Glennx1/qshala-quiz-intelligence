@@ -66,7 +66,7 @@ INTENT_SCHEMA: Dict[str, Any] = {
     "properties": {
         "normalized_subject": {
             "type": "STRING",
-            "description": "The clean, corrected core topic/subject of the quiz, fixing any typos (e.g. 'improtant epople' -> 'important people', 'scinetist' -> 'scientist'). Do NOT include counts or location qualifiers."
+            "description": "The clean, corrected core topic/subject of the quiz, fixing any typos (e.g. 'improtant epople' -> 'important people', 'scinetist' -> 'scientist'). For general, broad, or zero-topic queries (e.g. 'quiz for kids', 'give me 5 questions', 'school quiz', 'family quiz', 'easy questions'), return empty string ''."
         },
         "count": {
             "type": "INTEGER",
@@ -190,6 +190,7 @@ def deconstruct_prompt(
     if previous_brief:
         user_payload["previous_brief"] = {
             "query": previous_brief.get("query"),
+            "count": previous_brief.get("count"),
             "audience": (previous_brief.get("filters") or {}).get("audience"),
             "topics_l1": previous_brief.get("topics_l1"),
         }
@@ -243,9 +244,52 @@ def deconstruct_prompt(
 
         parsed = json.loads(raw_text)
 
-        # Build Brief from rich intent
-        final_count = int(parsed.get("count") or count or 10)
-        subject = (parsed.get("normalized_subject") or prompt).strip()
+        # Relative count expansion and inheritance
+        p_lower = (prompt or "").lower()
+        more_m = re.search(r"\b(?:add|give\s+me\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|couple|few)\s+more\b", p_lower)
+        fewer_m = re.search(r"\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+fewer\b", p_lower)
+        double_m = re.search(r"\bdouble\s+it\b", p_lower)
+        halve_m = re.search(r"\bhalve\s+it\b", p_lower)
+        has_count_in_prompt = bool(re.search(r"\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|twenty|thirty)\s+(?:questions?|qs?)\b", p_lower))
+
+        from backend.app.services.prompt_quiz.retrieval import WORD_NUMS
+        if previous_brief and more_m:
+            raw_val = more_m.group(1).lower()
+            val = int(WORD_NUMS.get(raw_val, raw_val))
+            final_count = min(50, (previous_brief.get("count") or 10) + val)
+        elif previous_brief and fewer_m:
+            raw_val = fewer_m.group(1).lower()
+            val = int(WORD_NUMS.get(raw_val, raw_val))
+            final_count = max(1, (previous_brief.get("count") or 10) - val)
+        elif previous_brief and double_m:
+            final_count = min(50, (previous_brief.get("count") or 10) * 2)
+        elif previous_brief and halve_m:
+            final_count = max(1, (previous_brief.get("count") or 10) // 2)
+        elif previous_brief and not count and not has_count_in_prompt:
+            final_count = int(previous_brief.get("count") or 10)
+        else:
+            final_count = int(count or (parsed.get("count") if has_count_in_prompt else (previous_brief.get("count") if previous_brief else parsed.get("count"))) or 10)
+        final_count = max(1, min(int(final_count), 50))
+
+        raw_sub = parsed.get("normalized_subject")
+        if raw_sub is None:
+            raw_sub = prompt
+        raw_sub = str(raw_sub).strip()
+
+        from backend.app.services.prompt_quiz.retrieval import parse_prompt
+        clean_sub, _, _ = parse_prompt(raw_sub)
+
+        GENERIC_SUBJECTS = {
+            "general knowledge", "general knowledge for kids", "general quiz",
+            "general questions", "kids quiz", "school quiz", "family quiz",
+            "trivia", "quiz", "questions", "general", "general gk", "gk",
+            "general trivia", "kids trivia"
+        }
+        if raw_sub.lower() in GENERIC_SUBJECTS or not clean_sub:
+            subject = ""
+            expansions = []
+        else:
+            subject = raw_sub
         expansions = parsed.get("expansion_terms") or []
         target_aud = parsed.get("target_audience") or "general"
         is_india = bool(parsed.get("india_focused"))
@@ -261,13 +305,16 @@ def deconstruct_prompt(
                 filters["india_focused"] = True
                 filters["india_international"] = "IN"
 
+        is_family_or_school = target_aud == "school" or any(w in p_lower for w in ("school", "kid", "child", "family", "student", "assembly"))
+        if is_family_or_school:
+            filters["school_safe"] = True
+
         if target_aud == "school":
-                filters["audience"] = "school"
-                filters["school_safe"] = True
-                filters["evergreen"] = True
-                filters["evergreen_only"] = True
+            filters["audience"] = "school"
+            filters["evergreen"] = True
+            filters["evergreen_only"] = True
         elif target_aud in ("college", "corporate"):
-                filters["audience"] = target_aud
+            filters["audience"] = target_aud
 
         hard_bias = parsed.get("hard_bias")
         if target_aud == "school" and not hard_bias:
