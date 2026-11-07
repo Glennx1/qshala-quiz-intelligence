@@ -89,7 +89,10 @@ def test_latest_tag_selection_matches_the_old_python_rule():
         assert bank[q_none.id]["tagged"] is False
     finally:
         db.rollback()
-        db.query(Document).filter(Document.id == doc.id).delete()   # cascades to its questions and tags
+        qids = [q_conf.id, q_two.id, q_draft.id, q_none.id]
+        db.query(QshalaTag).filter(QshalaTag.question_id.in_(qids)).delete(synchronize_session=False)
+        db.query(Question).filter(Question.document_id == doc.id).delete(synchronize_session=False)
+        db.query(Document).filter(Document.id == doc.id).delete(synchronize_session=False)
         db.commit()
         db.close()
 

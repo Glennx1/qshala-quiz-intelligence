@@ -133,7 +133,37 @@ def test_retriever_tag_overlap_boosting():
 def test_quiz_generator_with_tags_and_personality():
     print("\n--- Testing Quiz Generator with Personality & Tags ---")
     db = SessionLocal()
+    created_qs = []
+    created_doc = None
     try:
+        if db.query(Question).filter(Question.topic == "Australian History").count() < 3:
+            doc = db.query(Document).first()
+            if not doc:
+                doc = Document(id="doc_test_aus_gen", filename="aus.pptx", title="Australia", file_type="pptx", storage_path="/tmp")
+                db.add(doc)
+                db.commit()
+                created_doc = doc
+            doc_id = doc.id
+            for i, (qtxt, atxt, tags) in enumerate([
+                ("Which British explorer charted Botany Bay in 1770?", "Captain James Cook", ["Captain James Cook", "Maritime Exploration"]),
+                ("In what year did the First Fleet arrive in Botany Bay?", "1788", ["Maritime Exploration", "First Fleet"]),
+                ("What was the original name proposed for Botany Bay by James Cook?", "Stingray Bay", ["Captain James Cook", "Stingray Bay"]),
+            ], 1):
+                q = Question(
+                    id=f"test_aus_gen_q_{i}",
+                    document_id=doc_id,
+                    topic="Australian History",
+                    subtopic="Exploration",
+                    question_text=qtxt,
+                    answer=atxt,
+                    difficulty="Medium",
+                    difficulty_score=0.5,
+                    tags=tags
+                )
+                db.add(q)
+                created_qs.append(q)
+            db.commit()
+
         generator = QuizGenerator(db)
         req = QuizGenerateRequest(
             topic="Australian History",
@@ -171,6 +201,17 @@ def test_quiz_generator_with_tags_and_personality():
         print("[PASS] Quiz generated and exported with Detective Puzzle Master personality!")
 
     finally:
+        for q in created_qs:
+            try:
+                db.delete(q)
+            except Exception:
+                pass
+        if created_doc:
+            try:
+                db.delete(created_doc)
+            except Exception:
+                pass
+        db.commit()
         db.close()
 
 if __name__ == "__main__":

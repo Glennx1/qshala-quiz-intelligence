@@ -153,7 +153,7 @@ def curate_quiz_with_gemini(
             "response_mime_type": "application/json",
             "response_schema": CURATION_SCHEMA,
             "temperature": 0.1,
-            "maxOutputTokens": 450,
+            "maxOutputTokens": 1200,
         },
     }
 
