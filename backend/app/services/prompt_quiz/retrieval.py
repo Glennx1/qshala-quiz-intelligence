@@ -16,7 +16,9 @@ Question dict shape (use your qshala_tags field names):
 """
 from __future__ import annotations
 import difflib
+import heapq
 import math, random as _rnd, re
+from functools import lru_cache
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional
 
@@ -147,6 +149,12 @@ def question_style(text: str, answer: str = "", image_dependent: bool = False) -
 def expand(tokens: List[str]) -> Counter:
     """Return a weighted bag of query terms: originals weight 1.0, expansions 0.4.
     Includes fuzzy matching for common typos against domain vocabulary."""
+    return Counter(_expand_cached(tuple(tokens)))
+
+
+@lru_cache(maxsize=2048)
+def _expand_cached(tokens: tuple) -> Counter:
+    tokens = list(tokens)
     bag: Counter = Counter()
     expanded_tokens = list(tokens)
     
@@ -178,6 +186,8 @@ class Index:
         self.docs: List[Counter] = []
         self.len: List[int] = []
         self.style: List[str] = []
+        self._tl_tokens: List[set] = []
+        self._geo_txt: List[Optional[str]] = [None] * len(questions)
         df: Counter = Counter()
         for item in questions:
             parts = [item.get("question_text", ""), item.get("answer", ""),
@@ -191,6 +201,7 @@ class Index:
             c = Counter(toks)
             self.docs.append(c)
             self.len.append(sum(c.values()))
+            self._tl_tokens.append(set(tokenize(((item.get("topic_l1") or "") + " " + (item.get("subtopic_l2") or "")).lower())))
             self.style.append(item.get('question_style') or question_style(item.get('question_text',''), item.get('answer',''), bool(item.get('image_dependent'))))
             for term in c:
                 df[term] += 1
@@ -221,19 +232,21 @@ class Index:
             geo = filters.get("india_international")
             if geo and item.get("india_international") not in (geo, "MIXED"):
                 if geo == "IN":
-                    txt = (
-                        (item.get("question_text") or "")
-                        + " "
-                        + (item.get("answer") or "")
-                        + " "
-                        + (item.get("topic_l1") or "")
-                        + " "
-                        + (item.get("subtopic_l2") or "")
-                        + " "
-                        + " ".join(item.get("tags") or [])
-                        + " "
-                        + (item.get("geo_region") or "")
-                    ).lower()
+                    txt = self._geo_txt[idx]
+                    if txt is None:
+                        txt = self._geo_txt[idx] = (
+                            (item.get("question_text") or "")
+                            + " "
+                            + (item.get("answer") or "")
+                            + " "
+                            + (item.get("topic_l1") or "")
+                            + " "
+                            + (item.get("subtopic_l2") or "")
+                            + " "
+                            + " ".join(item.get("tags") or [])
+                            + " "
+                            + (item.get("geo_region") or "")
+                        ).lower()
                     in_markers = (
                         "india", "indian", "karnataka", "bangalore", "bengaluru",
                         "mumbai", "bombay", "delhi", "chennai", "madras",
@@ -278,17 +291,20 @@ class Index:
                 s = self._bm25(i, qbag)
                 if s > 0:
                     # small boost if the query words appear in the chosen topic/subtopic
-                    tl = ((item.get("topic_l1") or "") + " " + (item.get("subtopic_l2") or "")).lower()
-                    tl_tokens = set(tokenize(tl))
+                    tl_tokens = self._tl_tokens[i]
                     if any(t in tl_tokens for t in qbag):
                         s += 0.5
                     if item.get("image_dependent") and not filters.get("exclude_image"):
                         s *= 1.15  # multiplicative: won't create a false floor for zero-match questions
             if s > 0:
                 scored.append((s, i, item))
-        scored.sort(key=lambda x: x[0], reverse=True)
+        if 0 < top_k < len(scored):
+            top = heapq.nlargest(top_k, scored, key=lambda x: x[0])   # same result and tie order as sort+slice
+        else:
+            scored.sort(key=lambda x: x[0], reverse=True)
+            top = scored[:top_k]
         out = []
-        for s, i, it in scored[:top_k]:
+        for s, i, it in top:
             row = dict(it)
             row["score"] = round(s, 3)
             row["question_style"] = it.get("question_style") or self.style[i]

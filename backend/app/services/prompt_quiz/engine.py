@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 import os
 import re
 import time
+from functools import lru_cache
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional, Sequence, Set
 
@@ -385,7 +386,12 @@ def interpret(prompt: str, count: Optional[int] = None, options: Optional[Dict[s
 # ---------- Librarian ----------
 # The bank is rebuilt from the database on every request (2-3 times per request in places). A short cache lets those
 # share one load. PROMPT_QUIZ_BANK_TTL_S=0 turns it off; questions added or edited show up within that many seconds.
-_BANK_CACHE: Dict[str, Any] = {"at": 0.0, "key": None, "bank": None}
+_BANK_CACHE: Dict[str, Any] = {"at": 0.0, "key": None, "bank": None, "index": None}
+
+
+class _BankList(list):
+    """A bank copy tagged with the cache load it came from, so the search index built once for that load can be shared."""
+    token: Optional[float] = None
 
 
 def _bank_ttl() -> float:
@@ -396,7 +402,7 @@ def _bank_ttl() -> float:
 
 
 def invalidate_bank_cache() -> None:
-    _BANK_CACHE.update({"at": 0.0, "key": None, "bank": None})
+    _BANK_CACHE.update({"at": 0.0, "key": None, "bank": None, "index": None})
 
 
 def _load_bank(db: Session) -> List[Dict[str, Any]]:
@@ -404,12 +410,28 @@ def _load_bank(db: Session) -> List[Dict[str, Any]]:
     key = str(db.get_bind().url) if ttl > 0 else None
     now = time.monotonic()
     if ttl > 0 and _BANK_CACHE["bank"] is not None and _BANK_CACHE["key"] == key and now - _BANK_CACHE["at"] < ttl:
-        return [dict(r) for r in _BANK_CACHE["bank"]]      # callers may add fields (e.g. score) to what they get
+        copy = _BankList(dict(r) for r in _BANK_CACHE["bank"])      # callers may add fields (e.g. score) to what they get
+        copy.token = _BANK_CACHE["at"]
+        return copy
     bank = _load_bank_uncached(db)
     if ttl > 0:
-        _BANK_CACHE.update({"at": now, "key": key, "bank": bank})
-        return [dict(r) for r in bank]
+        _BANK_CACHE.update({"at": now, "key": key, "bank": bank, "index": None})
+        copy = _BankList(dict(r) for r in bank)
+        copy.token = now
+        return copy
     return bank
+
+
+def _index_for(bank: List[Dict[str, Any]]) -> Index:
+    """The search index for a bank. A bank straight from _load_bank shares one index per cache load (built from the
+    untouched cached rows, never from a caller's copy); anything else gets a fresh index, as before."""
+    tok = getattr(bank, "token", None)
+    if tok is not None and _BANK_CACHE["bank"] is not None and _BANK_CACHE["at"] == tok:
+        idx = _BANK_CACHE["index"]
+        if idx is None:
+            idx = _BANK_CACHE["index"] = Index(_BANK_CACHE["bank"])
+        return idx
+    return Index(bank)
 
 
 def _latest_tags(db: Session) -> Dict[str, Any]:
@@ -581,6 +603,7 @@ def _fp(text: str) -> frozenset:
     return frozenset(tokenize(text)[:14])
 
 
+@lru_cache(maxsize=65536)
 def _normalize_answer_entity(ans: str) -> str:
     """Extracts a normalized core entity token set from an answer string for robust deduplication."""
     if not ans:
@@ -614,8 +637,14 @@ def guardian(hits: List[Dict[str, Any]], brief: Brief, exclude_ids: Optional[Set
             continue
         fp = _fp(h["question_text"])
         if fp:
-            candidates = {i for tok in fp for i in by_token.get(tok, ())}
-            if any(len(fp & seen[i]) / max(len(fp | seen[i]), 1) > 0.7 for i in candidates):
+            # Count shared tokens per earlier hit straight from the token index (|A & B|), then |A | B| = |A| + |B| - |A & B|;
+            # same ratio as comparing the sets, without building a union and intersection for every candidate.
+            shared: Dict[int, int] = {}
+            for tok in fp:
+                for i in by_token.get(tok, ()):
+                    shared[i] = shared.get(i, 0) + 1
+            n_fp = len(fp)
+            if any(inter / (n_fp + len(seen[i]) - inter) > 0.7 for i, inter in shared.items()):
                 continue
         seen.append(fp)
         for tok in fp:
@@ -774,7 +803,7 @@ def build_draft(db: Session, prompt: str, count: Optional[int] = None,
     bank = _load_bank(db)
 
     # 3. Librarian: search broadly across the entire bank
-    idx = Index(bank)
+    idx = _index_for(bank)
     search_query = brief.query
     if getattr(brief, 'search_terms', None):
         search_query = brief.query + " " + " ".join(brief.search_terms)
@@ -921,7 +950,7 @@ def swap_one(db: Session, prompt: str, question_id: str, keep_ids: List[str],
     target = next((b for b in bank if b["id"] == question_id), None)
     if target and target.get("subtopic_l2"):  # prefer a neighbour of the swapped question
         brief.query = f"{brief.query} {target['subtopic_l2']}"
-    idx = Index(bank)
+    idx = _index_for(bank)
     search_query = brief.query
     if getattr(brief, 'search_terms', None):
         search_query = brief.query + " " + " ".join(brief.search_terms)

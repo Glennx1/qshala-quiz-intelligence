@@ -160,12 +160,11 @@ def curate_quiz_with_gemini(
     valid_id_set: Set[str] = {c.get("id") for c in candidates if c.get("id")}
 
     try:
-        import httpx
-        with httpx.Client(timeout=timeout_s) as client:
-            headers = {"x-goog-api-key": key} if key else {}
-            resp = client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+        from backend.app.services.prompt_quiz._http import get_client
+        headers = {"x-goog-api-key": key} if key else {}
+        resp = get_client().post(url, json=payload, headers=headers, timeout=timeout_s)
+        resp.raise_for_status()
+        data = resp.json()
 
         cands = data.get("candidates") or []
         if not cands:
