@@ -902,7 +902,8 @@ export const api = {
 };
 
 export interface ExportOptions {
-  quizType?: 'school' | 'corporate' | 'minimalist';
+  quizType?: 'school' | 'corporate' | 'minimalist' | 'qshala_school';
+  templateCategory?: 'qshala' | 'zsv';
   theme?: string;
   campusEdition?: string;
   prizeMoney?: string;

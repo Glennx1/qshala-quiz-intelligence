@@ -104,6 +104,21 @@ def test_pptx_export():
     print("\n--- Testing QShala Branded PPTX Export ---")
     db = SessionLocal()
     quiz = db.query(Quiz).first()
+    if not quiz:
+        from backend.app.models.quiz import GeneratedQuestion
+        quiz = Quiz(title="Vault Test Quiz", topic="General Knowledge")
+        db.add(quiz)
+        db.commit()
+        db.refresh(quiz)
+        q = GeneratedQuestion(
+            question_text="What is the capital of Karnataka?",
+            answer="Bengaluru",
+            explanation="Bengaluru is known as the Silicon Valley of India.",
+            quiz_id=quiz.id,
+            is_approved=True
+        )
+        db.add(q)
+        db.commit()
     assert quiz is not None, "No quiz found in database"
 
     pptx_bytes = QuizExporter.to_pptx(quiz)

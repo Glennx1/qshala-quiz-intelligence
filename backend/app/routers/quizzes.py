@@ -98,7 +98,7 @@ def delete_question(question_id: str, db: Session = Depends(get_db)):
 def export_quiz(
     quiz_id: str,
     format: str = Query("json", pattern="^(json|csv|pptx)$"),
-    quiz_type: str = Query("school", pattern="^(school|corporate|minimalist)$"),
+    quiz_type: str = Query("school", pattern="^(school|corporate|minimalist|qshala_school|qshala)$"),
     campus_edition: Optional[str] = Query("Bangalore Campus Edition"),
     prize_money: Optional[str] = Query("3.5 lakh"),
     custom_title: Optional[str] = Query(None),
@@ -132,6 +132,8 @@ def export_quiz(
             effective_quiz_type = "corporate"
         elif theme and theme in ("minimalist", "clean"):
             effective_quiz_type = "minimalist"
+        elif theme and theme in ("qshala_school", "qshala", "qshala-school"):
+            effective_quiz_type = "qshala_school"
         pptx_bytes = QuizExporter.to_pptx(
             quiz,
             quiz_type=effective_quiz_type,
@@ -139,6 +141,8 @@ def export_quiz(
             prize_money=prize_money,
             custom_title=custom_title,
             include_social_slides=include_social_slides,
+            custom_subtitle=custom_subtitle,
+            show_answer_divider=show_answer_divider,
         )
         return Response(
             content=pptx_bytes,
@@ -150,7 +154,7 @@ def export_quiz(
 def export_quiz_payload(
     payload: Dict[str, Any] = Body(...),
     format: str = Query("pptx", pattern="^(json|csv|pptx)$"),
-    quiz_type: str = Query("school", pattern="^(school|corporate|minimalist)$"),
+    quiz_type: str = Query("school", pattern="^(school|corporate|minimalist|qshala_school|qshala)$"),
     campus_edition: Optional[str] = Query("Bangalore Campus Edition"),
     prize_money: Optional[str] = Query("3.5 lakh"),
     custom_title: Optional[str] = Query(None),
@@ -181,6 +185,8 @@ def export_quiz_payload(
             effective_quiz_type = "corporate"
         elif theme and theme in ("minimalist", "clean"):
             effective_quiz_type = "minimalist"
+        elif theme and theme in ("qshala_school", "qshala", "qshala-school"):
+            effective_quiz_type = "qshala_school"
         pptx_bytes = QuizExporter.to_pptx(
             payload,
             quiz_type=effective_quiz_type,
@@ -188,6 +194,8 @@ def export_quiz_payload(
             prize_money=prize_money,
             custom_title=custom_title,
             include_social_slides=include_social_slides,
+            custom_subtitle=custom_subtitle,
+            show_answer_divider=show_answer_divider,
         )
         return Response(
             content=pptx_bytes,

@@ -506,6 +506,8 @@ class QuizExporter:
         custom_title: Optional[str] = None,
         include_social_slides: bool = True,
         theme: Optional[str] = None,
+        custom_subtitle: Optional[str] = None,
+        show_answer_divider: Optional[bool] = None,
         **kwargs: Any,
     ) -> bytes:
         """
@@ -538,8 +540,13 @@ class QuizExporter:
                 quiz_type = "corporate"
             elif t_lower in ("minimalist", "clean"):
                 quiz_type = "minimalist"
+            elif t_lower in ("qshala_school", "qshala", "qshala-school"):
+                quiz_type = "qshala_school"
             else:
                 quiz_type = "school"
+
+        if quiz_type in ("qshala_school", "qshala", "qshala-school"):
+            quiz_type = "qshala_school"
 
         media_tmp_dir = Path(tempfile.mkdtemp(prefix="qshala_export_media_"))
         logger.info(f"Export media temp dir: {media_tmp_dir}")
@@ -551,7 +558,10 @@ class QuizExporter:
                 prize_money=prize_money,
                 custom_title=custom_title,
                 include_social_slides=include_social_slides,
-                media_tmp_dir=media_tmp_dir
+                media_tmp_dir=media_tmp_dir,
+                custom_subtitle=custom_subtitle,
+                show_answer_divider=show_answer_divider,
+                **kwargs
             )
         finally:
             try:
@@ -570,6 +580,8 @@ class QuizExporter:
         custom_title: Optional[str],
         include_social_slides: bool,
         media_tmp_dir: Path,
+        custom_subtitle: Optional[str] = None,
+        show_answer_divider: Optional[bool] = None,
         **kwargs: Any,
     ) -> bytes:
         from pptx import Presentation
@@ -586,7 +598,10 @@ class QuizExporter:
         # Template Asset Directory Setup
         # -------------------------------------------------------------
         assets_base = Path(__file__).resolve().parent / "templates" / "assets"
-        if quiz_type == "corporate":
+        is_qshala_school = (quiz_type in ("qshala_school", "qshala"))
+        if is_qshala_school:
+            track_dir = assets_base / "qshala_school"
+        elif quiz_type == "corporate":
             track_dir = assets_base / "corporate"
         else:
             track_dir = assets_base / "school"
@@ -619,10 +634,14 @@ class QuizExporter:
         is_minimalist = (quiz_type == "minimalist")
 
         # -------------------------------------------------------------
-        # Typography & Color Standards (Strict Inter retention)
+        # Typography & Color Standards (Inter for ZSV, Causten Round for QShala School)
         # -------------------------------------------------------------
-        FONT_HEAD = "Inter"
-        FONT_BODY = "Inter"
+        if is_qshala_school:
+            FONT_HEAD = "Causten Round"
+            FONT_BODY = "Causten Round"
+        else:
+            FONT_HEAD = "Inter"
+            FONT_BODY = "Inter"
 
         C_WHITE = RGBColor(255, 255, 255)
         C_DARK_BG = RGBColor(15, 23, 42)          # #0F172A Slate 900
@@ -654,7 +673,32 @@ class QuizExporter:
         if not is_minimalist and cover_bg.exists():
             s_title.shapes.add_picture(str(cover_bg), 0, 0, Inches(13.333), Inches(7.5))
 
-            if quiz_type == "school":
+            if is_qshala_school:
+                # QShala School Template Cover Layout (Style Guide compliant):
+                # Centered Title in 44pt bold Causten Round, centered Subtitle in 24pt
+                tb_qshala_cov = s_title.shapes.add_textbox(Inches(1.50), Inches(2.20), Inches(10.333), Inches(3.20))
+                tf_qcov = tb_qshala_cov.text_frame
+                tf_qcov.word_wrap = True
+
+                p_qc1 = tf_qcov.paragraphs[0]
+                p_qc1.alignment = PP_ALIGN.CENTER
+                p_qc1.text = final_title
+                p_qc1.font.name = FONT_HEAD
+                p_qc1.font.size = Pt(44)
+                p_qc1.font.bold = True
+                p_qc1.font.color.rgb = C_TEXT_DARK
+
+                sub_display = (custom_subtitle or campus_edition or "Middle School Assembly").strip()
+                if sub_display:
+                    p_qc2 = tf_qcov.add_paragraph()
+                    p_qc2.alignment = PP_ALIGN.CENTER
+                    p_qc2.space_before = Pt(18)
+                    p_qc2.text = sub_display
+                    p_qc2.font.name = FONT_HEAD
+                    p_qc2.font.size = Pt(24)
+                    p_qc2.font.bold = False
+                    p_qc2.font.color.rgb = C_TEXT_BODY
+            elif quiz_type == "school":
                 # Clean School Cover Layout (Common Cover slide):
                 # Pre-printed at top: Zerodha Varsity Quiz / India's Premier Finance Quiz
                 # Line 1: '— {campus_edition} —' centered between peach rules at y = 3.65"
@@ -898,32 +942,151 @@ class QuizExporter:
             sq = prs.slides.add_slide(blank_layout)
             if not is_minimalist and question_bg.exists():
                 sq.shapes.add_picture(str(question_bg), 0, 0, Inches(13.333), Inches(7.5))
-                # Number badge slot matching South Zone template: top=0.40", left=6.67", width=4.13"
-                tb_num = sq.shapes.add_textbox(Inches(6.67), Inches(0.40), Inches(4.13), Inches(1.08))
-                pn = tb_num.text_frame.paragraphs[0]
-                pn.text = f"{idx}."
-                pn.alignment = PP_ALIGN.CENTER
-                pn.font.name = FONT_HEAD
-                pn.font.size = Pt(40)
-                pn.font.bold = True
-                pn.font.color.rgb = C_TEXT_DARK
+                if not is_qshala_school:
+                    # Number badge slot matching South Zone template: top=0.40", left=6.67", width=4.13"
+                    tb_num = sq.shapes.add_textbox(Inches(6.67), Inches(0.40), Inches(4.13), Inches(1.08))
+                    pn = tb_num.text_frame.paragraphs[0]
+                    pn.text = f"{idx}."
+                    pn.alignment = PP_ALIGN.CENTER
+                    pn.font.name = FONT_HEAD
+                    pn.font.size = Pt(40)
+                    pn.font.bold = True
+                    pn.font.color.rgb = C_TEXT_DARK
             else:
                 bg_q = sq.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
                 bg_q.fill.solid()
                 bg_q.fill.fore_color.rgb = C_WHITE
                 bg_q.line.fill.background()
-                tb_num = sq.shapes.add_textbox(Inches(10.2), Inches(0.4), Inches(2.4), Inches(0.9))
-                pn = tb_num.text_frame.paragraphs[0]
-                pn.text = f"{idx}."
-                pn.alignment = PP_ALIGN.RIGHT
-                pn.font.name = FONT_HEAD
-                pn.font.size = Pt(44)
-                pn.font.bold = True
-                pn.font.color.rgb = C_TEXT_DARK
+                if not is_qshala_school:
+                    tb_num = sq.shapes.add_textbox(Inches(10.2), Inches(0.4), Inches(2.4), Inches(0.9))
+                    pn = tb_num.text_frame.paragraphs[0]
+                    pn.text = f"{idx}."
+                    pn.alignment = PP_ALIGN.RIGHT
+                    pn.font.name = FONT_HEAD
+                    pn.font.size = Pt(44)
+                    pn.font.bold = True
+                    pn.font.color.rgb = C_TEXT_DARK
 
             has_media = bool(video_path or audio_path or resolved_q_imgs)
 
-            if has_media:
+            if is_qshala_school:
+                # QShala School Style Guide: 44pt centered title/header, 28pt centered content, no bullets
+                tb_head = sq.shapes.add_textbox(Inches(1.20), Inches(0.80), Inches(10.933), Inches(0.85))
+                p_hd = tb_head.text_frame.paragraphs[0]
+                p_hd.alignment = PP_ALIGN.CENTER
+                p_hd.text = f"Question {idx}"
+                p_hd.font.name = FONT_HEAD
+                p_hd.font.size = Pt(42)
+                p_hd.font.bold = True
+                p_hd.font.color.rgb = C_TEXT_DARK
+
+                if has_media:
+                    # Centered question text top, centered media below
+                    tb_q = sq.shapes.add_textbox(Inches(1.20), Inches(1.75), Inches(10.933), Inches(1.75))
+                    tf_q = tb_q.text_frame
+                    tf_q.word_wrap = True
+                    pq_main = tf_q.paragraphs[0]
+                    pq_main.alignment = PP_ALIGN.CENTER
+                    pq_main.text = q_text
+                    pq_main.font.name = FONT_BODY
+                    pq_main.font.size = Pt(26) if len(q_text) < 180 else Pt(22)
+                    pq_main.font.bold = True
+                    pq_main.font.color.rgb = C_TEXT_DARK
+
+                    is_video_mention = bool(re.search(r"\bvideo\b|\bclip\b|\bwatch\b", q_text, re.I))
+                    if video_path:
+                        sq.shapes.add_movie(
+                            str(video_path),
+                            Inches(3.666), Inches(3.60), Inches(6.00), Inches(3.20),
+                            poster_frame_image=str(poster_path) if poster_path else None,
+                            mime_type="video/mp4"
+                        )
+                        tb_badge = sq.shapes.add_textbox(Inches(4.666), Inches(6.85), Inches(4.00), Inches(0.40))
+                        pb = tb_badge.text_frame.paragraphs[0]
+                        pb.alignment = PP_ALIGN.CENTER
+                        pb.text = "▶ VIDEO CLIP"
+                        pb.font.name = FONT_HEAD
+                        pb.font.size = Pt(13)
+                        pb.font.bold = True
+                        pb.font.color.rgb = C_ACCENT_ORANGE
+                    elif is_video_mention and poster_path:
+                        _add_scaled_picture(sq, poster_path, Inches(3.666), Inches(3.60), Inches(6.00), Inches(3.00))
+                        tb_badge = sq.shapes.add_textbox(Inches(4.666), Inches(6.70), Inches(4.00), Inches(0.40))
+                        pb = tb_badge.text_frame.paragraphs[0]
+                        pb.alignment = PP_ALIGN.CENTER
+                        pb.text = "▶ VIDEO CLIP"
+                        pb.font.name = FONT_HEAD
+                        pb.font.size = Pt(13)
+                        pb.font.bold = True
+                        pb.font.color.rgb = C_ACCENT_ORANGE
+                    elif audio_path:
+                        card = sq.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(4.166), Inches(3.70), Inches(5.00), Inches(2.60))
+                        card.fill.solid()
+                        card.fill.fore_color.rgb = C_CARD_BG
+                        card.line.color.rgb = C_CARD_BORDER
+                        card.line.width = Pt(1)
+                        tf_c = card.text_frame
+                        tf_c.word_wrap = True
+                        p_c1 = tf_c.paragraphs[0]
+                        p_c1.text = "🎧 AUDIO CLUE"
+                        p_c1.font.name = FONT_HEAD
+                        p_c1.font.size = Pt(16)
+                        p_c1.font.bold = True
+                        p_c1.font.color.rgb = C_ACCENT_GOLD
+                        p_c1.alignment = PP_ALIGN.CENTER
+                        sq.shapes.add_movie(
+                            str(audio_path),
+                            Inches(6.166), Inches(4.70), Inches(1.00), Inches(1.00),
+                            poster_frame_image=str(poster_path) if poster_path else None,
+                            mime_type="audio/mpeg"
+                        )
+                    elif resolved_q_imgs:
+                        _add_scaled_picture(sq, resolved_q_imgs[0], Inches(3.666), Inches(3.60), Inches(6.00), Inches(3.20))
+                else:
+                    # Pure text question: 28pt centered Causten Round
+                    tb_q = sq.shapes.add_textbox(Inches(1.50), Inches(2.10), Inches(10.333), Inches(4.20))
+                    tf_q = tb_q.text_frame
+                    tf_q.word_wrap = True
+                    pq_main = tf_q.paragraphs[0]
+                    pq_main.alignment = PP_ALIGN.CENTER
+                    pq_main.text = q_text
+                    pq_main.font.name = FONT_BODY
+                    pq_main.font.size = Pt(28) if len(q_text) < 220 else (Pt(24) if len(q_text) < 320 else Pt(20))
+                    pq_main.font.bold = True
+                    pq_main.font.color.rgb = C_TEXT_DARK
+
+                    if options:
+                        for opt_idx, opt in enumerate(options):
+                            po = tf_q.add_paragraph()
+                            po.alignment = PP_ALIGN.CENTER
+                            po.space_before = Pt(10)
+                            prefix = f"{chr(65 + opt_idx)}. " if opt_idx < 26 and not opt.startswith(('A.', 'B.', 'C.', 'D.')) else ""
+                            po.text = f"{prefix}{opt}"
+                            po.font.name = FONT_BODY
+                            po.font.size = Pt(20)
+                            po.font.color.rgb = C_TEXT_BODY
+
+                # Style Guide Speaker Notes
+                q_notes = [f"Official Answer: {ans_val}"]
+                sources = _get_val(q, "retrieval_sources", []) or _get_val(q, "sources", [])
+                if sources:
+                    s_titles = []
+                    for s in sources:
+                        dt = _get_val(s, "document_title", "")
+                        sn = _get_val(s, "slide_number", "")
+                        if dt:
+                            s_titles.append(f"{dt} (Slide {sn})" if sn else dt)
+                    if s_titles:
+                        q_notes.append("Source Reference: " + "; ".join(s_titles))
+                if video_path:
+                    q_notes.append(f"Media Reference (Video): {video_path.name}")
+                elif resolved_q_imgs:
+                    q_notes.append(f"Media Reference (Image): {resolved_q_imgs[0].name}")
+                v_clue = _get_val(q, "visual_clues") or _get_val(q, "clue")
+                if v_clue:
+                    q_notes.append(f"Presenter Clues: {v_clue}")
+                sq.notes_slide.notes_text_frame.text = "\n".join(q_notes)
+            elif has_media:
                 # South Zone 2-Column Protocol: Question text left (7.80 in), Media clue right (3.90 in)
                 tb_q = sq.shapes.add_textbox(Inches(0.80), Inches(1.50), Inches(7.80), Inches(4.80))
                 tf_q = tb_q.text_frame
@@ -1023,38 +1186,41 @@ class QuizExporter:
                         po.font.size = Pt(20)
                         po.font.color.rgb = C_TEXT_BODY
 
-            # Speaker Notes
-            host_notes = []
-            if is_starred:
-                host_notes.append("★ Important: Star tie-breaker question!")
-            ans_val = (_get_val(q, "answer") or "N/A").strip()
-            host_notes.append(f"Official Answer: {ans_val}")
-            if video_path:
-                host_notes.append(f"Video clue: {video_path.name}")
-            elif audio_path:
-                host_notes.append(f"Audio clue: {audio_path.name}")
-            sq.notes_slide.notes_text_frame.text = "\n".join(host_notes)
+            if not is_qshala_school:
+                # Speaker Notes (ZSV)
+                host_notes = []
+                if is_starred:
+                    host_notes.append("★ Important: Star tie-breaker question!")
+                ans_val = (_get_val(q, "answer") or "N/A").strip()
+                host_notes.append(f"Official Answer: {ans_val}")
+                if video_path:
+                    host_notes.append(f"Video clue: {video_path.name}")
+                elif audio_path:
+                    host_notes.append(f"Audio clue: {audio_path.name}")
+                sq.notes_slide.notes_text_frame.text = "\n".join(host_notes)
 
             # ---------------------------------------------------------
-            # (B) MANDATORY ANSWER TRANSITION SLIDE (PPT-3.png)
+            # (B) ANSWER TRANSITION SLIDE (Divider)
             # ---------------------------------------------------------
-            s_ai = prs.slides.add_slide(blank_layout)
-            if not is_minimalist and answer_intro_bg.exists():
-                s_ai.shapes.add_picture(str(answer_intro_bg), 0, 0, Inches(13.333), Inches(7.5))
-            else:
-                bg_ai = s_ai.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
-                bg_ai.fill.solid()
-                bg_ai.fill.fore_color.rgb = C_WHITE
-                bg_ai.line.fill.background()
+            render_divider = (show_answer_divider is not False)
+            if render_divider:
+                s_ai = prs.slides.add_slide(blank_layout)
+                if not is_minimalist and answer_intro_bg.exists():
+                    s_ai.shapes.add_picture(str(answer_intro_bg), 0, 0, Inches(13.333), Inches(7.5))
+                else:
+                    bg_ai = s_ai.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+                    bg_ai.fill.solid()
+                    bg_ai.fill.fore_color.rgb = C_WHITE
+                    bg_ai.line.fill.background()
 
-            tb_ai = s_ai.shapes.add_textbox(Inches(4.00), Inches(2.75), Inches(5.333), Inches(1.90))
-            pai = tb_ai.text_frame.paragraphs[0]
-            pai.alignment = PP_ALIGN.CENTER
-            pai.text = "Answer"
-            pai.font.name = FONT_HEAD
-            pai.font.size = Pt(50)
-            pai.font.bold = True
-            pai.font.color.rgb = C_TEXT_DARK
+                tb_ai = s_ai.shapes.add_textbox(Inches(4.00), Inches(2.75), Inches(5.333), Inches(1.90))
+                pai = tb_ai.text_frame.paragraphs[0]
+                pai.alignment = PP_ALIGN.CENTER
+                pai.text = "Answer"
+                pai.font.name = FONT_HEAD
+                pai.font.size = Pt(50)
+                pai.font.bold = True
+                pai.font.color.rgb = C_TEXT_DARK
 
             # ---------------------------------------------------------
             # (C) ANSWER REVEAL SLIDE (uses answer_bg: Red border 2.png)
@@ -1096,7 +1262,80 @@ class QuizExporter:
             explanation = "" if is_dup_explanation else raw_exp
             has_ans_img = bool(ans_img_path)
 
-            if has_ans_img:
+            if is_qshala_school:
+                # QShala School Answer Reveal Layout
+                tb_ahead = sa.shapes.add_textbox(Inches(1.20), Inches(0.80), Inches(10.933), Inches(0.85))
+                pah = tb_ahead.text_frame.paragraphs[0]
+                pah.alignment = PP_ALIGN.CENTER
+                pah.text = f"Answer {idx}"
+                pah.font.name = FONT_HEAD
+                pah.font.size = Pt(36)
+                pah.font.bold = True
+                pah.font.color.rgb = C_TEXT_DARK
+
+                if has_ans_img:
+                    tb_a = sa.shapes.add_textbox(Inches(1.20), Inches(1.70), Inches(10.933), Inches(1.20))
+                    tf_a = tb_a.text_frame
+                    tf_a.word_wrap = True
+                    pa_head = tf_a.paragraphs[0]
+                    pa_head.alignment = PP_ALIGN.CENTER
+                    pa_head.text = ans_val
+                    pa_head.font.name = FONT_HEAD
+                    pa_head.font.size = Pt(38) if len(ans_val) < 40 else Pt(30)
+                    pa_head.font.bold = True
+                    pa_head.font.color.rgb = C_ACCENT_GREEN
+
+                    _add_scaled_picture(sa, ans_img_path, Inches(3.666), Inches(2.95), Inches(6.00), Inches(3.20))
+
+                    if explanation:
+                        tb_exp = sa.shapes.add_textbox(Inches(1.50), Inches(6.25), Inches(10.333), Inches(0.70))
+                        pexp = tb_exp.text_frame.paragraphs[0]
+                        pexp.alignment = PP_ALIGN.CENTER
+                        pexp.text = explanation
+                        pexp.font.name = FONT_BODY
+                        pexp.font.size = Pt(16)
+                        pexp.font.color.rgb = C_TEXT_MUTED
+                else:
+                    if explanation:
+                        tb_a = sa.shapes.add_textbox(Inches(1.20), Inches(1.80), Inches(10.933), Inches(1.40))
+                        tf_a = tb_a.text_frame
+                        tf_a.word_wrap = True
+                        pa_head = tf_a.paragraphs[0]
+                        pa_head.alignment = PP_ALIGN.CENTER
+                        pa_head.text = ans_val
+                        pa_head.font.name = FONT_HEAD
+                        pa_head.font.size = Pt(44) if len(ans_val) < 40 else Pt(34)
+                        pa_head.font.bold = True
+                        pa_head.font.color.rgb = C_ACCENT_GREEN
+
+                        tb_exp = sa.shapes.add_textbox(Inches(1.50), Inches(3.30), Inches(10.333), Inches(3.40))
+                        tf_exp = tb_exp.text_frame
+                        tf_exp.word_wrap = True
+                        pexp = tf_exp.paragraphs[0]
+                        pexp.alignment = PP_ALIGN.CENTER
+                        pexp.text = explanation
+                        pexp.font.name = FONT_BODY
+                        pexp.font.size = Pt(24) if len(explanation) < 180 else Pt(20)
+                        pexp.font.color.rgb = C_TEXT_BODY
+                    else:
+                        tb_a = sa.shapes.add_textbox(Inches(1.20), Inches(2.50), Inches(10.933), Inches(2.50))
+                        tf_a = tb_a.text_frame
+                        tf_a.word_wrap = True
+                        pa_head = tf_a.paragraphs[0]
+                        pa_head.alignment = PP_ALIGN.CENTER
+                        pa_head.text = ans_val
+                        pa_head.font.name = FONT_HEAD
+                        pa_head.font.size = Pt(48) if len(ans_val) < 40 else Pt(38)
+                        pa_head.font.bold = True
+                        pa_head.font.color.rgb = C_ACCENT_GREEN
+
+                sa.notes_slide.notes_text_frame.text = (
+                    f"Presenter Talking Points:\n"
+                    f"Official Answer: {ans_val}\n"
+                    f"Award points for correct answer or verified synonym.\n"
+                    f"Trivia Context: {explanation}"
+                )
+            elif has_ans_img:
                 if explanation and len(explanation) > 100:
                     # 2-Column Solution Layout
                     tb_a = sa.shapes.add_textbox(Inches(0.80), Inches(1.50), Inches(6.80), Inches(5.00))
@@ -1182,13 +1421,14 @@ class QuizExporter:
                     pa_head.font.bold = True
                     pa_head.font.color.rgb = C_TEXT_DARK
 
-            # Speaker Notes for Answer Slide
-            sa.notes_slide.notes_text_frame.text = (
-                f"Presenter Talking Points:\n"
-                f"Official Answer: {ans_val}\n"
-                f"Award +10 points to any team with the correct answer or verified synonym.\n"
-                f"Trivia Context: {explanation}"
-            )
+            if not is_qshala_school:
+                # Speaker Notes for Answer Slide (ZSV)
+                sa.notes_slide.notes_text_frame.text = (
+                    f"Presenter Talking Points:\n"
+                    f"Official Answer: {ans_val}\n"
+                    f"Award +10 points to any team with the correct answer or verified synonym.\n"
+                    f"Trivia Context: {explanation}"
+                )
 
         buffer = io.BytesIO()
         prs.save(buffer)
